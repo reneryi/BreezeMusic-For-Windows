@@ -1,21 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from "vue";
+import { ref, onUnmounted, watch } from "vue";
 import { useAppStore } from "../stores/appStore";
 import { kugouClient } from "../api/kugou";
 import type { LoginCandidate } from "../types";
-import {
-  X,
-  QrCode,
-  Smartphone,
-  RefreshCw,
-  CheckCircle2,
-} from "lucide-vue-next";
+import PlumpIcon from "./PlumpIcon.vue";
 
 const store = useAppStore();
 
 const loginMode = ref<"qr" | "sms">("qr");
 
-// 扫码登录状态 (对齐酷狗状态码: 0=过期, 1=等待扫码, 2=已扫码待确认, 4=授权成功)
+// 扫码登录状态 (0=过期, 1=等待扫码, 2=已扫码待确认, 4=授权成功)
 const qrImg = ref("");
 const qrKey = ref("");
 const qrStatusText = ref("正在获取概念版登录二维码...");
@@ -58,12 +52,10 @@ async function pollQrStatus() {
     const res = await kugouClient.checkQrLogin(qrKey.value);
     qrStatusCode.value = res.status;
     qrStatusText.value = res.message;
-    // status === 4 代表用户在手机 App 中点击了确认授权并已完成 /v5/login_by_token 补全！
     if (res.status === 4 && res.session) {
       stopPolling();
-      await store.onLoginSuccess(res.session, res.profile);
+      await store.handleLoginSuccess(res.session, res.profile);
     } else if (res.status === 0) {
-      // status === 0 代表二维码过期
       stopPolling();
     }
   } catch (e) {
@@ -87,7 +79,7 @@ async function handleSendSms() {
   smsSending.value = true;
   try {
     const msg = await kugouClient.sendSmsCode(mobile.value.trim());
-    store.showBanner(msg);
+    store.notify(msg);
     smsCooldown.value = 60;
     cooldownTimer = window.setInterval(() => {
       smsCooldown.value -= 1;
@@ -126,7 +118,7 @@ async function handleSmsLogin(selectedUserId?: string) {
     }
     if (outcome.session) {
       accountCandidates.value = [];
-      await store.onLoginSuccess(outcome.session, outcome.profile);
+      await store.handleLoginSuccess(outcome.session, outcome.profile);
     }
   } catch (e: any) {
     errorMsg.value = `${e}`;
@@ -135,18 +127,23 @@ async function handleSmsLogin(selectedUserId?: string) {
   }
 }
 
+watch(
+  () => store.isLoginModalOpen,
+  (open) => {
+    if (open && loginMode.value === "qr") {
+      startQrLogin();
+    } else {
+      stopPolling();
+    }
+  }
+);
+
 watch(loginMode, (mode) => {
   errorMsg.value = "";
   if (mode === "qr") {
     startQrLogin();
   } else {
     stopPolling();
-  }
-});
-
-onMounted(() => {
-  if (loginMode.value === "qr") {
-    startQrLogin();
   }
 });
 
@@ -159,147 +156,158 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="store.isLoginModalOpen = false">
-    <div class="glass-modal login-modal">
-      <div class="modal-header">
-        <div>
-          <h3 class="modal-title">登录酷狗概念版账号</h3>
-          <p class="modal-subtitle">
-            端侧直连 (appid=3116) · 已修复扫码确认状态码与凭证自动补全
+  <transition name="fade">
+    <div
+      v-if="store.isLoginModalOpen"
+      class="modal-backdrop"
+      @click.self="store.isLoginModalOpen = false"
+    >
+      <div class="compact-glass-modal">
+        <div class="modal-header">
+          <div>
+            <h3>登录酷狗概念版账号</h3>
+            <p class="vip-sub-caption">
+              端侧直连 (appid=3116) · 同步云歌单、听歌等级与每日无损 VIP
+            </p>
+          </div>
+          <button
+            class="icon-close-btn"
+            @click="store.isLoginModalOpen = false"
+          >
+            <PlumpIcon name="close" :size="15" />
+          </button>
+        </div>
+
+        <div class="pill-tabs mb-14 full-w" style="justify-content: center">
+          <button
+            class="pill-tab-btn"
+            :class="{ active: loginMode === 'qr' }"
+            @click="loginMode = 'qr'"
+          >
+            酷狗扫码登录
+          </button>
+          <button
+            class="pill-tab-btn"
+            :class="{ active: loginMode === 'sms' }"
+            @click="loginMode = 'sms'"
+          >
+            手机短信验证码登录
+          </button>
+        </div>
+
+        <div v-if="errorMsg" class="issue-guide-box mb-10" style="color: var(--coral)">
+          {{ errorMsg }}
+        </div>
+
+        <!-- 1. 二维码扫码登录视图 -->
+        <div
+          v-if="loginMode === 'qr'"
+          style="display: flex; flex-direction: column; align-items: center; gap: 12px"
+        >
+          <div
+            style="
+              width: 196px;
+              height: 196px;
+              border-radius: 22px;
+              background: #ffffff;
+              padding: 12px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              position: relative;
+            "
+          >
+            <img
+              v-if="qrImg"
+              :src="qrImg"
+              alt="QR Code"
+              style="width: 100%; height: 100%; object-fit: contain"
+            />
+            <div v-else style="color: #0f1d33; font-weight: 700; font-size: 12.5px">
+              正在生成二维码...
+            </div>
+          </div>
+          <p style="font-size: 12.5px; color: var(--text-secondary); text-align: center">
+            {{ qrStatusText }}
           </p>
+          <button class="tonal-pill-btn" @click="startQrLogin">
+            <PlumpIcon name="refresh" :size="14" />
+            <span>重新生成二维码</span>
+          </button>
         </div>
-        <button class="icon-btn" @click="store.isLoginModalOpen = false">
-          <X :size="20" />
-        </button>
-      </div>
 
-      <div class="mode-tabs">
-        <button
-          class="mode-tab"
-          :class="{ active: loginMode === 'qr' }"
-          @click="loginMode = 'qr'"
-        >
-          <QrCode :size="16" />
-          <span>酷狗扫码登录</span>
-        </button>
-        <button
-          class="mode-tab"
-          :class="{ active: loginMode === 'sms' }"
-          @click="loginMode = 'sms'"
-        >
-          <Smartphone :size="16" />
-          <span>手机短信登录</span>
-        </button>
-      </div>
-
-      <div v-if="errorMsg" class="error-alert">{{ errorMsg }}</div>
-
-      <!-- 1. 二维码扫码登录视图 -->
-      <div v-if="loginMode === 'qr'" class="qr-panel">
-        <div class="qr-box">
-          <img v-if="qrImg" :src="qrImg" alt="QR Code" class="qr-image" />
-          <div v-else class="qr-loading">正在生成二维码...</div>
-
-          <!-- status === 2: 已扫码，等待在手机 App 点击确认 -->
-          <div v-if="qrStatusCode === 2" class="qr-overlay scanned">
-            <CheckCircle2 :size="36" />
-            <span>扫码成功</span>
-            <small>请在手机酷狗 App 中点击「确认登录」</small>
-          </div>
-
-          <!-- status === 0: 二维码已过期 -->
-          <div v-if="qrStatusCode === 0" class="qr-overlay expired">
-            <button class="primary-btn" @click="startQrLogin">
-              <RefreshCw :size="15" />
-              <span>二维码已过期 · 点击刷新</span>
-            </button>
-          </div>
-        </div>
-        <p class="qr-hint">{{ qrStatusText }}</p>
-        <button class="ghost-btn" @click="startQrLogin">
-          <RefreshCw :size="14" />
-          <span>重新生成二维码</span>
-        </button>
-      </div>
-
-      <!-- 2. 手机短信验证码登录视图 -->
-      <div v-else class="sms-panel">
-        <template v-if="accountCandidates.length === 0">
-          <div class="form-group">
-            <label>手机号码</label>
+        <!-- 2. 手机短信验证码登录视图 -->
+        <div v-else>
+          <template v-if="accountCandidates.length === 0">
             <input
               v-model="mobile"
               type="tel"
               maxlength="11"
               placeholder="请输入 11 位中国大陆手机号"
-              class="text-input"
+              class="plump-text-input mb-10"
             />
-          </div>
 
-          <div class="form-group">
-            <label>短信验证码</label>
-            <div class="sms-code-row">
+            <div style="display: flex; gap: 8px" class="mb-14">
               <input
                 v-model="smsCode"
                 type="text"
                 maxlength="8"
-                placeholder="请输入短信验证码"
-                class="text-input"
+                placeholder="短信验证码"
+                class="plump-text-input"
                 @keyup.enter="handleSmsLogin()"
               />
               <button
-                class="secondary-btn"
+                class="tonal-pill-btn"
+                style="white-space: nowrap"
                 :disabled="smsSending || smsCooldown > 0"
                 @click="handleSendSms"
               >
                 {{
                   smsCooldown > 0
-                    ? `${smsCooldown}s 后重发`
+                    ? `${smsCooldown}s`
                     : smsSending
-                    ? "发送中..."
+                    ? "发送中"
                     : "获取验证码"
                 }}
               </button>
             </div>
-          </div>
 
-          <button
-            class="primary-btn full-width submit-btn"
-            :disabled="smsLoggingIn"
-            @click="handleSmsLogin()"
-          >
-            {{ smsLoggingIn ? "正在验证登录..." : "验证并登录" }}
-          </button>
-        </template>
-
-        <!-- 同手机号多酷狗账号选择器 -->
-        <template v-else>
-          <div class="candidate-title">
-            该手机号下绑定了多个酷狗账号，请选择要登录的账号：
-          </div>
-          <div class="candidate-list">
-            <div
-              v-for="cand in accountCandidates"
-              :key="cand.userId"
-              class="candidate-item"
-              @click="handleSmsLogin(cand.userId)"
+            <button
+              class="primary-btn full-w"
+              :disabled="smsLoggingIn"
+              @click="handleSmsLogin()"
             >
-              <img
-                v-if="cand.avatarUrl"
-                :src="cand.avatarUrl"
-                class="candidate-avatar"
-              />
-              <div v-else class="candidate-avatar-fallback">
-                {{ cand.nickname.slice(0, 1) }}
-              </div>
-              <div class="candidate-info">
-                <div class="candidate-name">{{ cand.nickname }}</div>
-                <div class="candidate-id">UID: {{ cand.userId }}</div>
-              </div>
+              {{ smsLoggingIn ? "正在验证登录..." : "验证并登录" }}
+            </button>
+          </template>
+
+          <!-- 同手机号多酷狗账号选择器 -->
+          <template v-else>
+            <div class="cfg-label">该手机号绑定了多个账号，请选择：</div>
+            <div class="playlist-pick-list">
+              <button
+                v-for="cand in accountCandidates"
+                :key="cand.userId"
+                class="playlist-pick-row"
+                @click="handleSmsLogin(cand.userId)"
+              >
+                <div class="ppr-left">
+                  <img
+                    v-if="cand.avatarUrl"
+                    :src="cand.avatarUrl"
+                    style="width: 36px; height: 36px; border-radius: 50%"
+                  />
+                  <div>
+                    <div class="ppr-title">{{ cand.nickname }}</div>
+                    <div class="ppr-count">UID: {{ cand.userId }}</div>
+                  </div>
+                </div>
+                <PlumpIcon name="chevron-right" :size="15" />
+              </button>
             </div>
-          </div>
-        </template>
+          </template>
+        </div>
       </div>
     </div>
-  </div>
+  </transition>
 </template>

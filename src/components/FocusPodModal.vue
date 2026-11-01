@@ -1,22 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from "vue";
 import { useAppStore } from "../stores/appStore";
-import {
-  X,
-  Timer,
-  CloudRain,
-  Waves,
-  Flame,
-  Wind,
-  Disc,
-  Play,
-  Pause,
-  RotateCcw,
-} from "lucide-vue-next";
+import PlumpIcon from "./PlumpIcon.vue";
 
 const store = useAppStore();
 
-// 番茄钟专注计时器状态
 const presets = [15, 25, 45, 60];
 const selectedMinutes = ref(25);
 const remainSeconds = ref(25 * 60);
@@ -45,7 +33,7 @@ function toggleTimer() {
         remainSeconds.value -= 1;
       } else {
         stopTimer();
-        store.showBanner("心流专注时段已完成，休息一下吧！");
+        store.notify("心流专注时段已完成，休息一下吧！");
       }
     }, 1000);
   }
@@ -64,12 +52,11 @@ function resetTimer() {
   remainSeconds.value = selectedMinutes.value * 60;
 }
 
-// Web Audio API 程序化环境白噪音合成器（对齐 Android 端 AmbientSoundManager.kt，零外部音频文件依赖）
 interface AmbientChannel {
   id: string;
   label: string;
   sub: string;
-  icon: any;
+  icon: string;
   active: boolean;
   volume: number;
   filterFreq: number;
@@ -80,7 +67,7 @@ const channels = ref<AmbientChannel[]>([
     id: "rain",
     label: "微风细雨",
     sub: "柔和粉红噪点雨声",
-    icon: CloudRain,
+    icon: "wave",
     active: false,
     volume: 0.35,
     filterFreq: 1200,
@@ -89,7 +76,7 @@ const channels = ref<AmbientChannel[]>([
     id: "ocean",
     label: "深海潮汐",
     sub: "低频呼吸海浪涌动",
-    icon: Waves,
+    icon: "compass",
     active: false,
     volume: 0.3,
     filterFreq: 420,
@@ -98,27 +85,18 @@ const channels = ref<AmbientChannel[]>([
     id: "fire",
     label: "壁炉篝火",
     sub: "温暖中低频木柴声",
-    icon: Flame,
+    icon: "sparkles",
     active: false,
     volume: 0.28,
     filterFreq: 780,
   },
   {
-    id: "wind",
-    label: "山谷林风",
-    sub: "空灵带通微风声",
-    icon: Wind,
-    active: false,
-    volume: 0.25,
-    filterFreq: 600,
-  },
-  {
     id: "vinyl",
     label: "黑胶底噪",
     sub: "复古模拟唱片暖感",
-    icon: Disc,
+    icon: "disc",
     active: false,
-    volume: 0.2,
+    volume: 0.22,
     filterFreq: 2400,
   },
 ]);
@@ -207,71 +185,94 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="store.isFocusPodOpen = false">
-    <div class="glass-modal focus-pod-modal">
-      <div class="modal-header">
-        <div class="vip-modal-title-row">
-          <div class="focus-violet-circle">
-            <Timer :size="18" />
+  <transition name="fade">
+    <div
+      v-if="store.isFocusPodOpen"
+      class="modal-backdrop"
+      @click.self="store.isFocusPodOpen = false"
+    >
+      <div class="compact-glass-modal" style="width: 520px">
+        <div class="modal-header">
+          <div class="vip-title-row">
+            <div class="vip-icon-orb cyan">
+              <PlumpIcon name="timer" :size="20" color="#b388ff" />
+            </div>
+            <div>
+              <h3>概念胶囊 · Focus Pod 心流舱</h3>
+              <p class="vip-sub-caption">
+                番茄心流专注计时器 × 4 路实时程序化环境白噪音混音引擎
+              </p>
+            </div>
           </div>
-          <div>
-            <h3>概念投喂 · Focus Pod 心流舱</h3>
-            <p class="modal-subtitle">
-              番茄心流专注计时器 × 实时程序化环境白噪音混音引擎
-            </p>
-          </div>
-        </div>
-        <button class="icon-btn" @click="store.isFocusPodOpen = false">
-          <X :size="20" />
-        </button>
-      </div>
-
-      <!-- 番茄钟倒计时卡片 -->
-      <div class="focus-timer-card">
-        <div class="timer-display">{{ formattedTimer }}</div>
-        <div class="timer-presets">
           <button
-            v-for="p in presets"
-            :key="p"
-            class="preset-chip"
-            :class="{ active: selectedMinutes === p }"
-            @click="selectPreset(p)"
+            class="icon-close-btn"
+            @click="store.isFocusPodOpen = false"
           >
-            {{ p }} 分钟
+            <PlumpIcon name="close" :size="15" />
           </button>
         </div>
-        <div class="timer-controls">
-          <button class="primary-btn" @click="toggleTimer">
-            <Pause v-if="isRunning" :size="16" />
-            <Play v-else :size="16" />
-            <span>{{ isRunning ? "暂停专注" : "开启心流专注" }}</span>
-          </button>
-          <button class="secondary-btn" @click="resetTimer">
-            <RotateCcw :size="15" />
-            <span>重置</span>
-          </button>
-        </div>
-      </div>
 
-      <!-- 环境白噪音混音矩阵 -->
-      <div class="ambient-section">
-        <div class="ambient-head">
-          <span>环境伴音混音台（可与当前播放音乐叠加共鸣）</span>
+        <!-- 番茄钟倒计时卡片 -->
+        <div
+          class="vip-calendar-card mb-14"
+          style="display: flex; flex-direction: column; align-items: center; gap: 12px"
+        >
+          <div style="font-size: 42px; font-weight: 900; color: var(--cyan)">
+            {{ formattedTimer }}
+          </div>
+          <div class="pill-tabs">
+            <button
+              v-for="p in presets"
+              :key="p"
+              class="pill-tab-btn"
+              :class="{ active: selectedMinutes === p }"
+              @click="selectPreset(p)"
+            >
+              {{ p }} 分钟
+            </button>
+          </div>
+          <div style="display: flex; gap: 10px">
+            <button class="primary-btn" @click="toggleTimer">
+              <PlumpIcon
+                :name="isRunning ? 'pause' : 'play'"
+                :size="16"
+                color="#ffffff"
+              />
+              <span>{{ isRunning ? "暂停专注" : "开启心流专注" }}</span>
+            </button>
+            <button class="tonal-pill-btn" @click="resetTimer">
+              <PlumpIcon name="refresh" :size="15" />
+              <span>重置</span>
+            </button>
+          </div>
         </div>
-        <div class="ambient-grid">
+
+        <!-- 4 路环境白噪音混音矩阵 -->
+        <div class="cfg-label">环境伴音混音台（可与当前播放音乐叠加共鸣）</div>
+        <div class="cache-grid">
           <div
             v-for="ch in channels"
             :key="ch.id"
-            class="ambient-item-card"
-            :class="{ active: ch.active }"
+            class="cache-item-card"
+            style="flex-direction: column; align-items: stretch; gap: 8px; cursor: pointer"
+            @click="toggleAmbientChannel(ch)"
           >
-            <div class="ambient-top" @click="toggleAmbientChannel(ch)">
-              <component :is="ch.icon" :size="18" class="amb-ico" />
-              <div class="amb-texts">
-                <div class="amb-title">{{ ch.label }}</div>
-                <div class="amb-sub">{{ ch.sub }}</div>
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <div style="display: flex; align-items: center; gap: 8px">
+                <PlumpIcon :name="ch.icon" :size="17" color="var(--cyan)" />
+                <div>
+                  <div style="font-weight: 800; font-size: 13px">{{ ch.label }}</div>
+                  <div style="font-size: 11px; color: var(--text-secondary)">
+                    {{ ch.sub }}
+                  </div>
+                </div>
               </div>
-              <span class="amb-status">{{ ch.active ? "开启" : "关闭" }}</span>
+              <span
+                class="mini-badge"
+                :class="ch.active ? 'sq' : 'vip'"
+              >
+                {{ ch.active ? "混音中" : "已关" }}
+              </span>
             </div>
             <input
               v-if="ch.active"
@@ -280,7 +281,7 @@ onUnmounted(() => {
               max="1"
               step="0.05"
               :value="ch.volume"
-              class="ambient-slider"
+              @click.stop
               @input="
                 updateChannelVolume(
                   ch,
@@ -292,5 +293,5 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
-  </div>
+  </transition>
 </template>

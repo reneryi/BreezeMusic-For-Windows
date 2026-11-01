@@ -293,3 +293,102 @@ pub struct LyricData {
     pub has_translation: bool,
     pub has_phonetic: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FmChannel {
+    pub id: String,
+    pub name: String,
+    pub cover_url: String,
+    pub description: String,
+    pub category: String,
+    pub fm_type: i32,
+    pub listener_count_text: String,
+    pub freq_label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowedArtist {
+    pub artist_id: String,
+    pub target_user_id: String,
+    pub name: String,
+    pub avatar_url: String,
+    pub song_count: i32,
+    pub album_count: i32,
+    pub fans_count: i32,
+    pub is_followed: bool,
+    pub intro: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlbumItem {
+    pub album_id: String,
+    pub album_name: String,
+    pub artist_name: String,
+    pub artist_id: String,
+    pub cover_url: String,
+    pub publish_date: String,
+    pub publish_company: String,
+    pub song_count: i32,
+    pub intro: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PurchasedAlbumItem {
+    pub album_id: String,
+    pub album_name: String,
+    pub artist_name: String,
+    pub cover_url: String,
+    pub song_count: i32,
+    pub buy_time: String,
+    pub publish_date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PurchasedSongItem {
+    pub song: Song,
+    pub buy_time: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SongComment {
+    pub id: String,
+    pub user_name: String,
+    pub user_avatar: String,
+    pub content: String,
+    pub created_time: String,
+    pub like_count: i32,
+    pub is_liked: bool,
+    pub location: String,
+    pub reply_count: i32,
+    pub special_child_id: String,
+    pub replies: Vec<SongComment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayDiagResult {
+    pub latency_ms: i64,
+    pub dfid: String,
+    pub mid: String,
+    pub guid: String,
+    pub status_text: String,
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadTaskResult {
+    pub success: bool,
+    pub saved_audio_path: String,
+    pub saved_lrc_path: String,
+    pub file_size_bytes: i64,
+    pub quality_label: String,
+    pub message: String,
+}
+

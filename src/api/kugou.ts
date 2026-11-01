@@ -1,15 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AccountProfile,
+  AlbumItem,
+  DownloadTaskResult,
+  FmChannel,
+  FollowedArtist,
+  GatewayDiagResult,
   KugouSession,
   LyricData,
   PhoneLoginOutcome,
   PlaybackResult,
   Playlist,
+  PurchasedAlbumItem,
+  PurchasedSongItem,
   QrCodeSession,
   QrPollResult,
   RankItem,
   Song,
+  SongComment,
   VipStatusInfo,
 } from "../types";
 
@@ -92,14 +100,44 @@ export const kugouClient = {
     return invoke<Song[]>("get_rank_songs", { rankId, page, pageSize });
   },
 
+  /** 获取精选场景电台频道列表 */
+  getFmChannels(): Promise<FmChannel[]> {
+    return invoke<FmChannel[]>("get_fm_channels");
+  },
+
+  /** 获取指定电台频道的漫游曲目流 */
+  getFmSongs(channelId: string): Promise<Song[]> {
+    return invoke<Song[]>("get_fm_songs", { channelId });
+  },
+
   /** 获取云端最近播放记录 */
   getRecentHistory(): Promise<Song[]> {
     return invoke<Song[]>("get_recent_history");
   },
 
-  /** 搜索歌曲 */
+  /** 搜索单曲 */
   searchSongs(keyword: string, page = 1, pageSize = 30): Promise<Song[]> {
     return invoke<Song[]>("search_songs", { keyword, page, pageSize });
+  },
+
+  /** 获取酷狗实时热搜榜关键词 */
+  getSearchHot(): Promise<string[]> {
+    return invoke<string[]>("get_search_hot");
+  },
+
+  /** 搜索歌单 */
+  searchPlaylists(keyword: string): Promise<Playlist[]> {
+    return invoke<Playlist[]>("search_playlists_cmd", { keyword });
+  },
+
+  /** 搜索专辑 */
+  searchAlbums(keyword: string): Promise<AlbumItem[]> {
+    return invoke<AlbumItem[]>("search_albums_cmd", { keyword });
+  },
+
+  /** 搜索歌手 */
+  searchArtists(keyword: string): Promise<FollowedArtist[]> {
+    return invoke<FollowedArtist[]>("search_artists_cmd", { keyword });
   },
 
   /** 获取用户自建与收藏歌单列表 */
@@ -110,6 +148,100 @@ export const kugouClient = {
   /** 获取指定歌单内的全部歌曲 */
   getPlaylistSongs(collectionId: string): Promise<Song[]> {
     return invoke<Song[]>("get_playlist_songs", { collectionId });
+  },
+
+  /** 新建云端自定义歌单 */
+  createUserPlaylist(name: string): Promise<boolean> {
+    return invoke<boolean>("create_user_playlist_cmd", { name });
+  },
+
+  /** 删除云端歌单 */
+  deleteUserPlaylist(listId: number): Promise<boolean> {
+    return invoke<boolean>("delete_user_playlist_cmd", { listId });
+  },
+
+  /** 添加歌曲到指定歌单 */
+  addSongToPlaylist(listId: number, song: Song): Promise<boolean> {
+    return invoke<boolean>("add_song_to_playlist_cmd", { listId, song });
+  },
+
+  /** 获取已关注歌手列表 */
+  getFollowedArtists(): Promise<FollowedArtist[]> {
+    return invoke<FollowedArtist[]>("get_followed_artists");
+  },
+
+  /** 关注或取消关注歌手 */
+  toggleFollowArtist(artistId: string, follow: boolean): Promise<boolean> {
+    return invoke<boolean>("toggle_follow_artist_cmd", { artistId, follow });
+  },
+
+  /** 获取已购数字专辑列表 */
+  getPurchasedAlbums(): Promise<PurchasedAlbumItem[]> {
+    return invoke<PurchasedAlbumItem[]>("get_purchased_albums");
+  },
+
+  /** 获取已购单曲列表 */
+  getPurchasedSongs(): Promise<PurchasedSongItem[]> {
+    return invoke<PurchasedSongItem[]>("get_purchased_songs");
+  },
+
+  /** 获取歌手详情 */
+  getArtistDetail(artistId: string): Promise<FollowedArtist> {
+    return invoke<FollowedArtist>("get_artist_detail_cmd", { artistId });
+  },
+
+  /** 获取歌手热门或最新单曲 */
+  getArtistSongs(
+    artistId: string,
+    sort: "hot" | "new" = "hot",
+    page = 1
+  ): Promise<Song[]> {
+    return invoke<Song[]>("get_artist_songs_cmd", { artistId, sort, page });
+  },
+
+  /** 获取专辑内全部曲目 */
+  getAlbumSongs(albumId: string): Promise<Song[]> {
+    return invoke<Song[]>("get_album_songs_cmd", { albumId });
+  },
+
+  /** 获取歌曲评论列表（hot / new） */
+  getSongComments(
+    song: Song,
+    sortType: "hot" | "new" = "hot",
+    page = 1
+  ): Promise<SongComment[]> {
+    return invoke<SongComment[]>("get_song_comments_cmd", {
+      song,
+      sortType,
+      page,
+    });
+  },
+
+  /** 重新签发概念版 24 位 DFID 设备标识 */
+  resignDeviceIdentity(): Promise<GatewayDiagResult> {
+    return invoke<GatewayDiagResult>("resign_device_cmd");
+  },
+
+  /** 音源网关链路延迟诊断 */
+  diagnoseGatewayLatency(): Promise<GatewayDiagResult> {
+    return invoke<GatewayDiagResult>("diagnose_gateway_cmd");
+  },
+
+  /** 下载歌曲与内嵌元数据/导出独立 .lrc 文件 */
+  downloadSong(
+    song: Song,
+    preferredQuality = "high",
+    musicDir = "",
+    lrcDir = "",
+    exportLrc = true
+  ): Promise<DownloadTaskResult> {
+    return invoke<DownloadTaskResult>("download_song_cmd", {
+      song,
+      preferredQuality,
+      musicDir,
+      lrcDir,
+      exportLrc,
+    });
   },
 
   /** 解析歌曲真实播放音源 URL + 硬件级 STREAMINFO 采样率/位深探测 */

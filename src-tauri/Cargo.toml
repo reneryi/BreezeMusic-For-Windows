@@ -1,6 +1,6 @@
 [package]
 name = "breezemusic-windows"
-version = "0.1.0"
+version = "1.3.2"
 description = "BreezeMusic Windows Desktop Client (KuGou Concept Edition appid=3116)"
 authors = ["reneryi"]
 license = "GPL-3.0"

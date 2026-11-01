@@ -2,8 +2,9 @@ pub mod kugou;
 
 use kugou::api::KugouApiService;
 use kugou::models::{
-    AccountProfile, KugouSession, LyricData, PhoneLoginOutcome, PlaybackResult, Playlist,
-    QrCodeSession, QrPollResult, RankItem, Song, VipStatusInfo,
+    AccountProfile, AlbumItem, DownloadTaskResult, FmChannel, FollowedArtist, GatewayDiagResult,
+    KugouSession, LyricData, PhoneLoginOutcome, PlaybackResult, Playlist, PurchasedAlbumItem,
+    PurchasedSongItem, QrCodeSession, QrPollResult, RankItem, Song, SongComment, VipStatusInfo,
 };
 use kugou::store::AppStore;
 use std::sync::Arc;
@@ -107,6 +108,19 @@ async fn get_rank_songs(
 }
 
 #[tauri::command]
+async fn get_fm_channels(state: State<'_, AppState>) -> Result<Vec<FmChannel>, String> {
+    state.api.fetch_fm_channels().await
+}
+
+#[tauri::command]
+async fn get_fm_songs(
+    state: State<'_, AppState>,
+    channel_id: String,
+) -> Result<Vec<Song>, String> {
+    state.api.fetch_fm_songs(&channel_id).await
+}
+
+#[tauri::command]
 async fn get_recent_history(state: State<'_, AppState>) -> Result<Vec<Song>, String> {
     state.api.fetch_recent_history().await
 }
@@ -125,6 +139,35 @@ async fn search_songs(
 }
 
 #[tauri::command]
+async fn get_search_hot(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state.api.fetch_search_hot().await
+}
+
+#[tauri::command]
+async fn search_playlists_cmd(
+    state: State<'_, AppState>,
+    keyword: String,
+) -> Result<Vec<Playlist>, String> {
+    state.api.search_playlists(&keyword).await
+}
+
+#[tauri::command]
+async fn search_albums_cmd(
+    state: State<'_, AppState>,
+    keyword: String,
+) -> Result<Vec<AlbumItem>, String> {
+    state.api.search_albums(&keyword).await
+}
+
+#[tauri::command]
+async fn search_artists_cmd(
+    state: State<'_, AppState>,
+    keyword: String,
+) -> Result<Vec<FollowedArtist>, String> {
+    state.api.search_artists(&keyword).await
+}
+
+#[tauri::command]
 async fn get_user_playlists(state: State<'_, AppState>) -> Result<Vec<Playlist>, String> {
     state.api.fetch_user_playlists().await
 }
@@ -135,6 +178,132 @@ async fn get_playlist_songs(
     collection_id: String,
 ) -> Result<Vec<Song>, String> {
     state.api.fetch_playlist_songs(&collection_id).await
+}
+
+#[tauri::command]
+async fn create_user_playlist_cmd(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<bool, String> {
+    state.api.create_user_playlist(&name).await
+}
+
+#[tauri::command]
+async fn delete_user_playlist_cmd(
+    state: State<'_, AppState>,
+    list_id: i64,
+) -> Result<bool, String> {
+    state.api.delete_user_playlist(list_id).await
+}
+
+#[tauri::command]
+async fn add_song_to_playlist_cmd(
+    state: State<'_, AppState>,
+    list_id: i64,
+    song: Song,
+) -> Result<bool, String> {
+    state.api.add_song_to_user_playlist(list_id, &song).await
+}
+
+#[tauri::command]
+async fn get_followed_artists(state: State<'_, AppState>) -> Result<Vec<FollowedArtist>, String> {
+    state.api.fetch_followed_artists().await
+}
+
+#[tauri::command]
+async fn toggle_follow_artist_cmd(
+    state: State<'_, AppState>,
+    artist_id: String,
+    follow: bool,
+) -> Result<bool, String> {
+    state.api.toggle_follow_artist(&artist_id, follow).await
+}
+
+#[tauri::command]
+async fn get_purchased_albums(
+    state: State<'_, AppState>,
+) -> Result<Vec<PurchasedAlbumItem>, String> {
+    state.api.fetch_purchased_albums().await
+}
+
+#[tauri::command]
+async fn get_purchased_songs(
+    state: State<'_, AppState>,
+) -> Result<Vec<PurchasedSongItem>, String> {
+    state.api.fetch_purchased_songs().await
+}
+
+#[tauri::command]
+async fn get_artist_detail_cmd(
+    state: State<'_, AppState>,
+    artist_id: String,
+) -> Result<FollowedArtist, String> {
+    state.api.fetch_artist_detail(&artist_id).await
+}
+
+#[tauri::command]
+async fn get_artist_songs_cmd(
+    state: State<'_, AppState>,
+    artist_id: String,
+    sort: Option<String>,
+    page: Option<u32>,
+) -> Result<Vec<Song>, String> {
+    state
+        .api
+        .fetch_artist_songs(&artist_id, &sort.unwrap_or_else(|| "hot".to_string()), page.unwrap_or(1))
+        .await
+}
+
+#[tauri::command]
+async fn get_album_songs_cmd(
+    state: State<'_, AppState>,
+    album_id: String,
+) -> Result<Vec<Song>, String> {
+    state.api.fetch_album_songs(&album_id).await
+}
+
+#[tauri::command]
+async fn get_song_comments_cmd(
+    state: State<'_, AppState>,
+    song: Song,
+    sort_type: Option<String>,
+    page: Option<u32>,
+) -> Result<Vec<SongComment>, String> {
+    state
+        .api
+        .fetch_song_comments(&song, &sort_type.unwrap_or_else(|| "hot".to_string()), page.unwrap_or(1))
+        .await
+}
+
+#[tauri::command]
+async fn resign_device_cmd(state: State<'_, AppState>) -> Result<GatewayDiagResult, String> {
+    state.api.resign_device_identity().await
+}
+
+#[tauri::command]
+async fn diagnose_gateway_cmd(state: State<'_, AppState>) -> Result<GatewayDiagResult, String> {
+    state.api.diagnose_gateway_latency().await
+}
+
+#[tauri::command]
+async fn download_song_cmd(
+    state: State<'_, AppState>,
+    song: Song,
+    preferred_quality: Option<String>,
+    music_dir: Option<String>,
+    lrc_dir: Option<String>,
+    export_lrc: Option<bool>,
+) -> Result<DownloadTaskResult, String> {
+    state
+        .api
+        .download_song_to_local(
+            &song,
+            &preferred_quality.unwrap_or_else(|| "high".to_string()),
+            &music_dir.unwrap_or_default(),
+            &lrc_dir.unwrap_or_default(),
+            export_lrc.unwrap_or(true),
+        )
+        .await
 }
 
 #[tauri::command]
@@ -174,10 +343,30 @@ pub fn run() {
             get_new_song_express,
             get_rank_list,
             get_rank_songs,
+            get_fm_channels,
+            get_fm_songs,
             get_recent_history,
             search_songs,
+            get_search_hot,
+            search_playlists_cmd,
+            search_albums_cmd,
+            search_artists_cmd,
             get_user_playlists,
             get_playlist_songs,
+            create_user_playlist_cmd,
+            delete_user_playlist_cmd,
+            add_song_to_playlist_cmd,
+            get_followed_artists,
+            toggle_follow_artist_cmd,
+            get_purchased_albums,
+            get_purchased_songs,
+            get_artist_detail_cmd,
+            get_artist_songs_cmd,
+            get_album_songs_cmd,
+            get_song_comments_cmd,
+            resign_device_cmd,
+            diagnose_gateway_cmd,
+            download_song_cmd,
             resolve_song_url,
             get_song_lyric,
         ])

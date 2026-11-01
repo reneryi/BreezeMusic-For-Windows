@@ -12,6 +12,8 @@ use uuid::Uuid;
 pub struct PersistedState {
     pub device: DeviceIdentity,
     pub session: Option<KugouSession>,
+    #[serde(default)]
+    pub saved_accounts: Vec<KugouSession>,
     pub preferred_quality: String,
 }
 
@@ -34,6 +36,7 @@ impl Default for PersistedState {
                 dfid_registered: false,
             },
             session: None,
+            saved_accounts: Vec::new(),
             preferred_quality: "flac".to_string(),
         }
     }
@@ -111,8 +114,60 @@ impl AppStore {
     pub fn set_session(&self, session: Option<KugouSession>) {
         {
             let mut guard = self.state.lock().unwrap();
+            if let Some(ref s) = session {
+                if !s.user_id.trim().is_empty() && !s.token.trim().is_empty() {
+                    guard.saved_accounts.retain(|a| a.user_id != s.user_id);
+                    guard.saved_accounts.insert(0, s.clone());
+                    if guard.saved_accounts.len() > 8 {
+                        guard.saved_accounts.truncate(8);
+                    }
+                }
+            }
             guard.session = session;
         }
         self.save();
+    }
+
+    pub fn saved_accounts(&self) -> Vec<KugouSession> {
+        let guard = self.state.lock().unwrap();
+        let mut list = guard.saved_accounts.clone();
+        if let Some(ref cur) = guard.session {
+            if !list.iter().any(|a| a.user_id == cur.user_id) {
+                list.insert(0, cur.clone());
+            }
+        }
+        list
+    }
+
+    pub fn switch_account(&self, user_id: &str) -> Option<KugouSession> {
+        let target = {
+            let guard = self.state.lock().unwrap();
+            guard
+                .saved_accounts
+                .iter()
+                .find(|a| a.user_id == user_id)
+                .cloned()
+        };
+        if let Some(ref s) = target {
+            self.set_session(Some(s.clone()));
+        }
+        target
+    }
+
+    pub fn remove_saved_account(&self, user_id: &str) -> Vec<KugouSession> {
+        {
+            let mut guard = self.state.lock().unwrap();
+            guard.saved_accounts.retain(|a| a.user_id != user_id);
+            if guard
+                .session
+                .as_ref()
+                .map(|s| s.user_id == user_id)
+                .unwrap_or(false)
+            {
+                guard.session = guard.saved_accounts.first().cloned();
+            }
+        }
+        self.save();
+        self.saved_accounts()
     }
 }

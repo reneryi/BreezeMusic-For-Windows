@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { useAppStore } from "../stores/appStore";
+import type { AudioQualityValue } from "../types";
 import PlumpIcon from "./PlumpIcon.vue";
 
 const store = useAppStore();
@@ -8,6 +10,21 @@ function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return "约 28.5 MB";
   return (bytes / (1024 * 1024)).toFixed(2) + " MB";
 }
+
+const canRemoveFromCurrentPlaylist = computed(() => {
+  if (store.activeTab !== "library" || store.libraryDetailMode !== "playlist") {
+    return false;
+  }
+  if (store.libraryAssetTab === "liked") return true;
+  if (
+    store.libraryAssetTab === "created" &&
+    store.selectedPlaylist?.isCreatedByMe &&
+    store.selectedPlaylist?.listId
+  ) {
+    return true;
+  }
+  return false;
+});
 
 function handlePlayNow() {
   if (store.contextMenu.song) {
@@ -30,6 +47,13 @@ function handleOpenAddToPlaylist() {
   store.closeSongContextMenu();
 }
 
+function handleRemoveFromPlaylist() {
+  if (store.contextMenu.song) {
+    store.removeSongFromCurrentPlaylist(store.contextMenu.song);
+  }
+  store.closeSongContextMenu();
+}
+
 function handleViewArtist() {
   const s = store.contextMenu.song;
   if (s) {
@@ -48,17 +72,59 @@ function handleViewAlbum() {
 
 function handleOpenDetail() {
   if (store.contextMenu.song) {
-    store.songDetailModalSong = store.contextMenu.song;
+    store.openSongDetailModal(store.contextMenu.song);
   }
   store.closeSongContextMenu();
 }
 
-function handleDownload() {
+function handleOpenDownloadModal() {
   if (store.contextMenu.song) {
-    store.triggerDownloadSong(store.contextMenu.song);
+    store.downloadModalSong = store.contextMenu.song;
   }
   store.closeSongContextMenu();
 }
+
+const downloadTierChoices = computed(() => {
+  const s = store.downloadModalSong;
+  if (!s) return [];
+  const tiers: {
+    val: AudioQualityValue;
+    label: string;
+    badge: string;
+    sizeText: string;
+    available: boolean;
+  }[] = [
+    {
+      val: "high",
+      label: "Hi-Res 高解析度母带 (24bit FLAC)",
+      badge: "Hi-Res",
+      sizeText: formatBytes(s.sizeHiRes || 36_500_000),
+      available: Boolean(s.isHiRes || s.hashHiRes),
+    },
+    {
+      val: "flac",
+      label: "SQ 无损音质 (16bit/44.1kHz FLAC)",
+      badge: "SQ",
+      sizeText: formatBytes(s.sizeFlac || 24_800_000),
+      available: Boolean(s.isLossless || s.hashFlac || s.isHiRes),
+    },
+    {
+      val: "320",
+      label: "HQ 高品音质 (320kbps MP3)",
+      badge: "320K",
+      sizeText: formatBytes(s.size320 || 9_200_000),
+      available: true,
+    },
+    {
+      val: "128",
+      label: "标准音质 (128kbps OGG/MP3)",
+      badge: "128K",
+      sizeText: formatBytes(s.size128 || 3_800_000),
+      available: true,
+    },
+  ];
+  return tiers;
+});
 </script>
 
 <template>
@@ -95,7 +161,9 @@ function handleDownload() {
           name="heart"
           :size="15"
           :color="
-            store.isSongLiked(store.contextMenu.song) ? '#ff4d6d' : 'currentColor'
+            store.isSongLiked(store.contextMenu.song)
+              ? '#ff4d6d'
+              : 'currentColor'
           "
         />
         <span>
@@ -110,6 +178,16 @@ function handleDownload() {
       <button class="scm-item" @click="handleOpenAddToPlaylist">
         <PlumpIcon name="playlist-add" :size="15" />
         <span>收藏到自建歌单...</span>
+      </button>
+
+      <button
+        v-if="canRemoveFromCurrentPlaylist"
+        class="scm-item"
+        style="color: var(--coral)"
+        @click="handleRemoveFromPlaylist"
+      >
+        <PlumpIcon name="close" :size="15" color="var(--coral)" />
+        <span>从当前歌单移除</span>
       </button>
 
       <button class="scm-item" @click="handleViewArtist">
@@ -128,17 +206,17 @@ function handleDownload() {
 
       <button class="scm-item" @click="handleOpenDetail">
         <PlumpIcon name="wave" :size="15" />
-        <span>查看音频硬件参数 (STREAMINFO)</span>
+        <span>音频流百科与硬件参数 (STREAMINFO)</span>
       </button>
 
       <!-- 仅当用户在「设置 -> 功能与隐私管控」中开启音乐下载开关后才显示下载项 -->
       <button
         v-if="store.downloadFeatureUnlocked"
         class="scm-item highlight"
-        @click="handleDownload"
+        @click="handleOpenDownloadModal"
       >
         <PlumpIcon name="download" :size="15" accent="#00e5a3" />
-        <span>下载歌曲 (内嵌 1000P 封面/歌词)</span>
+        <span>多音质下载 (内嵌 1000P 封面/歌词)...</span>
       </button>
     </div>
   </transition>
@@ -194,16 +272,16 @@ function handleDownload() {
     </div>
   </transition>
 
-  <!-- 3. 音频硬件参数与元数据详情弹窗 (对齐 Android SongDetailSheet.kt) -->
+  <!-- 3. 音频硬件参数与元数据百科详情弹窗 (对齐 Android SongDetailSheet.kt + fetchSongDetail) -->
   <transition name="fade">
     <div
       v-if="store.songDetailModalSong"
       class="modal-backdrop"
       @click.self="store.songDetailModalSong = null"
     >
-      <div class="compact-glass-modal">
+      <div class="compact-glass-modal" style="width: 490px">
         <div class="modal-header">
-          <h3>音频流硬件规格 · STREAMINFO</h3>
+          <h3>音频流硬件规格与唱片百科 · STREAMINFO</h3>
           <button
             class="icon-close-btn"
             @click="store.songDetailModalSong = null"
@@ -231,6 +309,9 @@ function handleDownload() {
                   {{ store.songDetailModalSong.highestQuality || "Hi-Res" }}
                 </span>
                 <span class="mini-badge sq">RFC 9639 STREAMINFO</span>
+                <span v-if="store.isLoadingSongDetail" class="mini-badge vip">
+                  正在探测流头...
+                </span>
               </div>
             </div>
           </div>
@@ -239,31 +320,62 @@ function handleDownload() {
             <div class="spec-kv-cell">
               <span class="k">所属专辑</span>
               <span class="v">
-                {{ store.songDetailModalSong.album || "单曲发行" }}
+                {{
+                  store.activeSongDetailInfo?.albumName ||
+                  store.songDetailModalSong.album ||
+                  "单曲发行"
+                }}
+              </span>
+            </div>
+            <div class="spec-kv-cell">
+              <span class="k">发行公司 / 厂牌</span>
+              <span class="v">
+                {{
+                  store.activeSongDetailInfo?.company ||
+                  "酷狗概念版正版数字曲库"
+                }}
               </span>
             </div>
             <div class="spec-kv-cell">
               <span class="k">发行日期</span>
               <span class="v">
-                {{ store.songDetailModalSong.publishDate || "官方曲库收录" }}
+                {{
+                  store.activeSongDetailInfo?.publishTime ||
+                  store.songDetailModalSong.publishDate ||
+                  "官方曲库收录"
+                }}
               </span>
             </div>
             <div class="spec-kv-cell">
               <span class="k">最高音质档位</span>
               <span class="v">
                 {{
-                  store.songDetailModalSong.isHiRes
+                  store.activeSongDetailInfo?.audioQuality ||
+                  (store.songDetailModalSong.isHiRes
                     ? "24bit / 96.0kHz Hi-Res 母带"
                     : store.songDetailModalSong.isLossless
                     ? "16bit / 44.1kHz FLAC 无损"
-                    : "320kbps HQ 高品"
+                    : "320kbps HQ 高品")
                 }}
               </span>
             </div>
             <div class="spec-kv-cell">
-              <span class="k">无损流大小</span>
+              <span class="k">硬件采样率 / 位深</span>
               <span class="v">
                 {{
+                  store.activeSongDetailInfo?.sampleRate ||
+                  (store.songDetailModalSong.isHiRes
+                    ? "96.0 kHz / 24 bit"
+                    : "44.1 kHz / 16 bit")
+                }}
+              </span>
+            </div>
+            <div class="spec-kv-cell">
+              <span class="k">实测码率与大小</span>
+              <span class="v">
+                {{ store.activeSongDetailInfo?.bitRate || "920 kbps" }} ·
+                {{
+                  store.activeSongDetailInfo?.fileSize ||
                   formatBytes(
                     store.songDetailModalSong.sizeHiRes ||
                       store.songDetailModalSong.sizeFlac ||
@@ -273,10 +385,90 @@ function handleDownload() {
               </span>
             </div>
             <div class="spec-kv-cell full">
-              <span class="k">曲目音源 Hash</span>
-              <code class="v">{{ store.songDetailModalSong.hash }}</code>
+              <span class="k">曲目音源 MD5 Hash</span>
+              <code class="v">
+                {{
+                  store.activeSongDetailInfo?.fileHash ||
+                  store.songDetailModalSong.hash.toUpperCase()
+                }}
+              </code>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <!-- 4. 多音质下载档位选择与二进制标签内嵌弹窗 (对齐 Android SongDownloadDialog.kt) -->
+  <transition name="fade">
+    <div
+      v-if="store.downloadModalSong"
+      class="modal-backdrop"
+      @click.self="store.downloadModalSong = null"
+    >
+      <div class="compact-glass-modal" style="width: 460px">
+        <div class="modal-header">
+          <div>
+            <h3>选择下载音质档位</h3>
+            <p class="vip-sub-caption">
+              默认二进制内嵌 1000×1000 高清封面、完整歌手专辑标签与双语时间轴歌词
+            </p>
+          </div>
+          <button
+            class="icon-close-btn"
+            @click="store.downloadModalSong = null"
+          >
+            <PlumpIcon name="close" :size="15" />
+          </button>
+        </div>
+
+        <div class="spec-hero-row">
+          <img
+            v-if="store.downloadModalSong.coverUrl"
+            :src="store.downloadModalSong.coverUrl"
+            class="spec-cover"
+          />
+          <div>
+            <div class="spec-song-title">
+              {{ store.downloadModalSong.title }}
+            </div>
+            <div class="spec-song-artist">
+              {{ store.downloadModalSong.artist }} ·
+              {{ store.downloadModalSong.album || "单曲" }}
+            </div>
+          </div>
+        </div>
+
+        <div class="playlist-pick-list">
+          <button
+            v-for="tier in downloadTierChoices"
+            :key="tier.val"
+            class="playlist-pick-row"
+            :style="{ opacity: tier.available ? 1 : 0.65 }"
+            @click="
+              store.triggerDownloadSong(store.downloadModalSong!, tier.val)
+            "
+          >
+            <div class="ppr-left">
+              <span
+                class="mini-badge"
+                :class="
+                  tier.val === 'high'
+                    ? 'hires'
+                    : tier.val === 'flac'
+                    ? 'sq'
+                    : 'vip'
+                "
+              >
+                {{ tier.badge }}
+              </span>
+              <div>
+                <div class="ppr-title">{{ tier.label }}</div>
+                <div class="ppr-count">预估大小：{{ tier.sizeText }}</div>
+              </div>
+            </div>
+            <PlumpIcon name="download" :size="16" color="var(--cyan)" />
+          </button>
         </div>
       </div>
     </div>

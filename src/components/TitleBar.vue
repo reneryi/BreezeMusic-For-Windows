@@ -89,7 +89,11 @@ async function toggleMaximizeWindow() {
 
 async function closeWindow() {
   try {
-    await appWindow.close();
+    if (store.closeToTray) {
+      await appWindow.minimize();
+    } else {
+      await appWindow.close();
+    }
   } catch {}
 }
 </script>
@@ -184,13 +188,41 @@ async function closeWindow() {
           <span class="search-kbd-tag">Ctrl K</span>
         </div>
 
-        <!-- 下拉式热搜榜与历史记录指令浮层（无边框色阶浮层） -->
+        <!-- 下拉式实时联想词 + 热搜榜 + 历史记录指令浮层（无边框色阶浮层） -->
         <transition name="pop-spring">
           <div
             v-if="store.isSearchPaletteOpen"
             class="skyline-search-dropdown"
             @click.stop
           >
+            <!-- 实时搜索联想词 (/v2/getSearchTip) -->
+            <div
+              v-if="
+                store.searchKeyword.trim() &&
+                store.searchSuggestions.length > 0
+              "
+              class="sd-section"
+            >
+              <div class="sd-head">
+                <span>实时搜索建议</span>
+              </div>
+              <div class="sd-suggest-list">
+                <button
+                  v-for="tip in store.searchSuggestions"
+                  :key="tip"
+                  class="sd-suggest-item"
+                  @click="store.executeSearch(tip)"
+                >
+                  <PlumpIcon
+                    name="search"
+                    :size="13"
+                    color="var(--cyan)"
+                  />
+                  <span>{{ tip }}</span>
+                </button>
+              </div>
+            </div>
+
             <div v-if="store.searchHistory.length > 0" class="sd-section">
               <div class="sd-head">
                 <span>最近搜索</span>
@@ -237,7 +269,6 @@ async function closeWindow() {
     <div class="skyline-right">
       <template v-if="store.isLoggedIn && store.session">
         <div class="skyline-identity-capsule">
-          <!-- 点击左半部进入我的音乐/切换账号，悬停查看听歌时长同步详情 -->
           <div
             class="identity-user-part"
             :title="`UID: ${store.session.userId} · 点击前往我的音乐资产 / 同步云端等级`"
@@ -257,7 +288,10 @@ async function closeWindow() {
               <div v-else class="identity-avatar-fallback">
                 {{ store.session.nickname.slice(0, 1) }}
               </div>
-              <span class="cscc-live-dot" title="CSCC 听歌时长实时心跳已连接"></span>
+              <span
+                class="cscc-live-dot"
+                title="CSCC 听歌时长实时心跳已连接"
+              ></span>
             </div>
 
             <div class="identity-meta">

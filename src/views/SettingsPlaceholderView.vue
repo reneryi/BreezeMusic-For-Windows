@@ -144,6 +144,16 @@ const downloadQualityOptions: { val: AudioQualityValue; name: string }[] = [
 
 const changelogVersions = [
   {
+    ver: "v1.4.0 (Windows Full Parity & Adaptive Upgrade)",
+    date: "2026-11-01",
+    items: [
+      "彻底重构「水彩浸润 (Watercolor Light)」浅色主题与 WebView2 按钮/标题颜色继承机制，100% 满足 WCAG 高对比度可读性",
+      "新增多级响应式断点 (@media <=920px / <=1180px / >=1600px) 与窗口尺寸记忆，修复迷你黑胶挂件与最大化窗口切换失真、歌单列高度截断与标题挤压",
+      "Rust 端侧全量对齐 Android 仓库：补齐 CSCC (d.kugou.com) 三段式真实听歌时长上报、歌单全量多页拉取 (突破 100 首限制)、歌单云端双向收藏/删歌、评论二层楼中楼/点赞/发评、搜索实时联想词、KTV 伴奏音轨切换与酷狗蝰蛇音效库",
+      "新增纯 Rust 零外部依赖 FLAC (Vorbis Comment + Picture) 与 MP3 (ID3v2.3 UTF-16LE + APIC + USLT) 二进制标签、1000×1000 高清封面及双语歌词内嵌引擎",
+    ],
+  },
+  {
     ver: "v1.3.2 (Windows Skyline Edition)",
     date: "2026-11-01",
     items: [

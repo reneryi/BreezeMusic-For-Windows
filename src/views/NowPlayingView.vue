@@ -6,6 +6,7 @@ import type {
   LyricThemeId,
   PlayerBackgroundStyle,
   PlayerStageStyle,
+  ReverbPresetId,
 } from "../types";
 import PlumpIcon from "../components/PlumpIcon.vue";
 
@@ -17,8 +18,17 @@ const activeOverlayPanel = ref<
   "none" | "stage_bg" | "lyric_cfg" | "dsp_eq" | "comments" | "queue" | "more"
 >("none");
 
-// 母带 DSP 面板内子 Tab：'peq' = 10段参量均衡器, 'field' = 声场调音工作台
-const dspSubTab = ref<"peq" | "field">("peq");
+// 母带 DSP 面板内子 Tab：'viper' = 酷狗蝰蛇音效库, 'peq' = 10段参量均衡器, 'field' = 声场调音工作台
+const dspSubTab = ref<"viper" | "peq" | "field">("viper");
+const selectedViperCategory = ref<string>("全部");
+
+// 评论发送框与回复状态
+const newCommentText = ref<string>("");
+const replyTargetComment = ref<{ id: string; userName: string } | null>(null);
+const isSubmittingComment = ref<boolean>(false);
+
+// 播放队列子 Tab：'current' = 当前队列, 'recent' = 最近播放过的队列层叠卡
+const queueSubTab = ref<"current" | "recent">("current");
 
 // 高清 1000P 封面大图预览弹窗
 const showHdCoverPreview = ref(false);
@@ -170,6 +180,15 @@ const avgEnergy = computed(() => {
   return Math.round((sum / 12) * store.playMomentum);
 });
 
+const viperCategories = ["全部", "官方旗舰", "3D空间", "复古介质", "曲风人声"];
+
+const filteredViperEffects = computed(() => {
+  if (selectedViperCategory.value === "全部") return store.viperEffects;
+  return store.viperEffects.filter(
+    (v) => v.category === selectedViperCategory.value
+  );
+});
+
 const eqPresetList = [
   { id: "flat", name: "监听平直 (0dB)" },
   { id: "harman", name: "哈曼目标曲线" },
@@ -188,6 +207,16 @@ const crossoverFreqs = [
   { hz: 110, label: "110Hz 暖厚感" },
 ];
 
+const reverbPresets: { id: ReverbPresetId; label: string }[] = [
+  { id: "none", label: "无混响" },
+  { id: "small_room", label: "小型房间" },
+  { id: "medium_room", label: "中型房间" },
+  { id: "large_room", label: "大型场馆" },
+  { id: "medium_hall", label: "音乐大厅" },
+  { id: "large_hall", label: "混响礼堂" },
+  { id: "plate", label: "录音室板式" },
+];
+
 const hdCoverUrl = computed(() => {
   const raw = store.currentSong?.coverUrl || "";
   return raw.replace("/400/", "/1000/");
@@ -204,6 +233,23 @@ function togglePanel(
 ) {
   activeOverlayPanel.value =
     activeOverlayPanel.value === panel ? "none" : panel;
+}
+
+async function handleSendComment() {
+  if (!newCommentText.value.trim()) return;
+  isSubmittingComment.value = true;
+  try {
+    const ok = await store.submitSongComment(
+      newCommentText.value.trim(),
+      replyTargetComment.value?.id
+    );
+    if (ok) {
+      newCommentText.value = "";
+      replyTargetComment.value = null;
+    }
+  } finally {
+    isSubmittingComment.value = false;
+  }
 }
 </script>
 
@@ -394,7 +440,7 @@ function togglePanel(
             </div>
           </div>
 
-          <!-- 平板横屏专属：舞台右下角竖向三联软润按钮（对齐 LandscapePlayerPage.kt: 收藏 / 加歌单 / 歌词海报） -->
+          <!-- 平板横屏专属：舞台右下角竖向三联软润按钮 -->
           <div class="stage-right-vertical-orbs" @click.stop>
             <button
               class="stage-orb-btn"
@@ -442,7 +488,7 @@ function togglePanel(
           </div>
         </div>
 
-        <!-- 左下沉降式统一控播与信息坞（上歌名 + 下歌手双层独立结构 + 专属辅助工具栏） -->
+        <!-- 左下沉降式统一控播与信息坞 -->
         <div class="np-bottom-control-dock">
           <div class="np-song-info-block">
             <h2 class="np-song-title" @click="showHdCoverPreview = true">
@@ -482,7 +528,15 @@ function togglePanel(
             </p>
 
             <div class="np-tech-badges">
-              <span class="tech-pill hires">
+              <span
+                class="tech-pill hires"
+                style="cursor: pointer"
+                title="点击查看音频流硬件百科详情 (STREAMINFO)"
+                @click="
+                  store.currentSong &&
+                    store.openSongDetailModal(store.currentSong)
+                "
+              >
                 <PlumpIcon name="sparkles" :size="13" color="var(--cyan)" />
                 <span>
                   {{
@@ -495,12 +549,20 @@ function togglePanel(
               <span
                 v-if="store.currentPlaybackInfo?.techSpecText"
                 class="tech-pill spec"
+                style="cursor: pointer"
                 title="RFC 9639 FLAC STREAMINFO 硬件流头实测采样率"
+                @click="
+                  store.currentSong &&
+                    store.openSongDetailModal(store.currentSong)
+                "
               >
                 {{ store.currentPlaybackInfo.techSpecText }}
               </span>
               <span v-if="store.climaxModeEnabled" class="tech-pill gold">
                 副歌速刷 30s
+              </span>
+              <span v-if="store.ktvAccompanimentMode" class="tech-pill gold">
+                KTV 纯伴奏中
               </span>
             </div>
           </div>
@@ -531,12 +593,13 @@ function togglePanel(
                 active:
                   activeOverlayPanel === 'dsp_eq' ||
                   store.acousticField.enabled ||
-                  store.activeEqPreset !== 'flat',
+                  store.activeEqPreset !== 'flat' ||
+                  store.activeViperEffectId !== 'off',
               }"
               @click="togglePanel('dsp_eq')"
             >
               <PlumpIcon name="wave" :size="15" />
-              <span>母带 DSP</span>
+              <span>蝰蛇 / 母带 DSP</span>
             </button>
 
             <button
@@ -560,7 +623,7 @@ function togglePanel(
             <button
               class="np-tool-pill"
               :class="{ active: activeOverlayPanel === 'more' }"
-              title="倍速、睡眠定时、伴奏与高清封面"
+              title="倍速、升降调、KTV伴奏、睡眠定时与高清封面"
               @click="togglePanel('more')"
             >
               <PlumpIcon name="more" :size="15" />
@@ -576,17 +639,24 @@ function togglePanel(
             <span class="krc-status-tag">
               {{
                 store.currentLyric.isKrc
-                  ? "KRC 逐字流光引擎 · 64-bit LTI DSP"
+                  ? "KRC 逐字流光引擎 · 64-bit Pure LTI DSP"
                   : "沉浸同步歌词"
               }}
             </span>
-            <!-- 前奏/间奏三点流光呼吸波点 (对齐 Android hasInterludeCandidateAt) -->
             <div v-if="isInterludeActive" class="interlude-breathing-dots">
               <span></span><span></span><span></span>
             </div>
           </div>
 
           <div class="krc-header-pills">
+            <button
+              class="trans-toggle-pill"
+              :class="{ active: store.ktvAccompanimentMode }"
+              title="一键切换 KTV 伴奏 / 原唱"
+              @click="store.toggleKtvAccompaniment()"
+            >
+              <span>伴</span>
+            </button>
             <button
               v-if="store.currentLyric.hasTranslation"
               class="trans-toggle-pill"
@@ -640,7 +710,6 @@ function togglePanel(
               }"
               @click="store.seekToMs(line.startTimeMs)"
             >
-              <!-- KRC 逐字卡拉 OK 扫光渲染 -->
               <div
                 v-if="store.lyricWordByWord && line.words.length > 0"
                 class="krc-words-row"
@@ -669,7 +738,6 @@ function togglePanel(
                 {{ line.text }}
               </div>
 
-              <!-- 罗马音注音 -->
               <div
                 v-if="store.showPhonetic && line.phonetic"
                 class="krc-trans-row"
@@ -682,7 +750,6 @@ function togglePanel(
                 {{ line.phonetic }}
               </div>
 
-              <!-- 双语翻译 -->
               <div
                 v-if="store.showTranslation && line.translation"
                 class="krc-trans-row"
@@ -712,11 +779,11 @@ function togglePanel(
                 : activeOverlayPanel === "lyric_cfg"
                 ? "歌词显示设置（六大流光主题 · 排版 · 校准）"
                 : activeOverlayPanel === "dsp_eq"
-                ? "64-bit 纯线性母带 DSP 调音台 & 10 段参量均衡器"
+                ? "酷狗蝰蛇声学矩阵 · 64-bit 纯线性母带 DSP & 10段参量均衡器"
                 : activeOverlayPanel === "comments"
-                ? `歌曲热评与最新评论 (${store.activeSongComments.length})`
+                ? `歌曲热评与多级楼中楼评论区 (${store.activeSongComments.length})`
                 : activeOverlayPanel === "queue"
-                ? `当前播放队列 (${store.playQueue.length})`
+                ? `播放队列与最近歌单栈 (${store.playQueue.length})`
                 : "进阶声学与播放控制工具"
             }}
           </h4>
@@ -825,10 +892,17 @@ function togglePanel(
           </div>
         </div>
 
-        <!-- 面板 C：母带级 DSP 调音台（10段PEQ + 5大参考曲线 + A/B/C记忆槽 + 声场调音工作台） -->
+        <!-- 面板 C：母带级 DSP 调音台（酷狗蝰蛇音效库 + 10段PEQ + 声场调音工作台） -->
         <div v-else-if="activeOverlayPanel === 'dsp_eq'" class="drawer-body">
           <div class="dsp-top-bar">
             <div class="pill-tabs">
+              <button
+                class="pill-tab-btn"
+                :class="{ active: dspSubTab === 'viper' }"
+                @click="dspSubTab = 'viper'"
+              >
+                酷狗蝰蛇音效库
+              </button>
               <button
                 class="pill-tab-btn"
                 :class="{ active: dspSubTab === 'peq' }"
@@ -841,7 +915,7 @@ function togglePanel(
                 :class="{ active: dspSubTab === 'field' }"
                 @click="dspSubTab = 'field'"
               >
-                声场调音工作台
+                声场调音与混响
               </button>
             </div>
 
@@ -862,7 +936,69 @@ function togglePanel(
             </div>
           </div>
 
-          <template v-if="dspSubTab === 'peq'">
+          <!-- 子 Tab 1：酷狗蝰蛇官方音效矩阵 (对齐 AudioEffectDialog.kt) -->
+          <template v-if="dspSubTab === 'viper'">
+            <div class="bg-choice-pills mb-10">
+              <button
+                v-for="cat in viperCategories"
+                :key="cat"
+                class="bg-pill-btn"
+                :class="{ active: selectedViperCategory === cat }"
+                @click="selectedViperCategory = cat"
+              >
+                {{ cat }}
+              </button>
+              <button
+                v-if="store.activeViperEffectId !== 'off'"
+                class="bg-pill-btn"
+                style="color: var(--coral)"
+                @click="store.applyViperEffect(null)"
+              >
+                关闭蝰蛇音效
+              </button>
+            </div>
+
+            <div class="stage-choice-grid" style="grid-template-columns: repeat(3, 1fr)">
+              <button
+                v-for="vf in filteredViperEffects"
+                :key="vf.id"
+                class="stage-choice-card"
+                :class="{ active: store.activeViperEffectId === vf.id }"
+                @click="store.applyViperEffect(vf)"
+              >
+                <div
+                  style="
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                  "
+                >
+                  <span class="scc-title">{{ vf.label }}</span>
+                  <span class="mini-badge sq">{{ vf.usageBadge }}</span>
+                </div>
+                <div class="scc-desc">{{ vf.desc }}</div>
+                <div
+                  style="
+                    display: flex;
+                    gap: 4px;
+                    flex-wrap: wrap;
+                    margin-top: 6px;
+                  "
+                >
+                  <span
+                    v-for="tag in vf.acousticTags"
+                    :key="tag"
+                    class="mini-badge hires"
+                  >
+                    {{ tag }}
+                  </span>
+                </div>
+              </button>
+            </div>
+          </template>
+
+          <!-- 子 Tab 2：10 段参量均衡器 (PEQ) -->
+          <template v-else-if="dspSubTab === 'peq'">
             <div class="bg-choice-pills mb-10">
               <button
                 v-for="p in eqPresetList"
@@ -875,13 +1011,14 @@ function togglePanel(
               </button>
             </div>
 
-            <!-- 3 组自定义记忆槽 A / B / C（支持存入、载入、单槽重置） -->
             <div class="peq-slots-row mb-10">
               <div
                 v-for="slot in store.peqMemorySlots"
                 :key="slot.slotId"
                 class="peq-slot-pill"
-                :class="{ active: store.activeEqPreset === `slot_${slot.slotId}` }"
+                :class="{
+                  active: store.activeEqPreset === `slot_${slot.slotId}`,
+                }"
               >
                 <button
                   class="slot-load-btn"
@@ -915,7 +1052,11 @@ function togglePanel(
                 class="eq-band-col"
               >
                 <span class="eq-gain-val">
-                  {{ store.eqGains[idx] > 0 ? `+${store.eqGains[idx]}` : store.eqGains[idx] }}dB
+                  {{
+                    store.eqGains[idx] > 0
+                      ? `+${store.eqGains[idx]}`
+                      : store.eqGains[idx]
+                  }}dB
                 </span>
                 <input
                   type="range"
@@ -936,9 +1077,52 @@ function togglePanel(
                 </span>
               </div>
             </div>
+
+            <!-- 品质因数 Q 值与 HPF / LPF 边界滤波控制 (对齐 ProfessionalEqualizerPage) -->
+            <div class="lyric-sliders-row mt-14">
+              <div class="cfg-col">
+                <div class="cfg-label">
+                  品质因数 Q 值：{{ store.eqQFactor.toFixed(2) }}
+                </div>
+                <input
+                  v-model.number="store.eqQFactor"
+                  type="range"
+                  min="0.4"
+                  max="6.0"
+                  step="0.1"
+                  @input="store.syncDspChain()"
+                />
+              </div>
+              <div class="cfg-col">
+                <div class="cfg-label">
+                  高通边界滤波 (HPF)：{{ store.eqHighPassHz }} Hz
+                </div>
+                <input
+                  v-model.number="store.eqHighPassHz"
+                  type="range"
+                  min="15"
+                  max="180"
+                  step="5"
+                  @input="store.syncDspChain()"
+                />
+              </div>
+              <div class="cfg-col">
+                <div class="cfg-label">
+                  低通边界滤波 (LPF)：{{ store.eqLowPassHz }} Hz
+                </div>
+                <input
+                  v-model.number="store.eqLowPassHz"
+                  type="range"
+                  min="8000"
+                  max="20000"
+                  step="500"
+                  @input="store.syncDspChain()"
+                />
+              </div>
+            </div>
           </template>
 
-          <!-- 声场调音工作台 (AcousticFieldTuningTab) -->
+          <!-- 子 Tab 3：声场调音工作台 (AcousticFieldTuningTab) -->
           <template v-else>
             <div class="acoustic-field-grid">
               <div class="af-toggle-head">
@@ -953,6 +1137,7 @@ function togglePanel(
                 </label>
               </div>
 
+              <div class="cfg-label">低频分频谐振中心频点 & 空间声学混响模型</div>
               <div class="bg-choice-pills mb-10">
                 <button
                   v-for="cf in crossoverFreqs"
@@ -967,6 +1152,20 @@ function togglePanel(
                   "
                 >
                   {{ cf.label }}
+                </button>
+              </div>
+
+              <div class="bg-choice-pills mb-10">
+                <button
+                  v-for="rv in reverbPresets"
+                  :key="rv.id"
+                  class="bg-pill-btn"
+                  :class="{
+                    active: store.acousticField.reverbPreset === rv.id,
+                  }"
+                  @click="store.acousticField.reverbPreset = rv.id"
+                >
+                  {{ rv.label }}
                 </button>
               </div>
 
@@ -985,7 +1184,9 @@ function togglePanel(
                 </div>
                 <div class="cfg-col">
                   <div class="cfg-label">
-                    人声通透与齿音柔化：{{ store.acousticField.vocalClarity }}%
+                    人声通透与 6.2kHz 齿音抑制：{{
+                      store.acousticField.vocalClarity
+                    }}%
                   </div>
                   <input
                     v-model.number="store.acousticField.vocalClarity"
@@ -997,7 +1198,9 @@ function togglePanel(
                 </div>
                 <div class="cfg-col">
                   <div class="cfg-label">
-                    12kHz+ 空气泛音：{{ store.acousticField.airHarmonics }}%
+                    12kHz+ 空气泛音 / 胆机温暖度：{{
+                      store.acousticField.airHarmonics
+                    }}%
                   </div>
                   <input
                     v-model.number="store.acousticField.airHarmonics"
@@ -1012,26 +1215,69 @@ function togglePanel(
           </template>
         </div>
 
-        <!-- 面板 D：歌曲评论区（支持最热/最新切换） -->
+        <!-- 面板 D：歌曲评论区（最热/最新切换 + 多级楼中楼展开 + 点赞 + 发表评论） -->
         <div
           v-else-if="activeOverlayPanel === 'comments'"
           class="drawer-body comments-drawer-body"
         >
-          <div class="pill-tabs mb-10">
-            <button
-              class="pill-tab-btn"
-              :class="{ active: store.commentSortType === 'hot' }"
-              @click="store.loadCommentsForSong(store.currentSong, 'hot')"
-            >
-              精彩热评
-            </button>
-            <button
-              class="pill-tab-btn"
-              :class="{ active: store.commentSortType === 'new' }"
-              @click="store.loadCommentsForSong(store.currentSong, 'new')"
-            >
-              最新评论
-            </button>
+          <div
+            style="
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 12px;
+              margin-bottom: 10px;
+              flex-wrap: wrap;
+            "
+          >
+            <div class="pill-tabs">
+              <button
+                class="pill-tab-btn"
+                :class="{ active: store.commentSortType === 'hot' }"
+                @click="store.loadCommentsForSong(store.currentSong, 'hot')"
+              >
+                精彩热评
+              </button>
+              <button
+                class="pill-tab-btn"
+                :class="{ active: store.commentSortType === 'new' }"
+                @click="store.loadCommentsForSong(store.currentSong, 'new')"
+              >
+                最新评论
+              </button>
+            </div>
+
+            <!-- 发表评论或回复楼层输入框 -->
+            <div style="display: flex; align-items: center; gap: 8px; flex: 1; max-width: 480px">
+              <span
+                v-if="replyTargetComment"
+                class="mini-badge sq"
+                style="cursor: pointer"
+                title="点击取消回复楼层"
+                @click="replyTargetComment = null"
+              >
+                @{{ replyTargetComment.userName }} ×
+              </span>
+              <input
+                v-model="newCommentText"
+                type="text"
+                class="plump-text-input"
+                style="padding: 7px 14px; font-size: 12.5px"
+                :placeholder="
+                  replyTargetComment
+                    ? `回复 @${replyTargetComment.userName}...`
+                    : '写下你的听歌感受，与概念版乐迷共鸣...'
+                "
+                @keydown.enter="handleSendComment"
+              />
+              <button
+                class="tonal-pill-btn sm primary"
+                :disabled="isSubmittingComment"
+                @click="handleSendComment"
+              >
+                发送
+              </button>
+            </div>
           </div>
 
           <div
@@ -1050,38 +1296,132 @@ function togglePanel(
               v-for="cmt in store.activeSongComments"
               :key="cmt.id"
               class="comment-card-item"
+              style="flex-direction: column; gap: 8px"
             >
-              <img
-                v-if="cmt.userAvatar"
-                :src="cmt.userAvatar"
-                class="cmt-avatar"
-              />
-              <div v-else class="cmt-avatar fallback">
-                {{ cmt.userName.slice(0, 1) }}
-              </div>
-              <div class="cmt-main">
-                <div class="cmt-top">
-                  <span class="cmt-user">{{ cmt.userName }}</span>
-                  <span class="cmt-time">
-                    {{ cmt.createdTime }} {{ cmt.location }}
-                  </span>
+              <div style="display: flex; gap: 12px; align-items: flex-start">
+                <img
+                  v-if="cmt.userAvatar"
+                  :src="cmt.userAvatar"
+                  class="cmt-avatar"
+                />
+                <div v-else class="cmt-avatar fallback">
+                  {{ cmt.userName.slice(0, 1) }}
                 </div>
-                <div class="cmt-text">{{ cmt.content }}</div>
+                <div class="cmt-main">
+                  <div class="cmt-top">
+                    <span class="cmt-user">{{ cmt.userName }}</span>
+                    <span class="cmt-time">
+                      {{ cmt.createdTime }} {{ cmt.location }}
+                    </span>
+                  </div>
+                  <div class="cmt-text">{{ cmt.content }}</div>
+
+                  <div
+                    style="
+                      display: flex;
+                      align-items: center;
+                      gap: 12px;
+                      margin-top: 6px;
+                      font-size: 11.5px;
+                    "
+                  >
+                    <button
+                      v-if="cmt.replyCount > 0"
+                      style="color: var(--cyan); font-weight: 700"
+                      @click="store.toggleCommentFloorReplies(cmt)"
+                    >
+                      {{
+                        store.expandedFloorCommentId === cmt.id
+                          ? `收起 ${cmt.replyCount} 条回复`
+                          : `查看 ${cmt.replyCount} 条楼中楼回复 >`
+                      }}
+                    </button>
+                    <button
+                      style="color: var(--text-muted); font-weight: 700"
+                      @click="
+                        replyTargetComment = {
+                          id: cmt.id,
+                          userName: cmt.userName,
+                        }
+                      "
+                    >
+                      回复
+                    </button>
+                  </div>
+                </div>
+                <button
+                  class="cmt-likes"
+                  style="cursor: pointer"
+                  @click="store.toggleLikeComment(cmt)"
+                >
+                  <PlumpIcon
+                    name="heart"
+                    :size="13"
+                    :filled="cmt.isLiked"
+                    :color="cmt.isLiked ? '#ff4d6d' : 'currentColor'"
+                  />
+                  <span>{{ cmt.likeCount }}</span>
+                </button>
               </div>
-              <div class="cmt-likes">
-                <PlumpIcon name="heart" :size="13" />
-                <span>{{ cmt.likeCount }}</span>
+
+              <!-- 二层楼中楼回复折叠区 -->
+              <div
+                v-if="store.expandedFloorCommentId === cmt.id"
+                style="
+                  margin-left: 48px;
+                  padding: 10px 14px;
+                  border-radius: 14px;
+                  background: var(--bg-surface);
+                  display: flex;
+                  flex-direction: column;
+                  gap: 8px;
+                "
+              >
+                <div
+                  v-if="
+                    store.isLoadingFloorReplies &&
+                    !store.floorRepliesMap[cmt.id]?.length
+                  "
+                  style="font-size: 12px; color: var(--text-secondary)"
+                >
+                  正在拉取楼层回复...
+                </div>
+                <div
+                  v-for="rep in store.floorRepliesMap[cmt.id] || []"
+                  :key="rep.id"
+                  style="font-size: 12.5px; line-height: 1.5"
+                >
+                  <strong style="color: var(--cyan)">{{ rep.userName }}：</strong>
+                  <span>{{ rep.content }}</span>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- 面板 E：当前播放队列抽屉 -->
+        <!-- 面板 E：当前播放队列与最近队列层叠卡片抽屉 (对齐 PlayQueueBottomSheet.kt) -->
         <div
           v-else-if="activeOverlayPanel === 'queue'"
           class="drawer-body comments-drawer-body"
         >
-          <div class="comments-scroll-list">
+          <div class="pill-tabs mb-10">
+            <button
+              class="pill-tab-btn"
+              :class="{ active: queueSubTab === 'current' }"
+              @click="queueSubTab = 'current'"
+            >
+              当前队列 ({{ store.playQueue.length }})
+            </button>
+            <button
+              class="pill-tab-btn"
+              :class="{ active: queueSubTab === 'recent' }"
+              @click="queueSubTab = 'recent'"
+            >
+              最近播放过的歌单栈 ({{ store.recentPlayQueues.length }})
+            </button>
+          </div>
+
+          <div v-if="queueSubTab === 'current'" class="comments-scroll-list">
             <div
               v-for="(s, idx) in store.playQueue"
               :key="s.hash || idx"
@@ -1091,25 +1431,60 @@ function togglePanel(
               }"
               @click="store.playSongFromList(s, store.playQueue)"
             >
-              <div class="psc-index">{{ String(idx + 1).padStart(2, "0") }}</div>
+              <div class="psc-index">
+                {{ String(idx + 1).padStart(2, "0") }}
+              </div>
               <div class="psc-main">
                 <div class="psc-title">{{ s.title }}</div>
                 <div class="psc-sub">
                   <span>{{ s.artist }}</span>
                 </div>
               </div>
+              <button
+                class="psc-act-btn"
+                title="从播放队列中移除"
+                @click.stop="store.playQueue.splice(idx, 1)"
+              >
+                <PlumpIcon name="close" :size="13" />
+              </button>
+            </div>
+          </div>
+
+          <div v-else class="comments-scroll-list">
+            <div
+              v-for="(rq, rIdx) in store.recentPlayQueues"
+              :key="rIdx"
+              class="plump-song-card compact"
+              @click="
+                rq.songs.length > 0 &&
+                  store.playSongFromList(rq.songs[0], rq.songs, rq.title);
+                queueSubTab = 'current';
+              "
+            >
+              <div class="psc-main">
+                <div class="psc-title">{{ rq.title }}</div>
+                <div class="psc-sub">
+                  <span>共 {{ rq.songs.length }} 首曲目 · 点击一键恢复此队列</span>
+                </div>
+              </div>
+              <PlumpIcon name="play" :size="15" color="var(--cyan)" />
             </div>
           </div>
         </div>
 
-        <!-- 面板 F：更多声学与播放控制（倍速、睡眠定时、副歌速刷、高清封面下载） -->
+        <!-- 面板 F：更多声学与播放控制（倍速、半音升降调、KTV伴奏、睡眠定时、高清封面、下载） -->
         <div v-else-if="activeOverlayPanel === 'more'" class="drawer-body">
           <div class="lyric-sliders-row">
             <div class="cfg-col">
               <div class="cfg-label">
-                播放倍速 ({{ store.playbackRate }}x · 联动变调)
+                播放倍速 ({{ store.playbackRate }}x) &amp; 升降调 ({{
+                  store.pitchSemitones > 0
+                    ? `+${store.pitchSemitones}`
+                    : store.pitchSemitones
+                }}
+                半音)
               </div>
-              <div class="bg-choice-pills">
+              <div class="bg-choice-pills mb-10">
                 <button
                   v-for="spd in [0.75, 1.0, 1.25, 1.5, 2.0]"
                   :key="spd"
@@ -1118,6 +1493,17 @@ function togglePanel(
                   @click="store.setPlaybackSpeed(spd)"
                 >
                   {{ spd }}x
+                </button>
+              </div>
+              <div class="bg-choice-pills">
+                <button
+                  v-for="semi in [-4, -2, 0, 2, 4]"
+                  :key="semi"
+                  class="bg-pill-btn"
+                  :class="{ active: store.pitchSemitones === semi }"
+                  @click="store.setPitchSemitones(semi)"
+                >
+                  {{ semi === 0 ? "原调" : semi > 0 ? `+${semi}音` : `${semi}音` }}
                 </button>
               </div>
             </div>
@@ -1133,19 +1519,22 @@ function togglePanel(
                   @click="store.startSleepTimer(m)"
                 >
                   {{
-                    m === 0
-                      ? "关闭"
-                      : m === -1
-                      ? "播完本首"
-                      : `${m}分钟`
+                    m === 0 ? "关闭" : m === -1 ? "播完本首" : `${m}分钟`
                   }}
                 </button>
               </div>
             </div>
 
             <div class="cfg-col">
-              <div class="cfg-label">特色工具</div>
+              <div class="cfg-label">特色声学工具</div>
               <div class="bg-choice-pills">
+                <button
+                  class="bg-pill-btn"
+                  :class="{ active: store.ktvAccompanimentMode }"
+                  @click="store.toggleKtvAccompaniment()"
+                >
+                  KTV 伴奏切换
+                </button>
                 <button
                   class="bg-pill-btn"
                   :class="{ active: store.climaxModeEnabled }"
@@ -1162,9 +1551,9 @@ function togglePanel(
                 <button
                   v-if="store.downloadFeatureUnlocked && store.currentSong"
                   class="bg-pill-btn active"
-                  @click="store.triggerDownloadSong(store.currentSong)"
+                  @click="store.downloadModalSong = store.currentSong"
                 >
-                  下载本曲
+                  多音质下载本曲
                 </button>
               </div>
             </div>

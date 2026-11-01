@@ -42,20 +42,28 @@
   --bg-pill: rgba(42, 46, 58, 0.72);
 }
 
-/* 水彩浸润浅色主题 */
+/* 水彩浸润浅色主题（全面满足 WCAG AAA/AA 高对比度可读性标准） */
 .scheme-watercolor_light {
-  --bg-base: #edf4fc;
-  --bg-surface: rgba(255, 255, 255, 0.84);
-  --bg-card: rgba(255, 255, 255, 0.92);
-  --bg-card-hover: rgba(242, 248, 255, 0.99);
+  --bg-base: #e8f1fb;
+  --bg-surface: rgba(255, 255, 255, 0.88);
+  --bg-card: rgba(244, 249, 255, 0.95);
+  --bg-card-hover: rgba(232, 243, 254, 1);
   --bg-elevated: #ffffff;
-  --bg-pill: rgba(220, 234, 252, 0.78);
-  --bg-pill-hover: rgba(202, 224, 250, 0.95);
-  --text-primary: #0f1d33;
-  --text-secondary: #4a5d78;
-  --text-muted: #7b8fa8;
-  --shadow-soft: 0 10px 28px rgba(18, 42, 76, 0.07);
-  --shadow-elevated: 0 18px 44px rgba(18, 42, 76, 0.13);
+  --bg-pill: rgba(210, 226, 246, 0.85);
+  --bg-pill-hover: rgba(188, 212, 242, 0.98);
+
+  --primary: #1a73e8;
+  --cyan: #0077b6;
+  --mint: #059669;
+  --coral: #e11d48;
+  --violet: #6d28d9;
+  --gold: #b45309;
+
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --shadow-soft: 0 10px 28px rgba(15, 23, 42, 0.08);
+  --shadow-elevated: 0 18px 44px rgba(15, 23, 42, 0.14);
 }
 
 /* 全局清除原生滚动条与默认线框 */
@@ -95,10 +103,19 @@ input,
 select,
 textarea {
   font-family: inherit;
-  color: inherit;
+  color: var(--text-primary);
   background: none;
   border: none;
   outline: none;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: var(--text-primary);
 }
 
 button {
@@ -2113,14 +2130,18 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 520px;
+  max-height: calc(100vh - 300px);
   overflow-y: auto;
+  position: sticky;
+  top: 0;
+  padding-right: 2px;
 }
 
 .explorer-playlists-col.grid-mode {
-  width: 310px;
+  width: 300px;
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
 }
 
 .exp-playlist-item {
@@ -2138,7 +2159,23 @@ button {
 .explorer-playlists-col.grid-mode .exp-playlist-item {
   flex-direction: column;
   text-align: center;
-  padding: 12px;
+  padding: 12px 10px;
+  justify-content: flex-start;
+  height: 126px;
+}
+
+.explorer-playlists-col.grid-mode .exp-pl-info {
+  width: 100%;
+}
+
+.explorer-playlists-col.grid-mode .exp-pl-title {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.3;
+  font-size: 12px;
+  max-height: 31px;
 }
 
 .exp-playlist-item:hover,
@@ -4760,4 +4797,384 @@ button {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+
+/* ================= 搜索实时联想列表 (Search Suggestions) ================= */
+.sd-suggest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sd-suggest-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 12px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 700;
+  text-align: left;
+  transition: background 0.18s ease, transform 0.18s ease;
+}
+
+.sd-suggest-item:hover {
+  background: var(--bg-pill-hover);
+  transform: translateX(3px);
+}
+
+/* ================= 水彩浅色主题 (Watercolor Light) 全组件可读性强化 ================= */
+.scheme-watercolor_light .discover-main-title,
+.scheme-watercolor_light .block-title,
+.scheme-watercolor_light .settings-card-panel h3,
+.scheme-watercolor_light .loc-title,
+.scheme-watercolor_light .stl-title,
+.scheme-watercolor_light .snc-title,
+.scheme-watercolor_light .ci-val,
+.scheme-watercolor_light .psc-title,
+.scheme-watercolor_light .ns-title,
+.scheme-watercolor_light .fsc-name,
+.scheme-watercolor_light .rank-name,
+.scheme-watercolor_light .exp-tracks-title,
+.scheme-watercolor_light .exp-pl-title,
+.scheme-watercolor_light .pac-name,
+.scheme-watercolor_light .palb-name,
+.scheme-watercolor_light .artist-hero-name,
+.scheme-watercolor_light .dock-song-title,
+.scheme-watercolor_light .np-song-title,
+.scheme-watercolor_light .scc-title,
+.scheme-watercolor_light .tuner-station-title,
+.scheme-watercolor_light .sc-title {
+  color: #0f172a;
+}
+
+.scheme-watercolor_light .settings-nav-card.active,
+.scheme-watercolor_light .settings-nav-card.active .snc-title,
+.scheme-watercolor_light .settings-nav-card.active .snc-sub {
+  color: #ffffff;
+}
+
+.scheme-watercolor_light .settings-card-panel {
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.scheme-watercolor_light .layout-option-card,
+.scheme-watercolor_light .cache-item-card,
+.scheme-watercolor_light .hotkey-row,
+.scheme-watercolor_light .issue-guide-box,
+.scheme-watercolor_light .changelog-card {
+  background: #f1f6fd;
+  color: #0f172a;
+}
+
+.scheme-watercolor_light .layout-option-card.active {
+  background: #d8eafe;
+  box-shadow: inset 0 0 0 1.5px #1a73e8;
+}
+
+.scheme-watercolor_light .color-scheme-pill,
+.scheme-watercolor_light .q-choice-pill,
+.scheme-watercolor_light .bg-pill-btn,
+.scheme-watercolor_light .tonal-pill-btn,
+.scheme-watercolor_light .exp-tab {
+  color: #1e293b;
+}
+
+.scheme-watercolor_light .color-scheme-pill.active,
+.scheme-watercolor_light .q-choice-pill.active,
+.scheme-watercolor_light .bg-pill-btn.active,
+.scheme-watercolor_light .pill-tab-btn.active,
+.scheme-watercolor_light .exp-tab.active,
+.scheme-watercolor_light .skyline-nav-btn.active {
+  background: #1a73e8;
+  color: #ffffff;
+}
+
+/* 浅色主题下：发现页猜你喜欢卡、我的页三联快捷卡、电台调谐器、VIP 横幅与播放页适配 */
+.scheme-watercolor_light .bento-fm-card {
+  background: linear-gradient(135deg, #d8f3ec, #dceefb);
+}
+
+.scheme-watercolor_light .fm-card-title,
+.scheme-watercolor_light .fm-song-name {
+  color: #0f172a;
+}
+
+.scheme-watercolor_light .fm-artist-text {
+  color: #334155;
+}
+
+.scheme-watercolor_light .fm-next-preview {
+  color: #475569;
+}
+
+.scheme-watercolor_light .fm-pill-mini,
+.scheme-watercolor_light .fm-refresh-btn,
+.scheme-watercolor_light .fm-skip-btn {
+  background: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+}
+
+.scheme-watercolor_light .fm-track-body {
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.scheme-watercolor_light .fm-track-body:hover {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.scheme-watercolor_light .liked-card {
+  background: linear-gradient(135deg, #ffe4ec, #f3e8ff);
+}
+
+.scheme-watercolor_light .recent-card {
+  background: linear-gradient(135deg, #dff2fe, #e0e7ff);
+}
+
+.scheme-watercolor_light .focus-card {
+  background: linear-gradient(135deg, #ede9fe, #dbeafe);
+}
+
+.scheme-watercolor_light .sc-icon-circle,
+.scheme-watercolor_light .sc-pill-tag {
+  background: rgba(255, 255, 255, 0.75);
+  color: #1e293b;
+}
+
+.scheme-watercolor_light .radio-tuner-deck {
+  background: linear-gradient(135deg, #dbeafe, #d1fae5);
+}
+
+.scheme-watercolor_light .tuner-scale-box {
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.scheme-watercolor_light .tick-bar {
+  background: rgba(15, 23, 42, 0.25);
+}
+
+.scheme-watercolor_light .freq-cat-pill {
+  background: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+}
+
+.scheme-watercolor_light .vip-hero-banner {
+  background: linear-gradient(145deg, #fef3c7, #e0f2fe);
+}
+
+.scheme-watercolor_light .vip-hero-title {
+  color: #92400e;
+}
+
+.scheme-watercolor_light .np-bottom-control-dock {
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--shadow-soft);
+}
+
+.scheme-watercolor_light .tech-pill,
+.scheme-watercolor_light .np-tool-pill,
+.scheme-watercolor_light .trans-toggle-pill {
+  background: rgba(15, 23, 42, 0.08);
+  color: #1e293b;
+}
+
+.scheme-watercolor_light .np-tool-pill.active,
+.scheme-watercolor_light .np-tool-pill:hover {
+  background: #1a73e8;
+  color: #ffffff;
+}
+
+.scheme-watercolor_light .stage-orb-btn {
+  background: rgba(15, 23, 42, 0.65);
+}
+
+.scheme-watercolor_light .krc-word {
+  background: linear-gradient(
+    90deg,
+    var(--lyric-c1, #1a73e8) 0%,
+    var(--lyric-c2, #0077b6) var(--fill-pct, 0%),
+    rgba(15, 23, 42, 0.82) var(--fill-pct, 0%)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.scheme-watercolor_light .dock-progress-strip {
+  background: rgba(15, 23, 42, 0.12);
+}
+
+.scheme-watercolor_light .floating-desktop-lyric-bar {
+  background: rgba(255, 255, 255, 0.92);
+  color: #0f172a;
+}
+
+.scheme-watercolor_light .fdl-main {
+  background: linear-gradient(90deg, #1a73e8, #0077b6);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.scheme-watercolor_light .psc-index.rank-top-2 {
+  color: #475569;
+}
+
+/* ================= 窗口多级自适应断点 (Responsive Breakpoints) ================= */
+.skyline-header {
+  flex-wrap: nowrap;
+}
+
+.skyline-left,
+.skyline-right {
+  flex-shrink: 0;
+}
+
+.skyline-nav-capsule {
+  flex-shrink: 0;
+}
+
+.skyline-nav-btn {
+  white-space: nowrap;
+}
+
+.skyline-search-wrap {
+  width: clamp(160px, 21vw, 276px);
+  flex-shrink: 1;
+}
+
+.dock-song-left {
+  width: clamp(200px, 26vw, 310px);
+}
+
+.dock-tools-right {
+  width: clamp(200px, 26vw, 310px);
+}
+
+/* 中等桌面窗口 (<= 1180px) */
+@media (max-width: 1180px) {
+  .skyline-header {
+    padding: 0 14px;
+    gap: 10px;
+  }
+
+  .skyline-left {
+    min-width: auto;
+  }
+
+  .skyline-nav-btn {
+    padding: 7px 13px;
+    font-size: 13px;
+  }
+
+  .fm-corridor-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .newsong-bento-grid,
+  .rank-bento-grid,
+  .artist-cards-grid,
+  .album-cards-grid,
+  .layout-cards-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-master-detail {
+    grid-template-columns: 220px 1fr;
+    gap: 16px;
+  }
+
+  .explorer-playlists-col {
+    width: 220px;
+  }
+
+  .explorer-playlists-col.grid-mode {
+    width: 240px;
+  }
+}
+
+/* 紧凑分屏窗口 (<= 920px) */
+@media (max-width: 920px) {
+  .brand-titles {
+    display: none;
+  }
+
+  .search-kbd-tag {
+    display: none;
+  }
+
+  .identity-duration-row {
+    display: none;
+  }
+
+  .bento-hero-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .library-shortcut-trio {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .fm-corridor-grid,
+  .newsong-bento-grid,
+  .rank-bento-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dual-column-song-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .explorer-workspace,
+  .rank-detail-workspace,
+  .settings-master-detail {
+    flex-direction: column;
+    grid-template-columns: 1fr;
+  }
+
+  .explorer-playlists-col,
+  .explorer-playlists-col.grid-mode,
+  .rank-left-sidebar {
+    width: 100%;
+    max-height: 220px;
+    position: static;
+  }
+
+  .np-main-columns {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .Stage-choice-grid,
+  .stage-choice-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .vip-dual-grid,
+  .poster-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 超宽大屏显示器 (>= 1600px) */
+@media (min-width: 1600px) {
+  .page-scroll-canvas {
+    padding: 28px 42px 52px 42px;
+  }
+
+  .newsong-bento-grid,
+  .rank-bento-grid,
+  .artist-cards-grid,
+  .album-cards-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .dual-column-song-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }

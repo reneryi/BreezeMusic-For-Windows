@@ -21,6 +21,7 @@ import type {
   LyricData,
   LyricThemeId,
   MainNavTab,
+  PeqFilterType,
   PeqMemorySlot,
   PlaybackResult,
   PlayerBackgroundStyle,
@@ -33,7 +34,9 @@ import type {
   SearchCategoryTab,
   Song,
   SongComment,
+  SongDetailInfo,
   VipStatusInfo,
+  ViperEffectItem,
   WindowMaterialStyle,
 } from "../types";
 
@@ -67,7 +70,10 @@ export const useAppStore = defineStore("breezeApp", () => {
     song: null,
   });
   const songDetailModalSong = ref<Song | null>(null);
+  const activeSongDetailInfo = ref<SongDetailInfo | null>(null);
+  const isLoadingSongDetail = ref<boolean>(false);
   const addToPlaylistModalSong = ref<Song | null>(null);
+  const downloadModalSong = ref<Song | null>(null);
 
   // ================= 2. 发现页与调频台全量状态 =================
   const discoverSubView = ref<DiscoverSubView>("home");
@@ -130,6 +136,8 @@ export const useAppStore = defineStore("breezeApp", () => {
   // 歌手详情与专辑详情内嵌工作台状态
   const activeArtistDetail = ref<FollowedArtist | null>(null);
   const activeArtistSongs = ref<Song[]>([]);
+  const activeArtistAlbums = ref<AlbumItem[]>([]);
+  const artistDetailSubTab = ref<"songs" | "albums" | "about">("songs");
   const artistSongsSort = ref<"hot" | "new">("hot");
   const isLoadingArtist = ref(false);
 
@@ -146,7 +154,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     );
     const merged = [...cloud];
     for (const rp of collectedRemotePlaylists.value) {
-      if (!merged.some((m) => m.id === rp.id)) {
+      if (!merged.some((m) => m.id === rp.id || m.title === rp.title)) {
         merged.push(rp);
       }
     }
@@ -158,6 +166,7 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   // ================= 4. 搜索与天际线指令舱状态 =================
   const searchKeyword = ref<string>("");
+  const searchSuggestions = ref<string[]>([]);
   const searchCategoryTab = ref<SearchCategoryTab>("songs");
   const hotSearchKeywords = ref<string[]>([
     "周杰伦",
@@ -179,6 +188,23 @@ export const useAppStore = defineStore("breezeApp", () => {
   const searchResultsAlbums = ref<AlbumItem[]>([]);
   const searchResultsArtists = ref<FollowedArtist[]>([]);
   const isSearching = ref(false);
+
+  let suggestDebounceTimer: number | null = null;
+  watch(searchKeyword, (kw) => {
+    if (suggestDebounceTimer) clearTimeout(suggestDebounceTimer);
+    const trimmed = kw.trim();
+    if (!trimmed) {
+      searchSuggestions.value = [];
+      return;
+    }
+    suggestDebounceTimer = window.setTimeout(async () => {
+      try {
+        searchSuggestions.value = await kugouClient.getSearchSuggest(trimmed);
+      } catch {
+        searchSuggestions.value = [];
+      }
+    }, 240);
+  });
 
   // ================= 5. 全局设置与播放/歌词/DSP 配置 =================
   const layoutMode = ref<DesktopLayoutMode>(
@@ -249,7 +275,7 @@ export const useAppStore = defineStore("breezeApp", () => {
   const showPhonetic = ref<boolean>(false);
   const keepScreenAwake = ref<boolean>(true);
 
-  // 进阶播放控制（副歌速刷 Climax 30s、伴奏模式、音量平衡、跨曲淡入淡出、倍速、睡眠定时）
+  // 进阶播放控制（副歌速刷 Climax 30s、伴奏模式、音量平衡、跨曲淡入淡出、倍速、升降调、睡眠定时）
   const climaxModeEnabled = ref<boolean>(
     localStorage.getItem("bm_climax_mode") === "true"
   );
@@ -283,10 +309,12 @@ export const useAppStore = defineStore("breezeApp", () => {
     (localStorage.getItem("bm_dl_quality") as AudioQualityValue) || "high"
   );
   const downloadMusicDir = ref<string>(
-    localStorage.getItem("bm_dl_music_dir") || "C:\\Users\\Public\\Music\\BreezeMusic"
+    localStorage.getItem("bm_dl_music_dir") ||
+      "C:\\Users\\Public\\Music\\BreezeMusic"
   );
   const downloadLrcDir = ref<string>(
-    localStorage.getItem("bm_dl_lrc_dir") || "C:\\Users\\Public\\Music\\BreezeMusic\\Lyrics"
+    localStorage.getItem("bm_dl_lrc_dir") ||
+      "C:\\Users\\Public\\Music\\BreezeMusic\\Lyrics"
   );
   const embedCoverAndTags = ref<boolean>(
     localStorage.getItem("bm_dl_embed_cover") !== "false"
@@ -317,17 +345,39 @@ export const useAppStore = defineStore("breezeApp", () => {
     maxQuotaGb: 4,
   });
 
-  // 持久化监听
-  watch(layoutMode, async (mode) => {
+  // 窗口尺寸记忆：解决从迷你黑胶挂件恢复主窗口时破坏最大化状态或用户自定义窗口尺寸的问题
+  let savedNormalBounds = { width: 1260, height: 820, wasMaximized: false };
+
+  watch(layoutMode, async (mode, oldMode) => {
     localStorage.setItem("bm_layout_mode", mode);
     try {
       const win = getCurrentWindow();
       if (mode === "mini_turntable") {
+        const isMax = await win.isMaximized();
+        savedNormalBounds.wasMaximized = isMax;
+        if (isMax) {
+          await win.unmaximize();
+        } else {
+          const factor = await win.scaleFactor();
+          const pSize = await win.innerSize();
+          if (pSize.width / factor >= 700) {
+            savedNormalBounds.width = Math.round(pSize.width / factor);
+            savedNormalBounds.height = Math.round(pSize.height / factor);
+          }
+        }
         await win.setSize(new LogicalSize(420, 168));
         await win.setAlwaysOnTop(true);
-      } else {
+      } else if (oldMode === "mini_turntable") {
         await win.setAlwaysOnTop(false);
-        await win.setSize(new LogicalSize(1280, 820));
+        await win.setSize(
+          new LogicalSize(
+            Math.max(960, savedNormalBounds.width),
+            Math.max(640, savedNormalBounds.height)
+          )
+        );
+        if (savedNormalBounds.wasMaximized) {
+          await win.maximize();
+        }
       }
     } catch {
       // 浏览器预览环境跳过窗口尺寸调用
@@ -418,8 +468,9 @@ export const useAppStore = defineStore("breezeApp", () => {
     localStorage.setItem("bm_dl_skip_exist", String(v))
   );
 
-  // ================= 6. 账号、等级时长与概念版 VIP 状态 =================
+  // ================= 6. 账号、多账号切换、等级时长与概念版 VIP 状态 =================
   const session = ref<KugouSession | null>(null);
+  const savedAccounts = ref<KugouSession[]>([]);
   const profile = ref<AccountProfile | null>(null);
   const vipStatus = ref<VipStatusInfo | null>(null);
   const isClaimingVip = ref(false);
@@ -500,6 +551,9 @@ export const useAppStore = defineStore("breezeApp", () => {
   const volume = ref(0.85);
   audio.volume = volume.value;
 
+  // 记录单曲播放开始时间戳，供 CSCC 三段式真实听歌时长上报使用
+  let currentSongPlayStartWallMs = 0;
+
   // 播放 <-> 暂停 880ms 连续动量相位因子 (0.0 静止 ~ 1.0 全速)，消除暂停时背景与唱盘跳变
   const playMomentum = ref<number>(0);
   let momentumRafId: number | null = null;
@@ -510,7 +564,6 @@ export const useAppStore = defineStore("breezeApp", () => {
     const duration = 880;
     const step = (now: number) => {
       const t = Math.min(1, (now - startTime) / duration);
-      // FastOutSlowIn cubic-bezier approximation
       const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
       playMomentum.value = startVal + (target - startVal) * eased;
       if (t < 1) {
@@ -534,17 +587,37 @@ export const useAppStore = defineStore("breezeApp", () => {
   });
   const isLoadingLyric = ref(false);
 
-  // 歌曲评论区状态
+  // 歌曲评论区状态（含楼中楼展开与评论发送）
   const activeSongComments = ref<SongComment[]>([]);
   const commentSortType = ref<"hot" | "new">("hot");
   const isLoadingComments = ref(false);
+  const expandedFloorCommentId = ref<string | null>(null);
+  const floorRepliesMap = reactive<Record<string, SongComment[]>>({});
+  const isLoadingFloorReplies = ref<boolean>(false);
 
-  // 10 段参量均衡器 (PEQ) 与 3 组自定义记忆槽 (A/B/C) + 声场调音台
+  // 10 段参量均衡器 (PEQ) 与 3 组自定义记忆槽 (A/B/C) + 声场调音台 + 酷狗蝰蛇音效库
   const eqFrequencies = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
   const eqGains = ref<number[]>([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const eqBandTypes = ref<PeqFilterType[]>([
+    "lowshelf",
+    "peaking",
+    "peaking",
+    "peaking",
+    "peaking",
+    "peaking",
+    "peaking",
+    "peaking",
+    "peaking",
+    "highshelf",
+  ]);
   const eqQFactor = ref<number>(1.41);
+  const eqHighPassHz = ref<number>(20);
+  const eqLowPassHz = ref<number>(20000);
   const activeEqPreset = ref<string>("flat");
   const peqBypass = ref<boolean>(false);
+
+  const viperEffects = ref<ViperEffectItem[]>([]);
+  const activeViperEffectId = ref<string>("off");
 
   const peqMemorySlots = ref<PeqMemorySlot[]>(
     JSON.parse(
@@ -583,6 +656,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     surroundWidth: 42,
     stageDepth: 28,
     bauerCrossfeed: true,
+    reverbPreset: "none",
     reverbPreDelayMs: 24,
     vocalClarity: 40,
     airHarmonics: 32,
@@ -593,10 +667,13 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   let audioCtx: AudioContext | null = null;
   let analyser: AnalyserNode | null = null;
+  let highPassFilter: BiquadFilterNode | null = null;
+  let lowPassFilter: BiquadFilterNode | null = null;
   let eqFilters: BiquadFilterNode[] = [];
   let subBassFilter: BiquadFilterNode | null = null;
   let airShelfFilter: BiquadFilterNode | null = null;
   let vocalPeakFilter: BiquadFilterNode | null = null;
+  let deEsserNotchFilter: BiquadFilterNode | null = null;
   let rafId: number | null = null;
 
   function ensureWebAudioGraph() {
@@ -609,6 +686,14 @@ export const useAppStore = defineStore("breezeApp", () => {
       analyser.fftSize = 128;
       analyser.smoothingTimeConstant = 0.78;
 
+      highPassFilter = audioCtx.createBiquadFilter();
+      highPassFilter.type = "highpass";
+      highPassFilter.frequency.value = eqHighPassHz.value;
+
+      lowPassFilter = audioCtx.createBiquadFilter();
+      lowPassFilter.type = "lowpass";
+      lowPassFilter.frequency.value = eqLowPassHz.value;
+
       subBassFilter = audioCtx.createBiquadFilter();
       subBassFilter.type = "lowshelf";
       subBassFilter.frequency.value = acousticField.bassCrossoverHz;
@@ -620,6 +705,12 @@ export const useAppStore = defineStore("breezeApp", () => {
       vocalPeakFilter.Q.value = 1.2;
       vocalPeakFilter.gain.value = 0;
 
+      deEsserNotchFilter = audioCtx.createBiquadFilter();
+      deEsserNotchFilter.type = "peaking";
+      deEsserNotchFilter.frequency.value = 6200;
+      deEsserNotchFilter.Q.value = 2.6;
+      deEsserNotchFilter.gain.value = 0;
+
       airShelfFilter = audioCtx.createBiquadFilter();
       airShelfFilter.type = "highshelf";
       airShelfFilter.frequency.value = 12000;
@@ -627,8 +718,7 @@ export const useAppStore = defineStore("breezeApp", () => {
 
       eqFilters = eqFrequencies.map((freq, idx) => {
         const filter = audioCtx!.createBiquadFilter();
-        filter.type =
-          idx === 0 ? "lowshelf" : idx === 9 ? "highshelf" : "peaking";
+        filter.type = eqBandTypes.value[idx] || "peaking";
         filter.frequency.value = freq;
         filter.Q.value = eqQFactor.value;
         filter.gain.value = eqGains.value[idx] || 0;
@@ -636,13 +726,17 @@ export const useAppStore = defineStore("breezeApp", () => {
       });
 
       let prevNode: AudioNode = source;
+      prevNode.connect(highPassFilter);
+      prevNode = highPassFilter;
       for (const f of eqFilters) {
         prevNode.connect(f);
         prevNode = f;
       }
-      prevNode.connect(subBassFilter);
+      prevNode.connect(lowPassFilter);
+      lowPassFilter.connect(subBassFilter);
       subBassFilter.connect(vocalPeakFilter);
-      vocalPeakFilter.connect(airShelfFilter);
+      vocalPeakFilter.connect(deEsserNotchFilter);
+      deEsserNotchFilter.connect(airShelfFilter);
       airShelfFilter.connect(analyser);
       analyser.connect(audioCtx.destination);
       syncDspChain();
@@ -654,13 +748,22 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   function syncDspChain() {
     const bypass = peqBypass.value;
-    // Overlap Scaling 防爆音增益协同（对齐 ConceptMasteringAudioProcessor）
     const scale = acousticField.enabled ? 0.82 : 1.0;
+    if (highPassFilter && lowPassFilter) {
+      highPassFilter.frequency.value = bypass ? 10 : Math.max(15, eqHighPassHz.value);
+      lowPassFilter.frequency.value = bypass ? 22000 : Math.min(20000, eqLowPassHz.value);
+    }
     eqFilters.forEach((f, idx) => {
+      f.type = eqBandTypes.value[idx] || "peaking";
       f.Q.value = eqQFactor.value;
       f.gain.value = bypass ? 0 : (eqGains.value[idx] || 0) * scale;
     });
-    if (subBassFilter && vocalPeakFilter && airShelfFilter) {
+    if (
+      subBassFilter &&
+      vocalPeakFilter &&
+      deEsserNotchFilter &&
+      airShelfFilter
+    ) {
       subBassFilter.frequency.value = acousticField.bassCrossoverHz;
       subBassFilter.gain.value =
         !bypass && acousticField.enabled
@@ -670,11 +773,38 @@ export const useAppStore = defineStore("breezeApp", () => {
         !bypass && acousticField.enabled
           ? (acousticField.vocalClarity / 100) * 4.2
           : 0;
+      deEsserNotchFilter.gain.value =
+        !bypass && acousticField.enabled
+          ? -(acousticField.vocalClarity / 100) * 2.4
+          : 0;
       airShelfFilter.gain.value =
         !bypass && acousticField.enabled
-          ? (acousticField.airHarmonics / 100) * 5.0
+          ? ((acousticField.airHarmonics - acousticField.vinylTubeWarmth * 0.35) /
+              100) *
+            5.0
           : 0;
     }
+  }
+
+  function applyViperEffect(effect: ViperEffectItem | null) {
+    if (!effect || activeViperEffectId.value === effect.id) {
+      activeViperEffectId.value = "off";
+      acousticField.enabled = false;
+      setEqPreset("flat");
+      notify("已关闭蝰蛇音效，恢复母带直通 (Bit-Perfect)");
+      return;
+    }
+    activeViperEffectId.value = effect.id;
+    activeEqPreset.value = effect.id;
+    eqGains.value = [...effect.gains];
+    acousticField.enabled = true;
+    acousticField.subBassDepth = effect.subBass;
+    acousticField.surroundWidth = effect.surround;
+    acousticField.vocalClarity = effect.vocalClarity;
+    acousticField.airHarmonics = effect.airHarmonics;
+    acousticField.vinylTubeWarmth = effect.tubeWarmth;
+    syncDspChain();
+    notify(`已启用酷狗蝰蛇音效：「${effect.label}」`);
   }
 
   function startSpectrumLoop() {
@@ -701,12 +831,15 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   function setEqPreset(presetName: string) {
     activeEqPreset.value = presetName;
+    if (presetName === "flat") {
+      activeViperEffectId.value = "off";
+    }
     const presets: Record<string, number[]> = {
       flat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      harman: [4.5, 3.8, 1.5, -0.5, -1.0, 0.5, 2.5, 3.5, 2.8, 1.5],
-      diffuse_field: [1.5, 1.2, 0.5, 0.0, 0.8, 2.2, 3.4, 2.0, 1.0, 0.5],
-      vocal_velvet: [-1.5, -1.0, 0.8, 2.8, 4.2, 3.8, 2.2, 0.8, 0.0, -0.5],
-      hifi_sub: [6.2, 5.4, 3.0, 0.5, -0.8, 0.0, 1.8, 2.8, 3.6, 3.0],
+      harman: [5.2, 4.4, 1.8, -0.8, -0.4, 1.4, 3.8, 4.2, 2.4, 1.8],
+      diffuse_field: [1.2, 1.0, 0.6, 0.0, 0.8, 2.2, 3.6, 3.2, 2.8, 3.4],
+      vocal_velvet: [-1.4, -0.6, 0.8, 2.2, 3.4, 4.4, 3.8, -1.8, 1.6, 2.4],
+      hifi_sub: [6.2, 5.4, 2.6, -1.6, -0.6, 0.6, 1.8, 2.4, 2.8, 3.2],
       acg_bright: [2.5, 1.8, 0.0, 1.0, 2.4, 3.5, 4.5, 4.8, 3.8, 2.5],
     };
     const gains = presets[presetName] || presets.flat;
@@ -726,6 +859,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     if (!slot) return;
     slot.gains = [...eqGains.value];
     slot.qFactor = eqQFactor.value;
+    slot.bandTypes = [...eqBandTypes.value];
     slot.saved = true;
     localStorage.setItem("bm_peq_slots", JSON.stringify(peqMemorySlots.value));
     notify(`已存入母带均衡器记忆槽 ${slotId}`);
@@ -739,6 +873,9 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
     eqGains.value = [...slot.gains];
     eqQFactor.value = slot.qFactor;
+    if (slot.bandTypes && slot.bandTypes.length === 10) {
+      eqBandTypes.value = [...slot.bandTypes];
+    }
     activeEqPreset.value = `slot_${slotId}`;
     syncDspChain();
     notify(`已载入记忆槽 ${slotId} 曲线`);
@@ -782,8 +919,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     if (audio.duration && isFinite(audio.duration)) {
       durationMs.value = Math.floor(audio.duration * 1000);
     }
-    audio.playbackRate = playbackRate.value;
-    (audio as any).preservesPitch = !linkPitchWithSpeed.value;
+    applySpeedAndPitch();
   });
   audio.addEventListener("play", () => {
     isPlaying.value = true;
@@ -799,7 +935,33 @@ export const useAppStore = defineStore("breezeApp", () => {
     isBuffering.value = false;
   });
   audio.addEventListener("ended", () => {
-    if (sleepTimerMinutes.value === -1 || (sleepRemainingSeconds.value <= 0 && sleepTimerMinutes.value > 0)) {
+    // 上报本首完整播放 CSCC 事件
+    if (currentSong.value) {
+      const played =
+        currentSongPlayStartWallMs > 0
+          ? Math.max(durationMs.value, Date.now() - currentSongPlayStartWallMs)
+          : durationMs.value || 180000;
+      kugouClient
+        .reportPlaybackTelemetry(currentSong.value, false, played)
+        .then((settled) => {
+          if (settled && isLoggedIn.value) {
+            setTimeout(() => {
+              kugouClient
+                .getAccountProfile()
+                .then((p) => {
+                  if (p) profile.value = p;
+                })
+                .catch(() => {});
+            }, 3500);
+          }
+        })
+        .catch(() => {});
+    }
+
+    if (
+      sleepTimerMinutes.value === -1 ||
+      (sleepRemainingSeconds.value <= 0 && sleepTimerMinutes.value > 0)
+    ) {
       sleepTimerMinutes.value = 0;
       audio.pause();
       notify("睡眠定时已到点，已为您自然播完本曲并暂停");
@@ -817,10 +979,25 @@ export const useAppStore = defineStore("breezeApp", () => {
     }, 3400);
   }
 
+  function applySpeedAndPitch() {
+    const pitchFactor = Math.pow(2, pitchSemitones.value / 12);
+    if (linkPitchWithSpeed.value) {
+      audio.playbackRate = Number((playbackRate.value * pitchFactor).toFixed(3));
+      (audio as any).preservesPitch = false;
+    } else {
+      audio.playbackRate = playbackRate.value;
+      (audio as any).preservesPitch = true;
+    }
+  }
+
   function setPlaybackSpeed(rate: number) {
     playbackRate.value = Number(rate.toFixed(2));
-    audio.playbackRate = playbackRate.value;
-    (audio as any).preservesPitch = !linkPitchWithSpeed.value;
+    applySpeedAndPitch();
+  }
+
+  function setPitchSemitones(semitones: number) {
+    pitchSemitones.value = Math.max(-6, Math.min(6, semitones));
+    applySpeedAndPitch();
   }
 
   function startSleepTimer(mins: number) {
@@ -861,7 +1038,13 @@ export const useAppStore = defineStore("breezeApp", () => {
   // ================= 9. 核心启动与全模块数据加载 =================
   async function bootstrap() {
     try {
-      const savedSession = await kugouClient.initAppState();
+      const [savedSession, accounts, vipers] = await Promise.all([
+        kugouClient.initAppState().catch(() => null),
+        kugouClient.getSavedAccounts().catch(() => []),
+        kugouClient.getViperEffects().catch(() => []),
+      ]);
+      savedAccounts.value = accounts;
+      viperEffects.value = vipers;
       if (savedSession && savedSession.token) {
         session.value = savedSession;
         refreshAccountAndVip(true);
@@ -886,10 +1069,12 @@ export const useAppStore = defineStore("breezeApp", () => {
   async function refreshAccountAndVip(isStartup = false) {
     if (!isLoggedIn.value) return;
     try {
-      const [prof, vip] = await Promise.all([
+      const [prof, vip, accounts] = await Promise.all([
         kugouClient.getAccountProfile().catch(() => null),
         kugouClient.getVipStatus().catch(() => null),
+        kugouClient.getSavedAccounts().catch(() => []),
       ]);
+      if (accounts.length > 0) savedAccounts.value = accounts;
       if (prof) profile.value = prof;
       if (vip) {
         vipStatus.value = vip;
@@ -903,6 +1088,37 @@ export const useAppStore = defineStore("breezeApp", () => {
       loadPurchasedAssets();
     } catch (e) {
       console.warn("refreshAccountAndVip error:", e);
+    }
+  }
+
+  async function switchAccount(userId: string) {
+    try {
+      const switched = await kugouClient.switchSavedAccount(userId);
+      if (switched) {
+        session.value = switched;
+        isLoginModalOpen.value = false;
+        notify(`已切换至账号「${switched.nickname}」`);
+        await refreshAccountAndVip(false);
+        await loadDailyRecommend();
+      }
+    } catch (e: any) {
+      notify(`切换账号失败：${String(e)}`);
+    }
+  }
+
+  async function removeSavedAccount(userId: string) {
+    try {
+      savedAccounts.value = await kugouClient.removeSavedAccount(userId);
+      if (session.value?.userId === userId) {
+        session.value = savedAccounts.value[0] || null;
+        if (session.value) {
+          await refreshAccountAndVip(false);
+        } else {
+          await logout();
+        }
+      }
+    } catch (e: any) {
+      notify(`移除账号失败：${String(e)}`);
     }
   }
 
@@ -1124,12 +1340,16 @@ export const useAppStore = defineStore("breezeApp", () => {
           .getPlaylistSongs(likedPl.globalCollectionId)
           .then((songs) => {
             likedSongs.value = songs;
+            if (likedPl.trackCount <= 0 && songs.length > 0) {
+              likedPl.trackCount = songs.length;
+            }
           })
           .catch(() => {});
       }
 
       if (list.length > 0 && !selectedPlaylist.value) {
         const preferred =
+          list.find((p) => p.isCreatedByMe && !p.isLiked && p.trackCount > 0) ||
           list.find((p) => p.isLiked && p.trackCount > 0) ||
           list.find((p) => p.trackCount > 0) ||
           list[0];
@@ -1147,8 +1367,13 @@ export const useAppStore = defineStore("breezeApp", () => {
     libraryDetailMode.value = "playlist";
     isLoadingLibrary.value = true;
     try {
-      const songs = await kugouClient.getPlaylistSongs(pl.globalCollectionId);
+      const songs = await kugouClient.getPlaylistSongs(
+        pl.globalCollectionId || pl.id
+      );
       playlistSongs.value = songs;
+      if (pl.trackCount < songs.length) {
+        pl.trackCount = songs.length;
+      }
       if (pl.isLiked || pl.title === "我喜欢") {
         likedSongs.value = songs;
       }
@@ -1183,6 +1408,30 @@ export const useAppStore = defineStore("breezeApp", () => {
       await loadUserPlaylists();
     } catch (e: any) {
       notify(`删除歌单失败：${String(e)}`);
+    }
+  }
+
+  async function removeSongFromCurrentPlaylist(song: Song) {
+    const pl =
+      libraryAssetTab.value === "liked"
+        ? likedPlaylistMeta.value
+        : selectedPlaylist.value;
+    if (!pl || !pl.listId) {
+      notify("仅自建云歌单支持移除曲目");
+      return;
+    }
+    try {
+      await kugouClient.removeSongFromPlaylist(pl.listId, song);
+      playlistSongs.value = playlistSongs.value.filter(
+        (s) => s.hash !== song.hash
+      );
+      if (pl.isLiked) {
+        likedSongs.value = likedSongs.value.filter((s) => s.hash !== song.hash);
+      }
+      if (pl.trackCount > 0) pl.trackCount -= 1;
+      notify(`已从「${pl.title}」移除 ${song.title}`);
+    } catch (e: any) {
+      notify(`移除曲目失败：${String(e)}`);
     }
   }
 
@@ -1224,12 +1473,16 @@ export const useAppStore = defineStore("breezeApp", () => {
     );
   }
 
-  function toggleCollectPlaylist(pl: Playlist) {
-    const idx = collectedRemotePlaylists.value.findIndex(
-      (p) => p.id === pl.id || p.title === pl.title
-    );
-    if (idx >= 0) {
-      collectedRemotePlaylists.value.splice(idx, 1);
+  async function toggleCollectPlaylist(pl: Playlist) {
+    const already = isPlaylistCollected(pl);
+    if (already) {
+      collectedRemotePlaylists.value = collectedRemotePlaylists.value.filter(
+        (p) => p.id !== pl.id && p.title !== pl.title
+      );
+      if (isLoggedIn.value) {
+        await kugouClient.uncollectPlaylist(pl).catch(() => {});
+        loadUserPlaylists();
+      }
       notify(`已取消收藏歌单「${pl.title}」`);
     } else {
       collectedRemotePlaylists.value.unshift({
@@ -1237,7 +1490,11 @@ export const useAppStore = defineStore("breezeApp", () => {
         isFavorite: true,
         isCreatedByMe: false,
       });
-      notify(`已收藏歌单「${pl.title}」至我的音乐库`);
+      if (isLoggedIn.value) {
+        await kugouClient.collectPlaylist(pl).catch(() => {});
+        loadUserPlaylists();
+      }
+      notify(`已收藏歌单「${pl.title}」并同步至云端`);
     }
   }
 
@@ -1270,6 +1527,11 @@ export const useAppStore = defineStore("breezeApp", () => {
     );
     if (idx >= 0) {
       likedSongs.value.splice(idx, 1);
+      if (likedPlaylistMeta.value?.listId) {
+        kugouClient
+          .removeSongFromPlaylist(likedPlaylistMeta.value.listId, song)
+          .catch(() => {});
+      }
       notify(`已从「我喜欢的音乐」移除 ${song.title}`);
     } else {
       likedSongs.value.unshift(song);
@@ -1297,7 +1559,9 @@ export const useAppStore = defineStore("breezeApp", () => {
       await kugouClient.toggleFollowArtist(artist.artistId, nextState);
       artist.isFollowed = nextState;
       if (nextState) {
-        if (!followedArtists.value.some((a) => a.artistId === artist.artistId)) {
+        if (
+          !followedArtists.value.some((a) => a.artistId === artist.artistId)
+        ) {
           followedArtists.value.unshift({ ...artist, isFollowed: true });
         }
         notify(`已关注歌手「${artist.name}」`);
@@ -1333,6 +1597,7 @@ export const useAppStore = defineStore("breezeApp", () => {
   ) {
     activeTab.value = "library";
     libraryDetailMode.value = "artist";
+    artistDetailSubTab.value = "songs";
     isNowPlayingOpen.value = false;
     isSearchPaletteOpen.value = false;
     isLoadingArtist.value = true;
@@ -1353,9 +1618,10 @@ export const useAppStore = defineStore("breezeApp", () => {
 
     try {
       if (artistId && artistId !== "0") {
-        const [detail, songs] = await Promise.all([
+        const [detail, songs, albums] = await Promise.all([
           kugouClient.getArtistDetail(artistId).catch(() => null),
           kugouClient.getArtistSongs(artistId, artistSongsSort.value, 1),
+          kugouClient.getArtistAlbums(artistId, 1, "new").catch(() => []),
         ]);
         if (detail) {
           detail.isFollowed = followedArtists.value.some(
@@ -1364,12 +1630,18 @@ export const useAppStore = defineStore("breezeApp", () => {
           activeArtistDetail.value = detail;
         }
         activeArtistSongs.value = songs;
+        activeArtistAlbums.value = albums;
       } else if (fallbackName) {
-        const songs = await kugouClient.searchSongs(fallbackName, 1, 40);
+        const [songs, albums] = await Promise.all([
+          kugouClient.searchSongs(fallbackName, 1, 40),
+          kugouClient.searchAlbums(fallbackName).catch(() => []),
+        ]);
         activeArtistSongs.value = songs;
+        activeArtistAlbums.value = albums;
         if (songs[0]?.coverUrl && activeArtistDetail.value) {
           activeArtistDetail.value.avatarUrl = songs[0].coverUrl;
           activeArtistDetail.value.songCount = songs.length;
+          activeArtistDetail.value.albumCount = albums.length;
         }
       }
     } catch (e: any) {
@@ -1405,14 +1677,24 @@ export const useAppStore = defineStore("breezeApp", () => {
 
     try {
       if (albumId && albumId !== "0") {
-        const songs = await kugouClient.getAlbumSongs(albumId);
-        activeAlbumSongs.value = songs;
-        if (activeAlbumDetail.value) {
+        const [detail, songs] = await Promise.all([
+          kugouClient.getAlbumDetail(albumId).catch(() => null),
+          kugouClient.getAlbumSongs(albumId),
+        ]);
+        if (detail) {
+          activeAlbumDetail.value = {
+            ...detail,
+            coverUrl:
+              detail.coverUrl || fallbackCover || songs[0]?.coverUrl || "",
+            songCount: songs.length || detail.songCount,
+          };
+        } else if (activeAlbumDetail.value) {
           activeAlbumDetail.value.songCount = songs.length;
           if (!activeAlbumDetail.value.coverUrl && songs[0]?.coverUrl) {
             activeAlbumDetail.value.coverUrl = songs[0].coverUrl;
           }
         }
+        activeAlbumSongs.value = songs;
       } else if (fallbackName) {
         const songs = await kugouClient.searchSongs(
           `${fallbackArtist} ${fallbackName}`.trim(),
@@ -1437,7 +1719,6 @@ export const useAppStore = defineStore("breezeApp", () => {
     isSearchPaletteOpen.value = false;
     isNowPlayingOpen.value = false;
 
-    // 写入本地搜索历史
     searchHistory.value = [
       target,
       ...searchHistory.value.filter((item) => item !== target),
@@ -1471,11 +1752,25 @@ export const useAppStore = defineStore("breezeApp", () => {
     localStorage.removeItem("bm_search_history");
   }
 
-  // ================= 11. 播放调度、音质无缝切换、评论与本地下载 =================
-  async function playSongFromList(song: Song, list?: Song[], queueTitle = "当前播放列表") {
+  // ================= 11. 播放调度、伴奏切换、评论楼中楼与本地下载 =================
+  async function playSongFromList(
+    song: Song,
+    list?: Song[],
+    queueTitle = "当前播放列表"
+  ) {
     ensureWebAudioGraph();
     if (audioCtx && audioCtx.state === "suspended") {
       await audioCtx.resume();
+    }
+
+    // 切歌前上报上一首已播放时长 (CSCC end)
+    if (currentSong.value && currentSongPlayStartWallMs > 0) {
+      const elapsed = Date.now() - currentSongPlayStartWallMs;
+      if (elapsed >= 10_000) {
+        kugouClient
+          .reportPlaybackTelemetry(currentSong.value, false, elapsed)
+          .catch(() => {});
+      }
     }
 
     if (list && list.length > 0) {
@@ -1507,7 +1802,6 @@ export const useAppStore = defineStore("breezeApp", () => {
       }
     }
 
-    // 同步写入最近播放记录
     recentHistorySongs.value = [
       song,
       ...recentHistorySongs.value.filter((s) => s.hash !== song.hash),
@@ -1529,12 +1823,18 @@ export const useAppStore = defineStore("breezeApp", () => {
     loadCommentsForSong(song, commentSortType.value);
 
     try {
-      const pb = await kugouClient.resolveSongUrl(
-        song,
-        preferredQuality.value
-      );
+      const pb = ktvAccompanimentMode.value
+        ? await kugouClient
+            .resolveSongAccompaniment(song)
+            .catch(() => kugouClient.resolveSongUrl(song, preferredQuality.value))
+        : await kugouClient.resolveSongUrl(song, preferredQuality.value);
+
       currentPlaybackInfo.value = pb;
       audio.src = pb.url;
+      currentSongPlayStartWallMs = Date.now();
+
+      // 触发 CSCC start 与听歌足迹上报
+      kugouClient.reportPlaybackTelemetry(song, true, 0).catch(() => {});
 
       const startAtMs =
         seekMs > 0
@@ -1553,6 +1853,32 @@ export const useAppStore = defineStore("breezeApp", () => {
     } catch (e: any) {
       isBuffering.value = false;
       notify(String(e));
+    }
+  }
+
+  async function toggleKtvAccompaniment() {
+    ktvAccompanimentMode.value = !ktvAccompanimentMode.value;
+    if (currentSong.value) {
+      const pos = currentPositionMs.value;
+      await loadAndPlayCurrentSong(pos);
+      notify(
+        ktvAccompanimentMode.value
+          ? "已切换至 KTV 伴奏音轨模式"
+          : "已恢复原唱人声模式"
+      );
+    }
+  }
+
+  async function openSongDetailModal(song: Song) {
+    songDetailModalSong.value = song;
+    activeSongDetailInfo.value = null;
+    isLoadingSongDetail.value = true;
+    try {
+      activeSongDetailInfo.value = await kugouClient.getSongDetailInfo(song);
+    } catch {
+      activeSongDetailInfo.value = null;
+    } finally {
+      isLoadingSongDetail.value = false;
     }
   }
 
@@ -1579,6 +1905,7 @@ export const useAppStore = defineStore("breezeApp", () => {
   ) {
     if (!song) return;
     commentSortType.value = sort;
+    expandedFloorCommentId.value = null;
     isLoadingComments.value = true;
     try {
       activeSongComments.value = await kugouClient.getSongComments(
@@ -1590,6 +1917,63 @@ export const useAppStore = defineStore("breezeApp", () => {
       activeSongComments.value = [];
     } finally {
       isLoadingComments.value = false;
+    }
+  }
+
+  async function toggleCommentFloorReplies(cmt: SongComment) {
+    if (expandedFloorCommentId.value === cmt.id) {
+      expandedFloorCommentId.value = null;
+      return;
+    }
+    expandedFloorCommentId.value = cmt.id;
+    if (floorRepliesMap[cmt.id]?.length || !currentSong.value) return;
+    isLoadingFloorReplies.value = true;
+    try {
+      floorRepliesMap[cmt.id] = await kugouClient.getCommentFloorReplies(
+        currentSong.value,
+        cmt.id,
+        cmt.specialChildId,
+        1
+      );
+    } catch {
+      floorRepliesMap[cmt.id] = [];
+    } finally {
+      isLoadingFloorReplies.value = false;
+    }
+  }
+
+  async function toggleLikeComment(cmt: SongComment) {
+    if (!currentSong.value) return;
+    const nextLike = !cmt.isLiked;
+    cmt.isLiked = nextLike;
+    cmt.likeCount = Math.max(0, cmt.likeCount + (nextLike ? 1 : -1));
+    await kugouClient
+      .likeSongComment(currentSong.value, cmt.id, nextLike)
+      .catch(() => {});
+  }
+
+  async function submitSongComment(content: string, replyToId?: string) {
+    if (!currentSong.value) return false;
+    if (!isLoggedIn.value) {
+      isLoginModalOpen.value = true;
+      return false;
+    }
+    try {
+      const created = await kugouClient.postSongComment(
+        currentSong.value,
+        content,
+        replyToId
+      );
+      if (replyToId && floorRepliesMap[replyToId]) {
+        floorRepliesMap[replyToId].unshift(created);
+      } else {
+        activeSongComments.value.unshift(created);
+      }
+      notify("评论已发布");
+      return true;
+    } catch (e: any) {
+      notify(`发表评论失败：${String(e)}`);
+      return false;
     }
   }
 
@@ -1686,8 +2070,8 @@ export const useAppStore = defineStore("breezeApp", () => {
   function openSongContextMenu(e: MouseEvent, song: Song) {
     e.preventDefault();
     e.stopPropagation();
-    contextMenu.x = Math.min(e.clientX, window.innerWidth - 240);
-    contextMenu.y = Math.min(e.clientY, window.innerHeight - 310);
+    contextMenu.x = Math.min(e.clientX, window.innerWidth - 250);
+    contextMenu.y = Math.min(e.clientY, window.innerHeight - 330);
     contextMenu.song = song;
     contextMenu.visible = true;
   }
@@ -1696,20 +2080,28 @@ export const useAppStore = defineStore("breezeApp", () => {
     contextMenu.visible = false;
   }
 
-  async function triggerDownloadSong(song: Song) {
+  async function triggerDownloadSong(
+    song: Song,
+    customQuality?: AudioQualityValue
+  ) {
     if (!downloadFeatureUnlocked.value) {
-      notify("请先前往「设置 → 功能与隐私管控」开启「音乐下载与歌词保存」");
+      notify("请先前往「设置 → 存储缓存与功能管控」开启「音乐下载与歌词保存」");
       return;
     }
+    const targetQuality = customQuality || downloadQuality.value;
     isDownloadingSong.value = true;
-    notify(`正在下载「${song.title}」并内嵌 1000P 封面与歌词标签...`);
+    downloadModalSong.value = null;
+    notify(`正在下载「${song.title}」并二进制内嵌 1000P 封面与歌词标签...`);
     try {
       const res = await kugouClient.downloadSong(
         song,
-        downloadQuality.value,
+        targetQuality,
         downloadMusicDir.value,
         downloadLrcDir.value,
-        exportStandaloneLrc.value
+        exportStandaloneLrc.value,
+        embedCoverAndTags.value,
+        embedLyricsInAudio.value,
+        bilingualLrcExport.value
       );
       const sizeMb = (res.fileSizeBytes / (1024 * 1024)).toFixed(1) + " MB";
       const record: DownloadHistoryRecord = {
@@ -1786,7 +2178,10 @@ export const useAppStore = defineStore("breezeApp", () => {
     desktopLyricLocked,
     contextMenu,
     songDetailModalSong,
+    activeSongDetailInfo,
+    isLoadingSongDetail,
     addToPlaylistModalSong,
+    downloadModalSong,
     statusBanner,
     discoverSubView,
     activeRank,
@@ -1847,6 +2242,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     isDownloadingSong,
     cacheStats,
     session,
+    savedAccounts,
     profile,
     vipStatus,
     isClaimingVip,
@@ -1880,6 +2276,8 @@ export const useAppStore = defineStore("breezeApp", () => {
     isLoadingLibrary,
     activeArtistDetail,
     activeArtistSongs,
+    activeArtistAlbums,
+    artistDetailSubTab,
     artistSongsSort,
     isLoadingArtist,
     activeAlbumDetail,
@@ -1889,6 +2287,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     collectedPlaylists,
     likedPlaylistMeta,
     searchKeyword,
+    searchSuggestions,
     searchCategoryTab,
     hotSearchKeywords,
     searchHistory,
@@ -1916,17 +2315,27 @@ export const useAppStore = defineStore("breezeApp", () => {
     activeSongComments,
     commentSortType,
     isLoadingComments,
+    expandedFloorCommentId,
+    floorRepliesMap,
+    isLoadingFloorReplies,
     eqFrequencies,
     eqGains,
+    eqBandTypes,
     eqQFactor,
+    eqHighPassHz,
+    eqLowPassHz,
     activeEqPreset,
     peqBypass,
     peqMemorySlots,
+    viperEffects,
+    activeViperEffectId,
     acousticField,
     spectrumBars,
     notify,
     bootstrap,
     refreshAccountAndVip,
+    switchAccount,
+    removeSavedAccount,
     claimVipDaily,
     resignDeviceAndRefresh,
     runGatewayDiagnostic,
@@ -1943,6 +2352,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     selectPlaylist,
     createNewPlaylist,
     deletePlaylist,
+    removeSongFromCurrentPlaylist,
     importExternalPlaylist,
     isPlaylistCollected,
     toggleCollectPlaylist,
@@ -1958,15 +2368,20 @@ export const useAppStore = defineStore("breezeApp", () => {
     clearSearchHistory,
     playSongFromList,
     togglePlayPause,
+    toggleKtvAccompaniment,
+    openSongDetailModal,
     playNext,
     playPrev,
     seekToMs,
     setVolume,
     setPlaybackSpeed,
+    setPitchSemitones,
+    applySpeedAndPitch,
     startSleepTimer,
     switchAudioQuality,
     cyclePlayMode,
     syncDspChain,
+    applyViperEffect,
     setEqPreset,
     updateSingleEqBand,
     savePeqToSlot,
@@ -1974,6 +2389,9 @@ export const useAppStore = defineStore("breezeApp", () => {
     resetSinglePeqSlot,
     resetAllPeqSlots,
     loadCommentsForSong,
+    toggleCommentFloorReplies,
+    toggleLikeComment,
+    submitSongComment,
     openSongContextMenu,
     closeSongContextMenu,
     triggerDownloadSong,

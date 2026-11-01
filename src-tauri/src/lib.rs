@@ -4,7 +4,8 @@ use kugou::api::KugouApiService;
 use kugou::models::{
     AccountProfile, AlbumItem, DownloadTaskResult, FmChannel, FollowedArtist, GatewayDiagResult,
     KugouSession, LyricData, PhoneLoginOutcome, PlaybackResult, Playlist, PurchasedAlbumItem,
-    PurchasedSongItem, QrCodeSession, QrPollResult, RankItem, Song, SongComment, VipStatusInfo,
+    PurchasedSongItem, QrCodeSession, QrPollResult, RankItem, Song, SongComment, SongDetailInfo,
+    VipStatusInfo, ViperEffectItem,
 };
 use kugou::store::AppStore;
 use std::sync::Arc;
@@ -19,6 +20,27 @@ pub struct AppState {
 async fn init_app_state(state: State<'_, AppState>) -> Result<Option<KugouSession>, String> {
     let _ = state.api.register_device(false).await;
     Ok(state.store.session())
+}
+
+#[tauri::command]
+async fn get_saved_accounts_cmd(state: State<'_, AppState>) -> Result<Vec<KugouSession>, String> {
+    Ok(state.store.saved_accounts())
+}
+
+#[tauri::command]
+async fn switch_saved_account_cmd(
+    state: State<'_, AppState>,
+    user_id: String,
+) -> Result<Option<KugouSession>, String> {
+    Ok(state.store.switch_account(&user_id))
+}
+
+#[tauri::command]
+async fn remove_saved_account_cmd(
+    state: State<'_, AppState>,
+    user_id: String,
+) -> Result<Vec<KugouSession>, String> {
+    Ok(state.store.remove_saved_account(&user_id))
 }
 
 #[tauri::command]
@@ -144,6 +166,14 @@ async fn get_search_hot(state: State<'_, AppState>) -> Result<Vec<String>, Strin
 }
 
 #[tauri::command]
+async fn get_search_suggest_cmd(
+    state: State<'_, AppState>,
+    keyword: String,
+) -> Result<Vec<String>, String> {
+    state.api.fetch_search_suggest(&keyword).await
+}
+
+#[tauri::command]
 async fn search_playlists_cmd(
     state: State<'_, AppState>,
     keyword: String,
@@ -197,12 +227,37 @@ async fn delete_user_playlist_cmd(
 }
 
 #[tauri::command]
+async fn collect_playlist_cmd(
+    state: State<'_, AppState>,
+    playlist: Playlist,
+) -> Result<bool, String> {
+    state.api.collect_playlist_cloud(&playlist).await
+}
+
+#[tauri::command]
+async fn uncollect_playlist_cmd(
+    state: State<'_, AppState>,
+    playlist: Playlist,
+) -> Result<bool, String> {
+    state.api.uncollect_playlist_cloud(&playlist).await
+}
+
+#[tauri::command]
 async fn add_song_to_playlist_cmd(
     state: State<'_, AppState>,
     list_id: i64,
     song: Song,
 ) -> Result<bool, String> {
     state.api.add_song_to_user_playlist(list_id, &song).await
+}
+
+#[tauri::command]
+async fn remove_song_from_playlist_cmd(
+    state: State<'_, AppState>,
+    list_id: i64,
+    song: Song,
+) -> Result<bool, String> {
+    state.api.remove_song_from_user_playlist(list_id, &song).await
 }
 
 #[tauri::command]
@@ -250,8 +305,37 @@ async fn get_artist_songs_cmd(
 ) -> Result<Vec<Song>, String> {
     state
         .api
-        .fetch_artist_songs(&artist_id, &sort.unwrap_or_else(|| "hot".to_string()), page.unwrap_or(1))
+        .fetch_artist_songs(
+            &artist_id,
+            &sort.unwrap_or_else(|| "hot".to_string()),
+            page.unwrap_or(1),
+        )
         .await
+}
+
+#[tauri::command]
+async fn get_artist_albums_cmd(
+    state: State<'_, AppState>,
+    artist_id: String,
+    page: Option<u32>,
+    sort: Option<String>,
+) -> Result<Vec<AlbumItem>, String> {
+    state
+        .api
+        .fetch_artist_albums(
+            &artist_id,
+            page.unwrap_or(1),
+            &sort.unwrap_or_else(|| "new".to_string()),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn get_album_detail_cmd(
+    state: State<'_, AppState>,
+    album_id: String,
+) -> Result<AlbumItem, String> {
+    state.api.fetch_album_detail(&album_id).await
 }
 
 #[tauri::command]
@@ -271,7 +355,53 @@ async fn get_song_comments_cmd(
 ) -> Result<Vec<SongComment>, String> {
     state
         .api
-        .fetch_song_comments(&song, &sort_type.unwrap_or_else(|| "hot".to_string()), page.unwrap_or(1))
+        .fetch_song_comments(
+            &song,
+            &sort_type.unwrap_or_else(|| "hot".to_string()),
+            page.unwrap_or(1),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn get_comment_floor_replies_cmd(
+    state: State<'_, AppState>,
+    song: Song,
+    comment_id: String,
+    special_child_id: Option<String>,
+    page: Option<u32>,
+) -> Result<Vec<SongComment>, String> {
+    state
+        .api
+        .fetch_comment_floor_replies(
+            &song,
+            &comment_id,
+            &special_child_id.unwrap_or_default(),
+            page.unwrap_or(1),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn like_song_comment_cmd(
+    state: State<'_, AppState>,
+    song: Song,
+    comment_id: String,
+    like: bool,
+) -> Result<bool, String> {
+    state.api.like_song_comment(&song, &comment_id, like).await
+}
+
+#[tauri::command]
+async fn post_song_comment_cmd(
+    state: State<'_, AppState>,
+    song: Song,
+    content: String,
+    reply_to_id: Option<String>,
+) -> Result<SongComment, String> {
+    state
+        .api
+        .post_song_comment(&song, &content, reply_to_id.as_deref())
         .await
 }
 
@@ -293,6 +423,9 @@ async fn download_song_cmd(
     music_dir: Option<String>,
     lrc_dir: Option<String>,
     export_lrc: Option<bool>,
+    embed_cover_and_tags: Option<bool>,
+    embed_lyrics_in_audio: Option<bool>,
+    bilingual_lrc: Option<bool>,
 ) -> Result<DownloadTaskResult, String> {
     state
         .api
@@ -302,6 +435,9 @@ async fn download_song_cmd(
             &music_dir.unwrap_or_default(),
             &lrc_dir.unwrap_or_default(),
             export_lrc.unwrap_or(true),
+            embed_cover_and_tags.unwrap_or(true),
+            embed_lyrics_in_audio.unwrap_or(true),
+            bilingual_lrc.unwrap_or(true),
         )
         .await
 }
@@ -314,6 +450,42 @@ async fn resolve_song_url(
 ) -> Result<PlaybackResult, String> {
     let pref = preferred_quality.unwrap_or_else(|| "flac".to_string());
     state.api.resolve_song_url(&song, &pref).await
+}
+
+#[tauri::command]
+async fn resolve_song_accompaniment_cmd(
+    state: State<'_, AppState>,
+    song: Song,
+) -> Result<PlaybackResult, String> {
+    state.api.resolve_song_accompaniment(&song).await
+}
+
+#[tauri::command]
+async fn get_song_detail_info_cmd(
+    state: State<'_, AppState>,
+    song: Song,
+) -> Result<SongDetailInfo, String> {
+    state.api.fetch_song_detail_info(&song).await
+}
+
+#[tauri::command]
+async fn report_playback_telemetry_cmd(
+    state: State<'_, AppState>,
+    song: Song,
+    is_start: bool,
+    played_duration_ms: Option<i64>,
+) -> Result<bool, String> {
+    state
+        .api
+        .report_playback_telemetry(&song, is_start, played_duration_ms.unwrap_or(0))
+        .await
+}
+
+#[tauri::command]
+async fn get_viper_effects_cmd(
+    state: State<'_, AppState>,
+) -> Result<Vec<ViperEffectItem>, String> {
+    state.api.fetch_viper_effects().await
 }
 
 #[tauri::command]
@@ -330,6 +502,9 @@ pub fn run() {
         .manage(AppState { api, store })
         .invoke_handler(tauri::generate_handler![
             init_app_state,
+            get_saved_accounts_cmd,
+            switch_saved_account_cmd,
+            remove_saved_account_cmd,
             send_sms_code,
             login_with_sms,
             create_qr_login,
@@ -348,6 +523,7 @@ pub fn run() {
             get_recent_history,
             search_songs,
             get_search_hot,
+            get_search_suggest_cmd,
             search_playlists_cmd,
             search_albums_cmd,
             search_artists_cmd,
@@ -355,19 +531,31 @@ pub fn run() {
             get_playlist_songs,
             create_user_playlist_cmd,
             delete_user_playlist_cmd,
+            collect_playlist_cmd,
+            uncollect_playlist_cmd,
             add_song_to_playlist_cmd,
+            remove_song_from_playlist_cmd,
             get_followed_artists,
             toggle_follow_artist_cmd,
             get_purchased_albums,
             get_purchased_songs,
             get_artist_detail_cmd,
             get_artist_songs_cmd,
+            get_artist_albums_cmd,
+            get_album_detail_cmd,
             get_album_songs_cmd,
             get_song_comments_cmd,
+            get_comment_floor_replies_cmd,
+            like_song_comment_cmd,
+            post_song_comment_cmd,
             resign_device_cmd,
             diagnose_gateway_cmd,
             download_song_cmd,
             resolve_song_url,
+            resolve_song_accompaniment_cmd,
+            get_song_detail_info_cmd,
+            report_playback_telemetry_cmd,
+            get_viper_effects_cmd,
             get_song_lyric,
         ])
         .run(tauri::generate_context!())

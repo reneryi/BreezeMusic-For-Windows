@@ -16,7 +16,7 @@ export type SearchCategoryTab = "songs" | "playlists" | "albums" | "artists";
 
 export type AudioQualityValue = "128" | "320" | "flac" | "high";
 
-/** 全局桌面布局风格（方案二默认：skyline_bento 顶部天际线中枢画廊） */
+/** 全局桌面布局风格（方案二默认：floating_bento 顶部天际线中枢画廊） */
 export type DesktopLayoutMode =
   | "floating_bento"
   | "zen_minimal"
@@ -55,6 +55,24 @@ export type LyricThemeId =
 export type LyricAlignment = "left" | "center" | "right";
 
 export type PlayMode = "repeat_all" | "repeat_one" | "shuffle";
+
+/** 参量均衡器单频段滤波器拓扑（对齐 Android PeqFilterType） */
+export type PeqFilterType =
+  | "peaking"
+  | "lowshelf"
+  | "highshelf"
+  | "notch"
+  | "bandpass";
+
+/** 空间混响房间模型（对齐 Android ReverbMode） */
+export type ReverbPresetId =
+  | "none"
+  | "small_room"
+  | "medium_room"
+  | "large_room"
+  | "medium_hall"
+  | "large_hall"
+  | "plate";
 
 export interface KugouSession {
   userId: string;
@@ -288,6 +306,38 @@ export interface DownloadHistoryRecord {
   timestampText: string;
 }
 
+export interface ViperEffectItem {
+  id: string;
+  modeId: string;
+  label: string;
+  desc: string;
+  category: string;
+  usageBadge: string;
+  authorName: string;
+  acousticTags: string[];
+  gains: number[];
+  subBass: number;
+  surround: number;
+  vocalClarity: number;
+  airHarmonics: number;
+  tubeWarmth: number;
+}
+
+export interface SongDetailInfo {
+  song: Song;
+  albumName: string;
+  singerName: string;
+  publishTime: string;
+  company: string;
+  audioQuality: string;
+  sampleRate: string;
+  bitRate: string;
+  fileSize: string;
+  fileHash: string;
+  hasAccompaniment: boolean;
+  accompanyHash: string;
+}
+
 /** 母带级声场调音工作台参数（对齐 Android AcousticFieldTuningTab） */
 export interface AcousticFieldSettings {
   enabled: boolean;
@@ -297,6 +347,7 @@ export interface AcousticFieldSettings {
   surroundWidth: number; // 0 ~ 100 3D 环绕声场宽度
   stageDepth: number; // 0 ~ 100 舞台纵深距离感
   bauerCrossfeed: boolean; // Bauer 耳机交叉馈送（消除头中效应）
+  reverbPreset: ReverbPresetId; // Schroeder 空间声学混响模型
   reverbPreDelayMs: number; // 0 ~ 80 ms 空间混响预延迟
   vocalClarity: number; // 0 ~ 100 人声通透与 6.2kHz 齿音柔化
   airHarmonics: number; // 0 ~ 100 12kHz+ 极高频空气泛音
@@ -310,6 +361,7 @@ export interface PeqMemorySlot {
   saved: boolean;
   gains: number[];
   qFactor: number;
+  bandTypes?: PeqFilterType[];
 }
 
 export interface LyricWord {

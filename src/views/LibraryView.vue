@@ -12,15 +12,39 @@ const showImportModal = ref(false);
 const importPlaylistName = ref("");
 const importRawText = ref("");
 const isImporting = ref(false);
+const trackFilterKeyword = ref("");
 
 const activeListSongs = computed(() => {
+  const base =
+    store.libraryAssetTab === "liked"
+      ? store.likedSongs
+      : store.libraryAssetTab === "recent"
+      ? store.recentHistorySongs
+      : store.playlistSongs;
+  const kw = trackFilterKeyword.value.trim().toLowerCase();
+  if (!kw) return base;
+  return base.filter(
+    (s) =>
+      s.title.toLowerCase().includes(kw) ||
+      s.artist.toLowerCase().includes(kw) ||
+      s.album.toLowerCase().includes(kw)
+  );
+});
+
+const rawActiveListCount = computed(() => {
   if (store.libraryAssetTab === "liked") {
-    return store.likedSongs;
+    return Math.max(
+      store.likedPlaylistMeta?.trackCount || 0,
+      store.likedSongs.length
+    );
   }
   if (store.libraryAssetTab === "recent") {
-    return store.recentHistorySongs;
+    return store.recentHistorySongs.length;
   }
-  return store.playlistSongs;
+  return Math.max(
+    store.selectedPlaylist?.trackCount || 0,
+    store.playlistSongs.length
+  );
 });
 
 const activeListTitle = computed(() => {
@@ -36,6 +60,7 @@ const activeListTitle = computed(() => {
 function openLikedSongs() {
   store.libraryDetailMode = "playlist";
   store.libraryAssetTab = "liked";
+  trackFilterKeyword.value = "";
   if (store.likedSongs.length === 0 && store.likedPlaylistMeta) {
     store.selectPlaylist(store.likedPlaylistMeta);
   }
@@ -44,8 +69,19 @@ function openLikedSongs() {
 function openRecentSongs() {
   store.libraryDetailMode = "playlist";
   store.libraryAssetTab = "recent";
+  trackFilterKeyword.value = "";
   if (store.recentHistorySongs.length === 0) {
     store.loadRecentHistory();
+  }
+}
+
+function locateCurrentPlayingSong() {
+  const el = document.querySelector(".track-card-playing");
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    store.notify("已为您平滑居中定位到当前播放歌曲");
+  } else {
+    store.notify("当前播放歌曲不在本歌单列表中");
   }
 }
 
@@ -85,7 +121,7 @@ function formatDuration(ms: number): string {
 
 <template>
   <div class="page-scroll-canvas" @click="store.closeSongContextMenu()">
-    <!-- ==================== 子视图 A：歌手主页详情 (ArtistDetailScreen) ==================== -->
+    <!-- ==================== 子视图 A：歌手主页详情 (ArtistDetailScreen：热门单曲 / 专辑列表 / 歌手百科) ==================== -->
     <template
       v-if="store.libraryDetailMode === 'artist' && store.activeArtistDetail"
     >
@@ -102,6 +138,40 @@ function formatDuration(ms: number): string {
           <div class="pill-tabs">
             <button
               class="pill-tab-btn"
+              :class="{ active: store.artistDetailSubTab === 'songs' }"
+              @click="store.artistDetailSubTab = 'songs'"
+            >
+              代表单曲 ({{
+                store.activeArtistDetail.songCount ||
+                store.activeArtistSongs.length
+              }})
+            </button>
+            <button
+              class="pill-tab-btn"
+              :class="{ active: store.artistDetailSubTab === 'albums' }"
+              @click="store.artistDetailSubTab = 'albums'"
+            >
+              发行专辑 ({{
+                store.activeArtistAlbums.length ||
+                store.activeArtistDetail.albumCount ||
+                0
+              }})
+            </button>
+            <button
+              class="pill-tab-btn"
+              :class="{ active: store.artistDetailSubTab === 'about' }"
+              @click="store.artistDetailSubTab = 'about'"
+            >
+              歌手百科简介
+            </button>
+          </div>
+
+          <div
+            v-if="store.artistDetailSubTab === 'songs'"
+            class="pill-tabs"
+          >
+            <button
+              class="pill-tab-btn"
               :class="{ active: store.artistSongsSort === 'hot' }"
               @click="
                 store.artistSongsSort = 'hot';
@@ -112,7 +182,7 @@ function formatDuration(ms: number): string {
                 );
               "
             >
-              热门单曲
+              最热
             </button>
             <button
               class="pill-tab-btn"
@@ -126,7 +196,7 @@ function formatDuration(ms: number): string {
                 );
               "
             >
-              最新发行
+              最新
             </button>
           </div>
         </div>
@@ -143,9 +213,18 @@ function formatDuration(ms: number): string {
           <div class="artist-hero-meta">
             <h2 class="artist-hero-name">{{ store.activeArtistDetail.name }}</h2>
             <p class="artist-hero-stats">
-              单曲 {{ store.activeArtistDetail.songCount || store.activeArtistSongs.length }} 首 · 专辑
-              {{ store.activeArtistDetail.albumCount || 12 }} 张 · 粉丝
-              {{ store.activeArtistDetail.fansCount || "18.6w" }}
+              单曲
+              {{
+                store.activeArtistDetail.songCount ||
+                store.activeArtistSongs.length
+              }}
+              首 · 专辑
+              {{
+                store.activeArtistDetail.albumCount ||
+                store.activeArtistAlbums.length ||
+                12
+              }}
+              张 · 粉丝 {{ store.activeArtistDetail.fansCount || "18.6w" }}
             </p>
             <p v-if="store.activeArtistDetail.intro" class="artist-hero-intro">
               {{ store.activeArtistDetail.intro }}
@@ -162,7 +241,9 @@ function formatDuration(ms: number): string {
                 :size="15"
               />
               <span>
-                {{ store.activeArtistDetail.isFollowed ? "已关注" : "关注歌手" }}
+                {{
+                  store.activeArtistDetail.isFollowed ? "已关注" : "关注歌手"
+                }}
               </span>
             </button>
             <button
@@ -186,7 +267,12 @@ function formatDuration(ms: number): string {
       <div v-if="store.isLoadingArtist" class="loading-box">
         正在加载歌手代表作品与概念版无损音源规格...
       </div>
-      <div v-else class="dual-column-song-grid">
+
+      <!-- 1. 歌手热门单曲 -->
+      <div
+        v-else-if="store.artistDetailSubTab === 'songs'"
+        class="dual-column-song-grid"
+      >
         <div
           v-for="(song, idx) in store.activeArtistSongs"
           :key="song.hash || idx"
@@ -210,12 +296,95 @@ function formatDuration(ms: number): string {
             <div class="psc-sub">
               <span v-if="song.isHiRes" class="mini-badge hires">Hi-Res</span>
               <span v-else-if="song.isLossless" class="mini-badge sq">SQ</span>
+              <span v-if="song.isVip" class="mini-badge vip">VIP</span>
               <span>{{ song.artist }}</span>
               <span v-if="song.album" class="psc-album">· {{ song.album }}</span>
             </div>
           </div>
+          <div class="psc-actions" @click.stop>
+            <button
+              class="psc-act-btn"
+              title="喜欢"
+              @click="store.toggleFavoriteSong(song)"
+            >
+              <PlumpIcon
+                name="heart"
+                :size="15"
+                :filled="store.isSongLiked(song)"
+                :color="store.isSongLiked(song) ? '#ff4d6d' : 'currentColor'"
+              />
+            </button>
+            <button
+              class="psc-act-btn"
+              title="添加到歌单"
+              @click="store.addToPlaylistModalSong = song"
+            >
+              <PlumpIcon name="playlist-add" :size="15" />
+            </button>
+            <button
+              class="psc-act-btn"
+              title="更多操作"
+              @click="store.openSongContextMenu($event, song)"
+            >
+              <PlumpIcon name="more" :size="15" />
+            </button>
+          </div>
           <div class="psc-dur">{{ formatDuration(song.durationMs) }}</div>
         </div>
+      </div>
+
+      <!-- 2. 歌手发行专辑网格 -->
+      <div
+        v-else-if="store.artistDetailSubTab === 'albums'"
+        class="album-cards-grid"
+      >
+        <div
+          v-if="store.activeArtistAlbums.length === 0"
+          class="empty-box"
+          style="grid-column: 1 / -1"
+        >
+          暂未获取到该歌手的独立数字专辑列表
+        </div>
+        <div
+          v-for="alb in store.activeArtistAlbums"
+          :key="alb.albumId"
+          class="plump-album-card"
+          @click="
+            store.openAlbumDetail(
+              alb.albumId,
+              alb.albumName,
+              alb.artistName || store.activeArtistDetail.name,
+              alb.coverUrl
+            )
+          "
+        >
+          <img v-if="alb.coverUrl" :src="alb.coverUrl" class="palb-cover" />
+          <div class="palb-info">
+            <div class="palb-name">{{ alb.albumName }}</div>
+            <div class="palb-sub">
+              {{ alb.publishDate || "数字发行" }} · {{ alb.songCount || 10 }} 首
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. 歌手百科长简介 -->
+      <div v-else class="settings-card-panel">
+        <h3>关于 {{ store.activeArtistDetail.name }}</h3>
+        <p
+          style="
+            font-size: 13.5px;
+            line-height: 1.75;
+            color: var(--text-secondary);
+            white-space: pre-wrap;
+            margin-top: 10px;
+          "
+        >
+          {{
+            store.activeArtistDetail.intro ||
+            "酷狗概念版官方音乐人，收录高解析度 Hi-Res 与 SQ 无损母带作品。"
+          }}
+        </p>
       </div>
     </template>
 
@@ -245,8 +414,17 @@ function formatDuration(ms: number): string {
               {{ store.activeAlbumDetail.albumName }}
             </h2>
             <p class="artist-hero-stats">
-              歌手：{{ store.activeAlbumDetail.artistName || "群星" }} · 共
-              {{ store.activeAlbumSongs.length }} 首曲目
+              歌手：{{ store.activeAlbumDetail.artistName || "群星" }} ·
+              发行日期：{{
+                store.activeAlbumDetail.publishDate || "数字正版"
+              }}
+              · 出品：{{
+                store.activeAlbumDetail.publishCompany || "概念版正版曲库"
+              }}
+              · 共 {{ store.activeAlbumSongs.length }} 首曲目
+            </p>
+            <p v-if="store.activeAlbumDetail.intro" class="artist-hero-intro">
+              {{ store.activeAlbumDetail.intro }}
             </p>
           </div>
           <button
@@ -261,7 +439,7 @@ function formatDuration(ms: number): string {
             "
           >
             <PlumpIcon name="play" :size="15" color="#ffffff" />
-            <span>播放整张专辑</span>
+            <span>播放整张专辑 ({{ store.activeAlbumSongs.length }})</span>
           </button>
         </div>
       </div>
@@ -293,8 +471,30 @@ function formatDuration(ms: number): string {
             <div class="psc-sub">
               <span v-if="song.isHiRes" class="mini-badge hires">Hi-Res</span>
               <span v-else-if="song.isLossless" class="mini-badge sq">SQ</span>
+              <span v-if="song.isVip" class="mini-badge vip">VIP</span>
               <span>{{ song.artist }}</span>
             </div>
+          </div>
+          <div class="psc-actions" @click.stop>
+            <button
+              class="psc-act-btn"
+              title="喜欢"
+              @click="store.toggleFavoriteSong(song)"
+            >
+              <PlumpIcon
+                name="heart"
+                :size="15"
+                :filled="store.isSongLiked(song)"
+                :color="store.isSongLiked(song) ? '#ff4d6d' : 'currentColor'"
+              />
+            </button>
+            <button
+              class="psc-act-btn"
+              title="添加到歌单"
+              @click="store.addToPlaylistModalSong = song"
+            >
+              <PlumpIcon name="playlist-add" :size="15" />
+            </button>
           </div>
           <div class="psc-dur">{{ formatDuration(song.durationMs) }}</div>
         </div>
@@ -351,7 +551,6 @@ function formatDuration(ms: number): string {
       <template v-else>
         <!-- 上层：快捷三联胶囊矩阵（我喜欢的音乐 + 最近播放 + 概念胶囊 Focus Pod 心流舱） -->
         <section class="library-shortcut-trio">
-          <!-- 1. 红心暗纹卡：我喜欢的音乐 -->
           <div
             class="lib-shortcut-card liked-card"
             :class="{ active: store.libraryAssetTab === 'liked' }"
@@ -367,15 +566,16 @@ function formatDuration(ms: number): string {
               <div class="sc-title">我喜欢的音乐</div>
               <div class="sc-count">
                 {{
-                  store.likedPlaylistMeta?.trackCount ||
-                  store.likedSongs.length
+                  Math.max(
+                    store.likedPlaylistMeta?.trackCount || 0,
+                    store.likedSongs.length
+                  )
                 }}
                 首珍藏曲目
               </div>
             </div>
           </div>
 
-          <!-- 2. 青蓝暗纹卡：最近播放 -->
           <div
             class="lib-shortcut-card recent-card"
             :class="{ active: store.libraryAssetTab === 'recent' }"
@@ -395,7 +595,6 @@ function formatDuration(ms: number): string {
             </div>
           </div>
 
-          <!-- 3. 幻紫流光卡：概念胶囊 · Focus Pod 心流工作台 -->
           <div
             class="lib-shortcut-card focus-card"
             @click="store.isFocusPodOpen = true"
@@ -409,7 +608,7 @@ function formatDuration(ms: number): string {
                   accent="#00e5ff"
                 />
               </div>
-              <span class="sc-pill-tag violet">开启心流 ></span>
+              <span class="sc-pill-tag violet">开启心流 &gt;</span>
             </div>
             <div class="sc-bottom">
               <div class="sc-title">概念胶囊 · Focus Pod</div>
@@ -418,21 +617,34 @@ function formatDuration(ms: number): string {
           </div>
         </section>
 
-        <!-- 下层：开放式四维音乐资产滑块导航栏（自建 / 收藏 / 关注 / 已购） -->
+        <!-- 下层：开放式音乐资产滑块导航栏（自建 / 收藏 / 关注 / 已购 / 我喜欢 / 最近） -->
         <section class="library-explorer-section">
           <div class="explorer-tabs-bar">
             <div class="explorer-tabs-left">
               <button
                 class="exp-tab"
                 :class="{ active: store.libraryAssetTab === 'created' }"
-                @click="store.libraryAssetTab = 'created'"
+                @click="
+                  store.libraryAssetTab = 'created';
+                  if (
+                    store.selectedPlaylist?.isLiked &&
+                    store.createdPlaylists.length > 0
+                  ) {
+                    store.selectPlaylist(store.createdPlaylists[0]);
+                  }
+                "
               >
                 自建歌单 <span>{{ store.createdPlaylists.length }}</span>
               </button>
               <button
                 class="exp-tab"
                 :class="{ active: store.libraryAssetTab === 'collected' }"
-                @click="store.libraryAssetTab = 'collected'"
+                @click="
+                  store.libraryAssetTab = 'collected';
+                  if (store.collectedPlaylists.length > 0) {
+                    store.selectPlaylist(store.collectedPlaylists[0]);
+                  }
+                "
               >
                 收藏歌单 <span>{{ store.collectedPlaylists.length }}</span>
               </button>
@@ -471,8 +683,10 @@ function formatDuration(ms: number): string {
                 我喜欢
                 <span>
                   {{
-                    store.likedPlaylistMeta?.trackCount ||
-                    store.likedSongs.length
+                    Math.max(
+                      store.likedPlaylistMeta?.trackCount || 0,
+                      store.likedSongs.length
+                    )
                   }}
                 </span>
               </button>
@@ -485,7 +699,7 @@ function formatDuration(ms: number): string {
               </button>
             </div>
 
-            <!-- 右侧随当前资产 Tab 动态显示的软润无框工具按钮（对齐 Android LibraryScreen） -->
+            <!-- 右侧随当前资产 Tab 动态显示的软润无框工具按钮 -->
             <div class="explorer-tabs-tools">
               <template v-if="store.libraryAssetTab === 'created'">
                 <button
@@ -512,7 +726,7 @@ function formatDuration(ms: number): string {
                 "
                 class="tonal-pill-btn sm"
                 :title="
-                  store.isLibraryGridView ? '切换为紧凑列表' : '切换为画廊网格'
+                  store.isLibraryGridView ? '切换为紧凑列表' : '切换为双列网格'
                 "
                 @click="store.isLibraryGridView = !store.isLibraryGridView"
               >
@@ -678,6 +892,42 @@ function formatDuration(ms: number): string {
               class="explorer-playlists-col"
               :class="{ 'grid-mode': store.isLibraryGridView }"
             >
+              <!-- 置顶展示「我喜欢」以便在自建歌单列随时切回 -->
+              <div
+                v-if="
+                  store.libraryAssetTab === 'created' && store.likedPlaylistMeta
+                "
+                class="exp-playlist-item"
+                :class="{
+                  active:
+                    store.selectedPlaylist?.id === store.likedPlaylistMeta.id,
+                }"
+                @click="store.selectPlaylist(store.likedPlaylistMeta)"
+              >
+                <img
+                  v-if="store.likedPlaylistMeta.coverUrl"
+                  :src="store.likedPlaylistMeta.coverUrl"
+                  class="exp-pl-cover"
+                />
+                <div v-else class="exp-pl-cover-fallback">
+                  <PlumpIcon name="heart-filled" :size="20" color="#ff4d6d" />
+                </div>
+                <div class="exp-pl-info">
+                  <div class="exp-pl-title">
+                    {{ store.likedPlaylistMeta.title }}
+                  </div>
+                  <div class="exp-pl-sub">
+                    {{
+                      Math.max(
+                        store.likedPlaylistMeta.trackCount,
+                        store.likedSongs.length
+                      )
+                    }}
+                    首歌曲
+                  </div>
+                </div>
+              </div>
+
               <div
                 v-for="pl in store.libraryAssetTab === 'created'
                   ? store.createdPlaylists
@@ -697,7 +947,9 @@ function formatDuration(ms: number): string {
                   <PlumpIcon name="disc" :size="20" />
                 </div>
                 <div class="exp-pl-info">
-                  <div class="exp-pl-title">{{ pl.title }}</div>
+                  <div class="exp-pl-title" :title="pl.title">
+                    {{ pl.title }}
+                  </div>
                   <div class="exp-pl-sub">{{ pl.trackCount }} 首歌曲</div>
                 </div>
                 <button
@@ -727,18 +979,45 @@ function formatDuration(ms: number): string {
                   <div>
                     <h3 class="exp-tracks-title">{{ activeListTitle }}</h3>
                     <span class="exp-tracks-count">
-                      共 {{ activeListSongs.length }} 首无损与高品曲目
+                      共 {{ rawActiveListCount }} 首曲目（已加载
+                      {{ activeListSongs.length }} 首无损与高品曲目）
                     </span>
                   </div>
                 </div>
 
                 <div class="eth-actions">
+                  <!-- 歌单内歌曲快速检索过滤框 -->
+                  <div class="rank-search-box" style="max-width: 220px; height: 34px">
+                    <PlumpIcon
+                      name="search"
+                      :size="14"
+                      color="var(--text-secondary)"
+                    />
+                    <input
+                      v-model="trackFilterKeyword"
+                      type="text"
+                      placeholder="筛选歌单内歌曲..."
+                      class="rank-search-input"
+                    />
+                  </div>
+
+                  <button
+                    class="tonal-pill-btn sm"
+                    title="定位到当前正在播放的歌曲"
+                    @click="locateCurrentPlayingSong"
+                  >
+                    <PlumpIcon name="locate" :size="14" />
+                    <span>定位播放</span>
+                  </button>
+
                   <button
                     v-if="
                       store.selectedPlaylist &&
-                      !store.selectedPlaylist.isCreatedByMe
+                      !store.selectedPlaylist.isCreatedByMe &&
+                      store.libraryAssetTab !== 'liked' &&
+                      store.libraryAssetTab !== 'recent'
                     "
-                    class="tonal-pill-btn"
+                    class="tonal-pill-btn sm"
                     @click="store.toggleCollectPlaylist(store.selectedPlaylist)"
                   >
                     <PlumpIcon
@@ -780,7 +1059,7 @@ function formatDuration(ms: number): string {
               </div>
 
               <div v-if="store.isLoadingLibrary" class="loading-box">
-                正在同步云端曲目与概念版无损音源规格...
+                正在同步云端全量曲目与概念版无损音源规格...
               </div>
 
               <div
@@ -788,7 +1067,7 @@ function formatDuration(ms: number): string {
                 class="empty-box"
               >
                 <PlumpIcon name="sparkles" :size="30" />
-                <p>当前列表暂无歌曲，请从左侧选择有曲目的歌单</p>
+                <p>当前列表暂无匹配的歌曲，请从左侧选择有曲目的歌单</p>
               </div>
 
               <div v-else class="dual-column-song-grid">
@@ -841,6 +1120,36 @@ function formatDuration(ms: number): string {
                         · {{ song.album }}
                       </span>
                     </div>
+                  </div>
+                  <div class="psc-actions" @click.stop>
+                    <button
+                      class="psc-act-btn"
+                      title="喜欢"
+                      @click="store.toggleFavoriteSong(song)"
+                    >
+                      <PlumpIcon
+                        name="heart"
+                        :size="15"
+                        :filled="store.isSongLiked(song)"
+                        :color="
+                          store.isSongLiked(song) ? '#ff4d6d' : 'currentColor'
+                        "
+                      />
+                    </button>
+                    <button
+                      class="psc-act-btn"
+                      title="添加到歌单"
+                      @click="store.addToPlaylistModalSong = song"
+                    >
+                      <PlumpIcon name="playlist-add" :size="15" />
+                    </button>
+                    <button
+                      class="psc-act-btn"
+                      title="更多操作"
+                      @click="store.openSongContextMenu($event, song)"
+                    >
+                      <PlumpIcon name="more" :size="15" />
+                    </button>
                   </div>
                   <div class="psc-dur">{{ formatDuration(song.durationMs) }}</div>
                 </div>
@@ -912,7 +1221,9 @@ function formatDuration(ms: number): string {
             @click="handleImportSubmit"
           >
             <PlumpIcon name="upload" :size="16" color="#ffffff" />
-            <span>{{ isImporting ? "正在智能匹配导入..." : "开始匹配导入" }}</span>
+            <span>
+              {{ isImporting ? "正在智能匹配导入..." : "开始匹配导入" }}
+            </span>
           </button>
         </div>
       </div>

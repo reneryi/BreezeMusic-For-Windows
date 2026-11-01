@@ -392,3 +392,38 @@ pub struct DownloadTaskResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViperEffectItem {
+    pub id: String,
+    pub mode_id: String,
+    pub label: String,
+    pub desc: String,
+    pub category: String,
+    pub usage_badge: String,
+    pub author_name: String,
+    pub acoustic_tags: Vec<String>,
+    pub gains: Vec<f32>,
+    pub sub_bass: i32,
+    pub surround: i32,
+    pub vocal_clarity: i32,
+    pub air_harmonics: i32,
+    pub tube_warmth: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SongDetailInfo {
+    pub song: Song,
+    pub album_name: String,
+    pub singer_name: String,
+    pub publish_time: String,
+    pub company: String,
+    pub audio_quality: String,
+    pub sample_rate: String,
+    pub bit_rate: String,
+    pub file_size: String,
+    pub file_hash: String,
+    pub has_accompaniment: bool,
+    pub accompany_hash: String,
+}

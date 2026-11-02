@@ -3856,7 +3856,7 @@ impl KugouApiService {
                 "western_pop" => "欧美流行 Billboard",
                 _ => ch.name.as_str(),
             };
-            if let Ok(pls) = self.search_playlists(kw, 1, 4).await {
+            if let Ok(pls) = self.search_playlists(kw).await {
                 if let Some(found) = pls.into_iter().find(|p| !p.cover_url.is_empty() && !p.cover_url.contains("20210519")) {
                     ch.cover_url = found.cover_url;
                     continue;

@@ -142,7 +142,7 @@
           title="切换明亮 / 深邃外观模式"
           @click="toggleColorScheme"
         >
-          <PlumpIcon :name="store.colorScheme === 'light' ? 'moon' : 'sun'" :size="16" />
+          <PlumpIcon :name="store.colorScheme === 'watercolor_light' || store.colorScheme === 'light' ? 'moon' : 'sun'" :size="16" />
         </button>
       </div>
 
@@ -305,11 +305,11 @@ function handleUserClick() {
 }
 
 function toggleColorScheme() {
-  if (store.colorScheme === "light") {
-    store.colorScheme = "dark";
+  if (store.colorScheme === "watercolor_light" || store.colorScheme === "light") {
+    store.colorScheme = "abyssal_dark";
     store.notify("已切换为深邃夜幕外观");
   } else {
-    store.colorScheme = "light";
+    store.colorScheme = "watercolor_light";
     store.notify("已切换为纯净微风浅色外观");
   }
 }

@@ -577,7 +577,7 @@ function selectPlaylistToRight(pl: PlaylistItem) {
 async function selectArtistToRight(art: FollowedArtistItem) {
   rightStageMode.value = "artist";
   songFilterKw.value = "";
-  await store.openArtistDetail(art.singerId, art.name, art.avatarUrl);
+  await store.openArtistDetail(String(art.singerId || art.artistId || ""), art.name, art.avatarUrl);
   // 保持在当前分栏视图，不遮挡左栏
   store.libraryDetailMode = "playlists";
 }
@@ -585,7 +585,7 @@ async function selectArtistToRight(art: FollowedArtistItem) {
 async function selectPurchasedAlbumToRight(alb: PurchasedAlbumItem) {
   rightStageMode.value = "album";
   songFilterKw.value = "";
-  await store.openAlbumDetail(alb.id, alb.albumName, alb.singerName, alb.coverUrl);
+  await store.openAlbumDetail(String(alb.id || alb.albumId || ""), alb.albumName, alb.singerName || alb.artistName || "", alb.coverUrl);
   store.libraryDetailMode = "playlists";
 }
 
@@ -602,7 +602,7 @@ const rightStageSongs = computed<Song[]>(() => {
     case "album":
       return store.activeAlbumSongs;
     case "purchased_songs":
-      return store.purchasedSongs;
+      return store.purchasedSongs.map((item: any) => item.song || item);
     default:
       return store.likedSongs;
   }
@@ -675,7 +675,7 @@ const rightStageCover = computed(() => {
     case "album":
       return store.activeAlbumDetail?.coverUrl || "";
     case "purchased_songs":
-      return store.purchasedSongs[0]?.coverUrl || "";
+      return (store.purchasedSongs[0] as any)?.song?.coverUrl || (store.purchasedSongs[0] as any)?.coverUrl || "";
   }
 });
 

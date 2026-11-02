@@ -238,11 +238,13 @@ const progressPercent = computed(() => {
 
 const climaxSegmentStyle = computed(() => {
   const song = store.currentSong;
-  if (!song || !store.durationMs || song.climaxEndMs <= song.climaxStartMs) return null;
-  const startPct = Math.max(0, Math.min(100, (song.climaxStartMs / store.durationMs) * 100));
+  const cStart = song?.climaxStartMs || store.currentPlaybackInfo?.climaxStartMs || 0;
+  const cEnd = song?.climaxEndMs || store.currentPlaybackInfo?.climaxEndMs || 0;
+  if (!song || !store.durationMs || cEnd <= cStart) return null;
+  const startPct = Math.max(0, Math.min(100, (cStart / store.durationMs) * 100));
   const widthPct = Math.max(
     2,
-    Math.min(100 - startPct, ((song.climaxEndMs - song.climaxStartMs) / store.durationMs) * 100)
+    Math.min(100 - startPct, ((cEnd - cStart) / store.durationMs) * 100)
   );
   return {
     left: `${startPct}%`,
@@ -343,7 +345,7 @@ function cycleQualityQuick() {
     "master",
     "128",
   ];
-  const idx = order.indexOf(store.preferredQuality);
+  const idx = order.indexOf(store.preferredQuality as any);
   const next = order[(idx + 1) % order.length];
   store.switchAudioQuality(next);
 }

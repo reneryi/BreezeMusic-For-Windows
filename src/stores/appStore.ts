@@ -40,6 +40,8 @@ import type {
   WindowMaterialStyle,
 } from "../types";
 
+export type MainTab = MainNavTab;
+
 export const useAppStore = defineStore("breezeApp", () => {
   // ================= 1. 顶部天际线中枢导航与全局浮层状态 =================
   const activeTab = ref<MainNavTab>("discover");
@@ -663,6 +665,9 @@ export const useAppStore = defineStore("breezeApp", () => {
     vocalClarity: 40,
     airHarmonics: 32,
     vinylTubeWarmth: 20,
+    stereoWidth: 1.0,
+    reverbMix: 0,
+    bassBoostDb: 0,
   });
 
   const spectrumBars = ref<number[]>(new Array(32).fill(6));
@@ -788,7 +793,13 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
-  function applyViperEffect(effect: ViperEffectItem | null) {
+  function applyViperEffect(effectOrId: ViperEffectItem | string | null) {
+    const effect =
+      typeof effectOrId === "string"
+        ? effectOrId === "off" || effectOrId === "none"
+          ? null
+          : viperEffects.value.find((v) => v.id === effectOrId) || null
+        : effectOrId;
     if (!effect || activeViperEffectId.value === effect.id) {
       activeViperEffectId.value = "off";
       acousticField.enabled = false;
@@ -806,7 +817,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     acousticField.airHarmonics = effect.airHarmonics;
     acousticField.vinylTubeWarmth = effect.tubeWarmth;
     syncDspChain();
-    notify(`已启用酷狗蝰蛇音效：「${effect.label}」`);
+    notify(`已启用酷狗蝰蛇音效：「${effect.label || effect.name}」`);
   }
 
   function startSpectrumLoop() {
@@ -1514,11 +1525,13 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
-  async function importExternalPlaylist(name: string, rawText: string) {
+  async function importExternalPlaylist(nameOrRawText: string, rawTextArg?: string) {
     if (!isLoggedIn.value) {
       isLoginModalOpen.value = true;
       return 0;
     }
+    const name = rawTextArg !== undefined ? nameOrRawText : `导入歌单 ${new Date().toLocaleDateString()}`;
+    const rawText = rawTextArg !== undefined ? rawTextArg : nameOrRawText;
     const lines = rawText
       .split(/\r?\n/)
       .map((l) => l.trim())
@@ -1588,12 +1601,18 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
-  function isSongLiked(song: Song | null): boolean {
-    if (!song) return false;
+  function isSongLiked(songOrHash: Song | string | null | undefined): boolean {
+    if (!songOrHash) return false;
+    if (typeof songOrHash === "string") {
+      const targetHash = songOrHash.toLowerCase();
+      return likedSongs.value.some(
+        (s) => (s.hash && s.hash.toLowerCase() === targetHash) || s.id === songOrHash
+      );
+    }
     return likedSongs.value.some(
       (s) =>
-        (s.hash && s.hash.toLowerCase() === song.hash.toLowerCase()) ||
-        (s.id && s.id === song.id)
+        (s.hash && s.hash.toLowerCase() === songOrHash.hash.toLowerCase()) ||
+        (s.id && s.id === songOrHash.id)
     );
   }
 
@@ -2136,17 +2155,21 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   function cyclePlayMode() {
     const order: PlayMode[] = ["repeat_all", "repeat_one", "shuffle"];
-    const next = order[(order.indexOf(playMode.value) + 1) % order.length];
+    const currIdx = order.indexOf(playMode.value);
+    const next = order[(currIdx >= 0 ? currIdx + 1 : 0) % order.length];
     playMode.value = next;
     const labelMap: Record<PlayMode, string> = {
       repeat_all: "已切换为列表循环",
       repeat_one: "已切换为单曲循环",
       shuffle: "已切换为随机播放",
+      sequence: "已切换为顺序播放",
+      loop_all: "已切换为列表循环",
+      loop_one: "已切换为单曲循环",
     };
     notify(labelMap[next]);
   }
 
-  function openSongContextMenu(e: MouseEvent, song: Song) {
+  function openSongContextMenu(e: MouseEvent, song: Song, _sourcePlaylist?: any) {
     e.preventDefault();
     e.stopPropagation();
     contextMenu.x = Math.min(e.clientX, window.innerWidth - 250);

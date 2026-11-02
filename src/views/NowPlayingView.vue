@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from "vue";
 import { useAppStore } from "../stores/appStore";
+import { formatDuration } from "../api/kugou";
 import type {
   LyricAlignment,
   LyricThemeId,

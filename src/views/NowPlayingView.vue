@@ -93,6 +93,28 @@ const activeLyricColors = computed(() => {
 });
 
 // 校准后的歌词毫秒位置
+const npProgressPercent = computed(() => {
+  if (!store.durationMs || store.durationMs <= 0) return 0;
+  return Math.min(100, Math.max(0, (store.currentPositionMs / store.durationMs) * 100));
+});
+
+function handleNpSeekMouseDown(e: MouseEvent) {
+  const bar = e.currentTarget as HTMLElement;
+  const updateSeek = (ev: MouseEvent) => {
+    const rect = bar.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
+    store.seekToMs(ratio * (store.durationMs || 0));
+  };
+  updateSeek(e);
+  const onMove = (ev: MouseEvent) => updateSeek(ev);
+  const onUp = () => {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+  };
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
+}
+
 const calibratedPosMs = computed(() => {
   return (
     store.currentPositionMs + store.lyricOffsetMs - store.bluetoothDelayMs
@@ -564,6 +586,51 @@ async function handleSendComment() {
               <span v-if="store.ktvAccompanimentMode" class="tech-pill gold">
                 KTV 纯伴奏中
               </span>
+            </div>
+          </div>
+
+          <!-- 播放页内嵌主控台（因底部控制栏进入播放页后自然下移隐藏，此处提供完整进度与播控） -->
+          <div class="np-inline-transport-box">
+            <div class="pb-progress-timeline-row np-timeline-row">
+              <span class="pb-time-label">{{ formatDuration(store.currentPositionMs / 1000) }}</span>
+              <div class="pb-timeline-track" @mousedown="handleNpSeekMouseDown">
+                <div class="pb-timeline-bg"></div>
+                <div
+                  class="pb-timeline-fill"
+                  :style="{ width: `${npProgressPercent}%` }"
+                >
+                  <span class="pb-timeline-thumb"></span>
+                </div>
+              </div>
+              <span class="pb-time-label">{{ formatDuration(store.durationMs / 1000) }}</span>
+            </div>
+
+            <div class="pb-transport-controls-row np-transport-row">
+              <button
+                class="pb-ctrl-btn"
+                :class="{ active: store.playMode !== 'sequence' }"
+                title="切换播放模式"
+                @click="store.cyclePlayMode()"
+              >
+                <PlumpIcon :name="store.playMode === 'shuffle' ? 'shuffle' : store.playMode === 'loop_one' ? 'repeat-one' : 'repeat'" :size="18" />
+              </button>
+              <button class="pb-ctrl-btn" title="上一曲" @click="store.playPrev()">
+                <PlumpIcon name="prev" :size="20" />
+              </button>
+              <button class="pb-play-hero-circle" title="播放 / 暂停" @click="store.togglePlayPause()">
+                <PlumpIcon :name="store.isPlaying ? 'pause' : 'play'" :size="22" />
+              </button>
+              <button class="pb-ctrl-btn" title="下一曲" @click="store.playNext()">
+                <PlumpIcon name="next" :size="20" />
+              </button>
+              <button
+                class="pb-ctrl-btn"
+                :class="{ active: store.climaxModeEnabled }"
+                title="30秒副歌高潮精听"
+                @click="store.climaxModeEnabled = !store.climaxModeEnabled"
+              >
+                <PlumpIcon name="sparkle" :size="18" />
+              </button>
             </div>
           </div>
 

@@ -1,258 +1,249 @@
-<script setup lang="ts">
-import { computed } from "vue";
-import { useAppStore } from "../stores/appStore";
-import PlumpIcon from "../components/PlumpIcon.vue";
-
-const store = useAppStore();
-
-const categories = ["全部", "推荐电台", "场景", "心情", "曲风", "年代语种"];
-
-const filteredStations = computed(() => {
-  if (store.selectedFmCategory === "全部") return store.fmChannels;
-  return store.fmChannels.filter(
-    (c) => c.category === store.selectedFmCategory
-  );
-});
-
-const activeChannelIdx = computed(() => {
-  const idx = store.fmChannels.findIndex(
-    (c) => c.id === store.activeFmChannel?.id
-  );
-  return idx >= 0 ? idx : 0;
-});
-
-function onTunerDialChange(e: Event) {
-  const idx = Number((e.target as HTMLInputElement).value);
-  const target = store.fmChannels[idx];
-  if (target) {
-    store.loadFmStationSongs(target.id, false, true);
-  }
-}
-
-function formatDuration(ms: number): string {
-  if (!ms || ms <= 0) return "03:30";
-  const sec = Math.floor(ms / 1000);
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-</script>
-
 <template>
-  <div class="page-scroll-canvas" @click="store.closeSongContextMenu()">
-    <header class="discover-top-header">
-      <div>
-        <h1 class="discover-main-title">随心听调频台 · FM Tuner</h1>
-        <div class="discover-greeting-line">
-          <span class="greeting-dot"></span>
-          <span>拨动 FM 赫兹频率刻度尺 · 漫游全天候高解析场景电台</span>
-        </div>
+  <div class="tuner-studio-page">
+    <!-- 顶部母带声学状态横幅（无大胶囊框，嵌入背景层） -->
+    <section class="tuner-hero-banner">
+      <div class="tuner-hero-left">
+        <div class="tuner-eyebrow">CONCEPT MASTERING DESK · 64-BIT LTI DSP ENGINE</div>
+        <h2 class="tuner-hero-title">概念版声学调音台</h2>
+        <p class="tuner-hero-sub">
+          集成酷狗概念版蝰蛇声学矩阵、10 段参量均衡器 (Parametric EQ) 与三维空间声场工作站 · 后续还将持续扩展专业调音模块
+        </p>
       </div>
-
-      <div class="pill-tabs">
+      <div class="tuner-hero-right">
         <button
-          v-for="cat in categories"
-          :key="cat"
-          class="pill-tab-btn"
-          :class="{ active: store.selectedFmCategory === cat }"
-          @click="store.selectedFmCategory = cat"
+          class="frameless-hover-btn"
+          @click="goToRadioPlaza"
         >
-          {{ cat }}
+          <PlumpIcon name="radio" :size="16" />
+          <span>前往发现页 · 电台广场</span>
+        </button>
+        <button
+          class="frameless-hover-btn primary-tint"
+          @click="resetAllTuning"
+        >
+          <PlumpIcon name="refresh" :size="16" />
+          <span>恢复直通母带原音</span>
         </button>
       </div>
-    </header>
+    </section>
 
-    <!-- 上半部：复古未来主义 FM 硬件调谐器舞台 (对齐 Android RadioScreen.kt) -->
-    <section class="radio-tuner-deck">
-      <!-- 左侧：旋转电台黑胶唱盘 -->
-      <div class="tuner-vinyl-col">
-        <div
-          class="tuner-vinyl-disc"
-          :class="{ spinning: store.isPlaying }"
-        >
-          <img
-            v-if="
-              store.currentSong?.coverUrl ||
-              store.fmStationSongs[0]?.coverUrl
-            "
-            :src="
-              store.currentSong?.coverUrl ||
-              store.fmStationSongs[0]?.coverUrl
-            "
-            class="tuner-vinyl-cover"
-          />
-          <div v-else class="tuner-vinyl-fallback">
-            <PlumpIcon name="radio" :size="28" color="#00e5ff" />
-          </div>
-          <div class="tuner-vinyl-spindle"></div>
+    <!-- 1. 蝰蛇声学矩阵 (Viper Acoustic Matrix) -->
+    <section class="discover-block">
+      <div class="block-header">
+        <div class="block-title-with-tabs">
+          <h3 class="block-title">蝰蛇声学矩阵</h3>
+          <span class="block-sub-date">/ 概念版官方声学渲染预设</span>
         </div>
       </div>
 
-      <!-- 中部：发光 FM 赫兹刻度尺与滑块调谐器 -->
-      <div class="tuner-dial-col">
-        <div class="tuner-freq-readout">
-          <span class="freq-led-dot"></span>
-          <span class="freq-big-num">
-            {{ store.activeFmChannel?.freqLabel || "FM 98.4 MHz" }}
-          </span>
-          <span class="freq-cat-pill">
-            {{ store.activeFmChannel?.category || "推荐电台" }}
-          </span>
-          <span class="freq-listener-text">
-            {{ store.activeFmChannel?.listenerCountText || "48.2k 正在漫游" }}
-          </span>
-        </div>
-
-        <h2 class="tuner-station-title">
-          {{ store.activeFmChannel?.name || "流行风向标" }}
-        </h2>
-        <p class="tuner-station-desc">
-          {{
-            store.activeFmChannel?.description ||
-            "全天候智能音乐伴听 · 热歌与品味同频共振"
-          }}
-        </p>
-
-        <!-- 拟真赫兹刻度条 -->
-        <div class="tuner-scale-box">
-          <div class="tuner-ticks">
-            <span v-for="n in 21" :key="n" class="tick-bar" :class="{ major: n % 5 === 1 }"></span>
+      <div class="tuner-viper-grid">
+        <div
+          v-for="vf in store.viperEffects"
+          :key="vf.id"
+          class="tuner-viper-card"
+          :class="{ active: store.activeViperEffectId === vf.id }"
+          @click="store.applyViperEffect(vf.id)"
+        >
+          <div class="tv-top">
+            <span class="tv-badge">{{ vf.badge }}</span>
+            <span class="tv-status-dot" :class="{ on: store.activeViperEffectId === vf.id }"></span>
           </div>
-          <input
-            type="range"
-            min="0"
-            :max="Math.max(0, store.fmChannels.length - 1)"
-            :value="activeChannelIdx"
-            class="tuner-range-slider"
-            title="左右拖动切换 FM 频道"
-            @input="onTunerDialChange"
-          />
-        </div>
-
-        <div class="tuner-action-row">
-          <button
-            class="coral-play-all-pill sm"
-            @click="
-              store.fmStationSongs.length > 0 &&
-                store.playSongFromList(
-                  store.fmStationSongs[0],
-                  store.fmStationSongs,
-                  store.activeFmChannel?.name || '随心听电台'
-                )
-            "
-          >
-            <PlumpIcon name="play" :size="15" color="#ffffff" />
-            <span>播放电台 ({{ store.fmStationSongs.length }})</span>
-          </button>
-
-          <button
-            class="tonal-pill-btn"
-            @click="
-              store.activeFmChannel &&
-                store.loadFmStationSongs(store.activeFmChannel.id, false, false)
-            "
-          >
-            <PlumpIcon
-              name="refresh"
-              :size="15"
-              :class="{ 'spin-icon': store.isLoadingFmStation }"
-            />
-            <span>换一批</span>
-          </button>
-
-          <button
-            class="tonal-pill-btn emerald"
-            @click="
-              store.activeFmChannel &&
-                store.loadFmStationSongs(store.activeFmChannel.id, true, false)
-            "
-          >
-            <PlumpIcon name="plus" :size="14" />
-            <span>+20 首漫游续杯</span>
-          </button>
+          <h4 class="tv-name">{{ vf.name }}</h4>
+          <p class="tv-desc">{{ vf.desc }}</p>
         </div>
       </div>
     </section>
 
-    <!-- 中部：分类电台快速矩阵 -->
-    <section class="discover-block">
-      <div class="fm-corridor-grid">
-        <div
-          v-for="ch in filteredStations"
-          :key="ch.id"
-          class="fm-station-card"
-          :class="{ active: store.activeFmChannel?.id === ch.id }"
-          @click="store.loadFmStationSongs(ch.id, false, true)"
-        >
-          <div class="fsc-top">
-            <span class="fsc-freq-pill">{{ ch.freqLabel }}</span>
-            <span class="fsc-cat-tag">{{ ch.category }}</span>
+    <!-- 2. 10 段参量均衡器 (10-Band Parametric EQ) + 空间声场控制 -->
+    <section class="tuner-workbench-grid">
+      <div class="tuner-eq-panel">
+        <div class="tuner-panel-header">
+          <div>
+            <h3 class="block-title">10 段参量均衡器 (PEQ)</h3>
+            <span class="block-sub-date">Q 值: {{ store.eqQFactor.toFixed(2) }} · 实时双二阶滤波器链路</span>
           </div>
-          <div class="fsc-name">{{ ch.name }}</div>
-          <div class="fsc-desc">{{ ch.description }}</div>
-          <div class="fsc-bottom">
-            <span class="fsc-listeners">{{ ch.listenerCountText }}</span>
+          <div class="tuner-preset-pills">
             <button
-              class="fsc-play-orb"
-              @click.stop="store.loadFmStationSongs(ch.id, false, true)"
+              v-for="p in eqPresets"
+              :key="p.id"
+              class="frameless-hover-btn"
+              :class="{ 'primary-tint': store.activeEqPreset === p.id }"
+              @click="store.setEqPreset(p.id)"
             >
-              <PlumpIcon name="play" :size="15" color="#ffffff" />
+              <span>{{ p.label }}</span>
             </button>
           </div>
         </div>
-      </div>
-    </section>
 
-    <!-- 下半部：当前调频电台漫游曲目流 -->
-    <section class="discover-block">
-      <div class="block-header">
-        <div class="block-title-row">
-          <h2 class="block-title">
-            「{{ store.activeFmChannel?.name || "电台" }}」漫游曲目池
-          </h2>
-          <span class="block-sub">
-            共 {{ store.fmStationSongs.length }} 首无损候选曲目
-          </span>
+        <div class="tuner-eq-sliders">
+          <div
+            v-for="(freq, idx) in store.eqFrequencies"
+            :key="freq"
+            class="tuner-eq-column"
+          >
+            <span class="eq-gain-val">
+              {{ store.eqGains[idx] > 0 ? `+${store.eqGains[idx].toFixed(1)}` : store.eqGains[idx].toFixed(1) }}dB
+            </span>
+            <input
+              type="range"
+              min="-12"
+              max="12"
+              step="0.5"
+              :value="store.eqGains[idx]"
+              class="tuner-vertical-slider"
+              @input="onEqBandInput(idx, $event)"
+            />
+            <span class="eq-freq-label">{{ freq >= 1000 ? `${freq / 1000}k` : freq }}Hz</span>
+          </div>
         </div>
       </div>
 
-      <div v-if="store.isLoadingFmStation" class="loading-box">
-        正在调频至【{{ store.activeFmChannel?.name }}】并解析无损音源规格...
-      </div>
+      <!-- 右侧：三维空间声场与倍速变调舱 -->
+      <div class="tuner-spatial-panel">
+        <div class="tuner-panel-header">
+          <div>
+            <h3 class="block-title">空间声场与倍速变调</h3>
+            <span class="block-sub-date">环绕宽度 · 低频下潜 · 播放速率</span>
+          </div>
+        </div>
 
-      <div v-else class="dual-column-song-grid">
-        <div
-          v-for="(song, idx) in store.fmStationSongs"
-          :key="song.hash || idx"
-          class="plump-song-card"
-          :class="{
-            'track-card-playing': store.currentSong?.hash === song.hash,
-          }"
-          @click="
-            store.playSongFromList(
-              song,
-              store.fmStationSongs,
-              store.activeFmChannel?.name || '随心听电台'
-            )
-          "
-          @contextmenu="store.openSongContextMenu($event, song)"
-        >
-          <div class="psc-index">
-            {{ String(idx + 1).padStart(2, "0") }}
-          </div>
-          <img v-if="song.coverUrl" :src="song.coverUrl" class="psc-cover" />
-          <div class="psc-main">
-            <div class="psc-title">{{ song.title }}</div>
-            <div class="psc-sub">
-              <span v-if="song.isHiRes" class="mini-badge hires">Hi-Res</span>
-              <span v-else-if="song.isLossless" class="mini-badge sq">SQ</span>
-              <span v-if="song.isVip" class="mini-badge vip">VIP</span>
-              <span>{{ song.artist }}</span>
+        <div class="tuner-knob-rows">
+          <div class="tuner-slider-row">
+            <div class="tsr-label">
+              <span>三维声场宽度 (Stereo Width)</span>
+              <strong>{{ Math.round(store.acousticField.stereoWidth * 100) }}%</strong>
             </div>
+            <input
+              v-model.number="store.acousticField.stereoWidth"
+              type="range"
+              min="0"
+              max="2"
+              step="0.05"
+              class="pb-volume-slider full"
+              @input="enableAcousticAndSync"
+            />
           </div>
-          <div class="psc-dur">{{ formatDuration(song.durationMs) }}</div>
+
+          <div class="tuner-slider-row">
+            <div class="tsr-label">
+              <span>空间混响纵深 (Reverb Mix)</span>
+              <strong>{{ Math.round(store.acousticField.reverbMix * 100) }}%</strong>
+            </div>
+            <input
+              v-model.number="store.acousticField.reverbMix"
+              type="range"
+              min="0"
+              max="1"
+              step="0.02"
+              class="pb-volume-slider full"
+              @input="enableAcousticAndSync"
+            />
+          </div>
+
+          <div class="tuner-slider-row">
+            <div class="tsr-label">
+              <span>超重低音谐波激励 (Sub-Bass Punch)</span>
+              <strong>+{{ store.acousticField.bassBoostDb.toFixed(1) }} dB</strong>
+            </div>
+            <input
+              v-model.number="store.acousticField.bassBoostDb"
+              type="range"
+              min="0"
+              max="12"
+              step="0.5"
+              class="pb-volume-slider full"
+              @input="enableAcousticAndSync"
+            />
+          </div>
+
+          <div class="tuner-slider-row">
+            <div class="tsr-label">
+              <span>无损变速速率 (Playback Rate)</span>
+              <strong>{{ store.playbackRate.toFixed(2) }}x</strong>
+            </div>
+            <input
+              :value="store.playbackRate"
+              type="range"
+              min="0.5"
+              max="2.0"
+              step="0.05"
+              class="pb-volume-slider full"
+              @input="onRateChange"
+            />
+          </div>
+
+          <div class="tuner-slider-row">
+            <div class="tsr-label">
+              <span>半音升降调 (Pitch Semitones)</span>
+              <strong>{{ store.pitchSemitones > 0 ? `+${store.pitchSemitones}` : store.pitchSemitones }} st</strong>
+            </div>
+            <input
+              :value="store.pitchSemitones"
+              type="range"
+              min="-6"
+              max="6"
+              step="1"
+              class="pb-volume-slider full"
+              @input="onPitchChange"
+            />
+          </div>
         </div>
       </div>
     </section>
   </div>
 </template>
+
+<script setup lang="ts">
+import { useAppStore } from "../stores/appStore";
+import PlumpIcon from "../components/PlumpIcon.vue";
+
+const store = useAppStore();
+
+const eqPresets = [
+  { id: "flat", label: "平直原音" },
+  { id: "pop", label: "清澈流行" },
+  { id: "rock", label: "现场摇滚" },
+  { id: "classical", label: "古典交响" },
+  { id: "jazz", label: "微醺爵士" },
+  { id: "vocal", label: "人声特写" },
+  { id: "bass", label: "深海低音" },
+];
+
+function onEqBandInput(idx: number, e: Event) {
+  const val = parseFloat((e.target as HTMLInputElement).value);
+  store.updateSingleEqBand(idx, val);
+}
+
+function enableAcousticAndSync() {
+  store.acousticField.enabled = true;
+  store.syncDspChain();
+}
+
+function onRateChange(e: Event) {
+  const val = parseFloat((e.target as HTMLInputElement).value);
+  store.setPlaybackSpeed(val);
+}
+
+function onPitchChange(e: Event) {
+  const val = parseInt((e.target as HTMLInputElement).value, 10);
+  store.setPitchSemitones(val);
+}
+
+function resetAllTuning() {
+  store.applyViperEffect("off");
+  store.setEqPreset("flat");
+  store.acousticField.enabled = false;
+  store.acousticField.stereoWidth = 1.0;
+  store.acousticField.reverbMix = 0;
+  store.acousticField.bassBoostDb = 0;
+  store.setPlaybackSpeed(1.0);
+  store.setPitchSemitones(0);
+  store.syncDspChain();
+  store.notify("已恢复 64-bit 母带直通原音模式");
+}
+
+function goToRadioPlaza() {
+  store.activeTab = "discover";
+  store.discoverSubView = "radio";
+}
+</script>

@@ -536,6 +536,121 @@ withDefaults(
         stroke-linejoin="round"
       />
     </template>
+    <template v-else-if="name === 'repeat'">
+      <path
+        d="M5 9C5 6.8 6.8 5 9 5H17.5M17.5 5L15 2.8M17.5 5L15 7.2M19 15C19 17.2 17.2 19 15 19H6.5M6.5 19L9 16.8M6.5 19L9 21.2"
+        :stroke="color"
+        stroke-width="2.7"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </template>
+    <template v-else-if="name === 'sparkle'">
+      <path
+        d="M12 2.8L14.3 9.2L20.8 11.5L14.3 13.8L12 20.2L9.7 13.8L3.2 11.5L9.7 9.2L12 2.8Z"
+        :fill="color"
+      />
+      <circle cx="18.5" cy="5.5" r="1.8" :fill="accent" />
+    </template>
+    <template v-else-if="name === 'tuning'">
+      <path
+        d="M4 7H20M4 17H20"
+        :stroke="color"
+        stroke-width="2.6"
+        stroke-linecap="round"
+      />
+      <circle cx="9" cy="7" r="3" :fill="accent" />
+      <circle cx="15" cy="17" r="3" :fill="color" />
+    </template>
+    <template v-else-if="name === 'volume-mute'">
+      <path
+        d="M11 5.5L6.8 9H4.2C3.5 9 3 9.5 3 10.2V13.8C3 14.5 3.5 15 4.2 15H6.8L11 18.5C11.8 19.1 13 18.5 13 17.5V6.5C13 5.5 11.8 4.9 11 5.5Z"
+        :fill="color"
+      />
+      <path
+        d="M16.2 9.5L20.8 14.5M20.8 9.5L16.2 14.5"
+        :stroke="accent"
+        stroke-width="2.6"
+        stroke-linecap="round"
+      />
+    </template>
+    <template v-else-if="name === 'minimize'">
+      <path d="M5 12H19" :stroke="color" stroke-width="2.8" stroke-linecap="round" />
+    </template>
+    <template v-else-if="name === 'maximize'">
+      <rect
+        x="5"
+        y="5"
+        width="14"
+        height="14"
+        rx="3.2"
+        :stroke="color"
+        stroke-width="2.5"
+      />
+    </template>
+    <template v-else-if="name === 'user'">
+      <circle cx="12" cy="8.2" r="4.1" :fill="color" />
+      <path
+        d="M4.8 19.5C5.6 15.8 8.5 14 12 14C15.5 14 18.4 15.8 19.2 19.5"
+        :stroke="accent"
+        stroke-width="2.8"
+        stroke-linecap="round"
+      />
+    </template>
+    <template v-else-if="name === 'sun'">
+      <circle cx="12" cy="12" r="4.6" :fill="accent" />
+      <path
+        d="M12 3V5.2M12 18.8V21M3 12H5.2M18.8 12H21M5.6 5.6L7.2 7.2M16.8 16.8L18.4 18.4M18.4 5.6L16.8 7.2M7.2 16.8L5.6 18.4"
+        :stroke="color"
+        stroke-width="2.4"
+        stroke-linecap="round"
+      />
+    </template>
+    <template v-else-if="name === 'moon'">
+      <path
+        d="M20.2 14.6C19.1 15.1 17.8 15.4 16.5 15.4C11.5 15.4 7.5 11.4 7.5 6.4C7.5 5.1 7.8 3.9 8.3 2.8C4.8 4.1 2.4 7.5 2.4 11.5C2.4 16.7 6.6 20.9 11.8 20.9C15.8 20.9 19.1 18.3 20.2 14.6Z"
+        :fill="color"
+      />
+    </template>
+    <template v-else-if="name === 'clock'">
+      <circle cx="12" cy="12" r="8.8" :stroke="color" stroke-width="2.6" />
+      <path
+        d="M12 7.5V12.2L15.2 14.2"
+        :stroke="accent"
+        stroke-width="2.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </template>
+    <template v-else-if="name === 'folder'">
+      <path
+        d="M3.2 7.4C3.2 5.9 4.4 4.8 5.8 4.8H9.4L11.5 7.1H18.2C19.6 7.1 20.8 8.3 20.8 9.7V16.8C20.8 18.2 19.6 19.4 18.2 19.4H5.8C4.4 19.4 3.2 18.2 3.2 16.8V7.4Z"
+        :fill="color"
+        fill-opacity="0.28"
+        :stroke="color"
+        stroke-width="2.2"
+      />
+    </template>
+    <template v-else-if="name === 'trash'">
+      <path
+        d="M4.5 7H19.5M9.5 4.2H14.5M6.8 7L7.6 18.4C7.7 19.5 8.6 20.2 9.7 20.2H14.3C15.4 20.2 16.3 19.5 16.4 18.4L17.2 7"
+        :stroke="color"
+        stroke-width="2.4"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </template>
+    <template v-else-if="name === 'music'">
+      <path
+        d="M9 17.5V6.5L19 4.5V15.5"
+        :stroke="color"
+        stroke-width="2.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+      <circle cx="6.5" cy="17.5" r="2.8" :fill="accent" />
+      <circle cx="16.5" cy="15.5" r="2.8" :fill="color" />
+    </template>
     <template v-else>
       <circle cx="12" cy="12" r="8" :fill="color" fill-opacity="0.25" />
       <circle cx="12" cy="12" r="3.5" :fill="accent" />

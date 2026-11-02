@@ -186,17 +186,6 @@ async function copyEnvDiagnostic() {
 
 <template>
   <div class="page-scroll-canvas" @click="store.closeSongContextMenu()">
-    <header class="discover-top-header">
-      <div>
-        <h1 class="discover-main-title">设置中心</h1>
-        <div class="discover-greeting-line">
-          <span class="greeting-dot"></span>
-          <span>
-            Master-Detail 桌面级二级设置中心 · 视听、母带音效、歌词、缓存与合规下载管控
-          </span>
-        </div>
-      </div>
-    </header>
 
     <!-- 平板与桌面端专属 Master-Detail 左导航右内容双栏布局 -->
     <div class="settings-master-detail">

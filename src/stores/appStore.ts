@@ -77,6 +77,8 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   // ================= 2. 发现页与调频台全量状态 =================
   const discoverSubView = ref<DiscoverSubView>("home");
+  const discoverHeroExpanding = ref<"none" | "daily" | "fm">("none");
+  const isGlobalQueueOpen = ref(false);
 
   const recommendSongs = ref<Song[]>([]);
   const isLoadingRecommend = ref(false);
@@ -1236,6 +1238,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     isLoadingNewSongs.value = true;
     try {
       newSongs.value = await kugouClient.getNewSongExpress(period);
+      resolveFmChannelCovers();
     } catch (e) {
       console.warn("loadNewSongExpress error:", e);
     } finally {
@@ -1247,6 +1250,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     isLoadingRanks.value = true;
     try {
       rankList.value = await kugouClient.getRankList();
+      resolveFmChannelCovers();
     } catch (e) {
       console.warn("loadRankList error:", e);
     } finally {
@@ -1275,10 +1279,85 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
+  function resolveFmChannelCovers() {
+    const pool: string[] = [];
+    for (const s of recommendSongs.value) {
+      if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
+    }
+    for (const s of newSongs.value) {
+      if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
+    }
+    for (const r of rankList.value) {
+      if (r.coverUrl && !pool.includes(r.coverUrl)) pool.push(r.coverUrl);
+    }
+    for (const s of personalFmSongs.value) {
+      if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
+    }
+    if (pool.length === 0) return;
+    fmChannels.value = fmChannels.value.map((ch, idx) => {
+      if (ch.coverUrl && !ch.coverUrl.includes("20210519")) return ch;
+      return {
+        ...ch,
+        coverUrl: pool[idx % pool.length] || "",
+      };
+    });
+  }
+
+  async function refreshDiscoverAll() {
+    notify("正在全面焕新发现页内容...");
+    await Promise.all([
+      loadDailyRecommend(),
+      loadPersonalFm(false),
+      loadNewSongExpress(newSongPeriod.value),
+      loadRankList(),
+      loadFmChannels(),
+    ]);
+    resolveFmChannelCovers();
+    notify("发现页推荐已全面焕新 ✨");
+  }
+
+  function openDailyRecommendPage() {
+    if (discoverSubView.value === "daily") return;
+    discoverHeroExpanding.value = "daily";
+    setTimeout(() => {
+      discoverSubView.value = "daily";
+      discoverHeroExpanding.value = "none";
+    }, 380);
+  }
+
+  function openGuessYouLikePage() {
+    if (discoverSubView.value === "fm_detail") return;
+    if (personalFmSongs.value.length === 0) {
+      loadPersonalFm(false);
+    }
+    discoverHeroExpanding.value = "fm";
+    setTimeout(() => {
+      discoverSubView.value = "fm_detail";
+      discoverHeroExpanding.value = "none";
+    }, 380);
+  }
+
+  async function playRankDirectly(rank: RankItem) {
+    try {
+      notify(`正在加载「${rank.name}」曲目...`);
+      const songs = await kugouClient.getRankSongs(rank.rankId, 1, 50);
+      if (songs.length > 0) {
+        activeRank.value = rank;
+        activeRankSongs.value = songs;
+        playSongFromList(songs[0], songs);
+      } else {
+        notify(`「${rank.name}」暂无可播曲目`);
+      }
+    } catch (e: any) {
+      notify(`加载榜单失败：${String(e)}`);
+    }
+  }
+
   async function loadFmChannels() {
     try {
       const list = await kugouClient.getFmChannels();
       fmChannels.value = list;
+      resolveFmChannelCovers();
       if (!activeFmChannel.value && list.length > 0) {
         activeFmChannel.value = list[0];
         loadFmStationSongs(list[0].id, false);
@@ -2184,6 +2263,8 @@ export const useAppStore = defineStore("breezeApp", () => {
     downloadModalSong,
     statusBanner,
     discoverSubView,
+    discoverHeroExpanding,
+    isGlobalQueueOpen,
     activeRank,
     activeRankSongs,
     isLoadingRankSongs,
@@ -2345,6 +2426,11 @@ export const useAppStore = defineStore("breezeApp", () => {
     loadNewSongExpress,
     loadRankList,
     openRankDetail,
+    resolveFmChannelCovers,
+    refreshDiscoverAll,
+    openDailyRecommendPage,
+    openGuessYouLikePage,
+    playRankDirectly,
     loadFmChannels,
     loadFmStationSongs,
     loadRecentHistory,

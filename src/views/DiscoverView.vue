@@ -1,1108 +1,1505 @@
-<script setup lang="ts">
-import { computed, ref } from "vue";
-import { useAppStore } from "../stores/appStore";
-import type { Song } from "../types";
-import PlumpIcon from "../components/PlumpIcon.vue";
-
-const store = useAppStore();
-
-const now = new Date();
-const todayMonthDay = `${String(now.getMonth() + 1).padStart(2, "0")}/${String(
-  now.getDate()
-).padStart(2, "0")}`;
-const todayMonthNum = String(now.getMonth() + 1).padStart(2, "0");
-const todayDayNum = String(now.getDate()).padStart(2, "0");
-
-// 近 7 日日期范围标签 (如 10.26 - 11.01)
-const weekAgo = new Date(now.getTime() - 6 * 24 * 3600 * 1000);
-const periodRangeLabel = `${String(weekAgo.getMonth() + 1).padStart(
-  2,
-  "0"
-)}.${String(weekAgo.getDate()).padStart(2, "0")} - ${String(
-  now.getMonth() + 1
-).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}`;
-
-const greetingSubtitle = computed(() => {
-  const h = now.getHours();
-  if (h < 6) return "深夜静谧 · 耳机里的温柔陪你入眠";
-  if (h < 9) return "晨光微熹 · 用第一缕旋律唤醒耳朵";
-  if (h < 12) return "清风伴读 · 轻快节拍开启元气上午";
-  if (h < 14) return "午间小憩 · 卸下忙碌享片刻松弛";
-  if (h < 18) return "午后漫游 · 一杯咖啡与恰到好处的律动";
-  if (h < 21) return "暮色微醺 · 晚风与落日余晖皆入歌";
-  return "夜幕微蓝 · 卸下喧嚣沉浸私人旋律";
-});
-
-// 每日推荐三封面叠层 (StaggeredThreeCovers)
-const dailyThreeCovers = computed(() => {
-  return store.recommendSongs
-    .map((s) => s.coverUrl)
-    .filter((u) => Boolean(u))
-    .slice(0, 3);
-});
-
-const newSongTabs = [
-  { key: "CHINESE", label: "华语" },
-  { key: "WESTERN", label: "欧美" },
-  { key: "JPKR", label: "日韩" },
-  { key: "CANTON", label: "粤语" },
-  { key: "TODAY", label: "全部" },
-];
-
-// 新歌速递独立页：按发行日期 (publishDate) 折叠时间轴 + A-Z 首字母提取
-const collapsedDates = ref<Record<string, boolean>>({});
-const activeAlphaFilter = ref<string>("ALL");
-
-function extractFirstLetter(title: string): string {
-  const clean = title.replace(/^[\s\W_]+/, "").trim();
-  if (!clean) return "#";
-  const code = clean.charCodeAt(0);
-  if ((code >= 65 && code <= 90) || (code >= 97 && code <= 122)) {
-    return clean[0].toUpperCase();
-  }
-  // 中文标题使用 Unicode 区间映射常见拼音首字母段
-  const alphabet = "ABCDEFGHJKLMNOPQRSTWXYZ";
-  return alphabet[code % alphabet.length] || "A";
-}
-
-const newSongDateGroups = computed(() => {
-  const map = new Map<string, Song[]>();
-  const source =
-    activeAlphaFilter.value === "ALL"
-      ? store.newSongs
-      : store.newSongs.filter(
-          (s) => extractFirstLetter(s.title) === activeAlphaFilter.value
-        );
-
-  for (const song of source) {
-    const d = song.publishDate || `${now.getFullYear()}-${todayMonthNum}-${todayDayNum}`;
-    if (!map.has(d)) map.set(d, []);
-    map.get(d)!.push(song);
-  }
-  return Array.from(map.entries()).map(([date, songs]) => ({
-    date,
-    songs,
-  }));
-});
-
-const alphabetList = [
-  "ALL",
-  ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""),
-];
-
-function toggleAllDates(collapse: boolean) {
-  const next: Record<string, boolean> = {};
-  for (const g of newSongDateGroups.value) {
-    next[g.date] = collapse;
-  }
-  collapsedDates.value = next;
-}
-
-// 榜单分类与搜索过滤
-const rankCategories = ["全部", "官方热榜", "特色曲风", "全球权威"];
-const filteredRankGrid = computed(() => {
-  if (store.selectedRankCategory === "全部") return store.rankList;
-  return store.rankList.filter(
-    (r) => r.category === store.selectedRankCategory
-  );
-});
-
-const filteredActiveRankSongs = computed(() => {
-  const kw = store.rankSearchKeyword.trim().toLowerCase();
-  if (!kw) return store.activeRankSongs;
-  return store.activeRankSongs.filter(
-    (s) =>
-      s.title.toLowerCase().includes(kw) ||
-      s.artist.toLowerCase().includes(kw) ||
-      s.album.toLowerCase().includes(kw)
-  );
-});
-
-// 电台分类过滤
-const fmCategoryTabs = ["全部", "推荐电台", "场景", "心情", "曲风", "年代语种"];
-const homeFmStations = computed(() => {
-  if (store.selectedFmCategory === "全部") return store.fmChannels;
-  return store.fmChannels.filter(
-    (c) => c.category === store.selectedFmCategory
-  );
-});
-
-// 一键平滑居中定位当前播放歌曲
-function locateCurrentPlayingSong() {
-  const el = document.querySelector(".track-card-playing");
-  if (el) {
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    store.notify("已为您定位到当前播放歌曲");
-  } else {
-    store.notify("当前播放歌曲不在本列表中");
-  }
-}
-
-function formatDuration(ms: number): string {
-  if (!ms || ms <= 0) return "03:30";
-  const sec = Math.floor(ms / 1000);
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-</script>
-
 <template>
-  <div class="page-scroll-canvas" @click="store.closeSongContextMenu()">
-    <!-- ==================== 1. 发现页主天际线 Bento 画布 ==================== -->
-    <template v-if="store.discoverSubView === 'home'">
-      <header class="discover-top-header">
-        <div>
-          <h1 class="discover-main-title">探索发现</h1>
-          <div class="discover-greeting-line">
-            <span class="greeting-dot"></span>
-            <span>{{ greetingSubtitle }}</span>
-          </div>
-        </div>
-
-        <div class="discover-header-actions">
-          <button
-            class="tonal-pill-btn"
-            title="刷新今日推荐与随心听曲库"
-            @click="
-              store.loadDailyRecommend();
-              store.loadPersonalFm(false);
-              store.notify('已同步刷新概念版发现页推荐流');
-            "
-          >
-            <PlumpIcon name="refresh" :size="15" />
-            <span>焕新推荐</span>
-          </button>
-        </div>
-      </header>
-
-      <!-- 首屏黄金双子星横幅：左「三封面叠层每日推荐」+ 右「猜你喜欢 · 随心听电台舱」 -->
-      <section class="bento-hero-grid">
-        <!-- 卡片 A：每日推荐（三封面立体叠层 StaggeredThreeCovers + 巨型日期） -->
+  <div class="discover-page">
+    <!-- ==================== 顶部沉浸双雄舞台（首页 + 日推展开态 + 猜你喜欢展开态 共用同一套过渡 DOM） ==================== -->
+    <div
+      v-if="
+        store.discoverSubView === 'home' ||
+        store.discoverSubView === 'daily' ||
+        store.discoverSubView === 'fm_detail'
+      "
+      class="discover-hero-flow-container"
+    >
+      <!-- 日推 & 猜你喜欢 横向可展开双卡舞台 -->
+      <div
+        class="bento-hero-stage"
+        :class="{
+          'mode-daily-expanded': isDailyExpandedMode,
+          'mode-fm-expanded': isFmExpandedMode,
+        }"
+      >
+        <!-- 左卡：每日推荐 30 首 (点击非按钮区域向右横向占满并化为页面标题栏) -->
         <div
-          class="bento-daily-card"
-          @click="store.discoverSubView = 'daily'"
+          class="hero-immersive-card daily-immersive-card"
+          :class="{
+            'is-expanded-banner': isDailyExpandedMode,
+            'is-collapsed-left': isFmExpandedMode,
+          }"
+          @click="handleDailyCardClick"
         >
-          <div
-            class="bento-daily-bg"
-            :style="
-              dailyThreeCovers[0]
-                ? { backgroundImage: `url(${dailyThreeCovers[0]})` }
-                : {}
-            "
-          ></div>
-          <div class="bento-daily-content">
-            <!-- 三张专辑封面交错立体叠层（对齐 Android StaggeredThreeCovers） -->
-            <div class="staggered-three-covers">
-              <img
-                v-if="dailyThreeCovers[2]"
-                :src="dailyThreeCovers[2]"
-                class="stc-img layer-back"
-              />
-              <img
-                v-if="dailyThreeCovers[1]"
-                :src="dailyThreeCovers[1]"
-                class="stc-img layer-mid"
-              />
-              <img
-                v-if="dailyThreeCovers[0]"
-                :src="dailyThreeCovers[0]"
-                class="stc-img layer-front"
-              />
-              <div v-else class="daily-hero-thumb-placeholder">
-                <PlumpIcon name="disc" :size="28" />
-              </div>
-            </div>
+          <div class="hero-ambient-glow daily-glow-a"></div>
+          <div class="hero-ambient-glow daily-glow-b"></div>
 
-            <div class="daily-hero-center">
-              <div class="daily-date-badge">{{ todayMonthDay }} · 每日 6:00 更新</div>
-              <div class="daily-hero-title">每日推荐</div>
-              <div class="daily-hero-desc">
-                循着你的听歌轨迹 · 今日精选 {{ store.recommendSongs.length || 30 }} 首无损旋律
-              </div>
-              <div
-                v-if="store.recommendSongs.length > 0"
-                class="daily-preview-mini"
-              >
-                <span
-                  v-for="s in store.recommendSongs.slice(0, 2)"
-                  :key="s.hash"
-                  class="dp-chip"
-                >
-                  {{ s.title }}
-                </span>
-              </div>
-            </div>
-
-            <button
-              class="coral-play-fab"
-              title="立即播放今日推荐全部曲目"
-              @click.stop="
-                store.recommendSongs.length > 0 &&
-                  store.playSongFromList(
-                    store.recommendSongs[0],
-                    store.recommendSongs,
-                    '每日推荐'
-                  )
-              "
-            >
-              <PlumpIcon name="play" :size="22" color="#ffffff" />
-            </button>
-          </div>
-        </div>
-
-        <!-- 卡片 B：猜你喜欢 · 私人随心听（实时可交互微缩电台 + 20首漫游候选抽屉） -->
-        <div class="bento-fm-card">
-          <div class="fm-card-header">
-            <div class="fm-title-group">
-              <PlumpIcon
-                name="radio"
-                :size="18"
-                color="#00e5a3"
-                accent="#00e5ff"
-              />
-              <span class="fm-card-title">猜你喜欢</span>
-              <span class="fm-card-sub">· 随心听 (5大AI引擎)</span>
-            </div>
-
-            <div class="fm-header-btns">
-              <button
-                class="fm-pill-mini"
-                title="查看当前 20 首随心听漫游候选池"
-                @click.stop="
-                  store.isPersonalFmDrawerOpen = !store.isPersonalFmDrawerOpen
-                "
-              >
-                <PlumpIcon name="queue" :size="14" />
-                <span>漫游池 ({{ store.personalFmSongs.length }})</span>
-              </button>
-              <button
-                class="fm-refresh-btn"
-                title="重调 5 大 AI 推荐引擎换一批"
-                @click.stop="store.loadPersonalFm(false)"
-              >
-                <PlumpIcon
-                  name="refresh"
-                  :size="15"
-                  :class="{ 'spin-icon': store.isLoadingFm }"
+          <div class="hero-card-inner">
+            <!-- 复刻 Android 端 StaggeredThreeCovers 错落三封面 3D 立体堆叠 -->
+            <div class="staggered-three-covers" :class="{ enlarged: isDailyExpandedMode }">
+              <div class="stagger-cover-layer layer-left">
+                <img
+                  v-if="dailyCoverTriple[1]"
+                  :src="dailyCoverTriple[1]"
+                  alt="daily-left"
                 />
-              </button>
-            </div>
-          </div>
-
-          <div
-            v-if="store.currentFmSong"
-            class="fm-track-body"
-            @click="
-              store.playSongFromList(
-                store.currentFmSong,
-                store.personalFmSongs,
-                '猜你喜欢 · 随心听'
-              )
-            "
-            @contextmenu="store.openSongContextMenu($event, store.currentFmSong)"
-          >
-            <img
-              v-if="store.currentFmSong.coverUrl"
-              :src="store.currentFmSong.coverUrl"
-              class="fm-cover"
-            />
-            <div v-else class="fm-cover-placeholder">
-              <PlumpIcon name="disc" :size="24" />
-            </div>
-
-            <div class="fm-meta">
-              <div class="fm-song-name">{{ store.currentFmSong.title }}</div>
-              <div class="fm-artist-row">
-                <span
-                  v-if="store.currentFmSong.isHiRes"
-                  class="mini-badge hires"
-                >
-                  Hi-Res
-                </span>
-                <span
-                  v-else-if="store.currentFmSong.isLossless"
-                  class="mini-badge sq"
-                >
-                  SQ
-                </span>
-                <span v-if="store.currentFmSong.isVip" class="mini-badge vip">
-                  VIP
-                </span>
-                <span class="fm-artist-text">
-                  {{ store.currentFmSong.artist }}
-                </span>
               </div>
-              <div v-if="store.nextFmSong" class="fm-next-preview">
-                下一首预告：{{ store.nextFmSong.title }} -
-                {{ store.nextFmSong.artist }}
-              </div>
-            </div>
-
-            <div class="fm-transport-cluster" @click.stop>
-              <button
-                class="emerald-play-btn"
-                title="播放 / 暂停随心听"
-                @click="
-                  store.currentSong?.hash === store.currentFmSong?.hash
-                    ? store.togglePlayPause()
-                    : store.playSongFromList(
-                        store.currentFmSong,
-                        store.personalFmSongs,
-                        '猜你喜欢 · 随心听'
-                      )
-                "
-              >
-                <PlumpIcon
-                  :name="
-                    store.isPlaying &&
-                    store.currentSong?.hash === store.currentFmSong?.hash
-                      ? 'pause'
-                      : 'play'
-                  "
-                  :size="19"
-                  color="#041f18"
+              <div class="stagger-cover-layer layer-right">
+                <img
+                  v-if="dailyCoverTriple[2]"
+                  :src="dailyCoverTriple[2]"
+                  alt="daily-right"
                 />
-              </button>
-              <button
-                class="fm-skip-btn"
-                title="切到下一首随心听"
-                @click="store.nextPersonalFmTrack(true)"
-              >
-                <PlumpIcon name="next" :size="17" color="#e2f8f0" />
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 猜你喜欢 · 随心听可展开漫游候选池抽屉（支持 +20首无缝续杯） -->
-      <transition name="pop-spring">
-        <section
-          v-if="store.isPersonalFmDrawerOpen"
-          class="fm-roaming-drawer"
-        >
-          <div class="fmd-head">
-            <div class="fmd-title">
-              <PlumpIcon name="radio" :size="18" color="#00e5a3" />
-              <span>猜你喜欢 · 实时漫游候选列表 ({{ store.personalFmSongs.length }} 首)</span>
-            </div>
-            <div class="fmd-actions">
-              <button
-                class="tonal-pill-btn emerald"
-                @click="store.loadPersonalFm(true)"
-              >
-                <PlumpIcon name="plus" :size="14" />
-                <span>+20 首无缝续杯</span>
-              </button>
-              <button
-                class="tonal-pill-btn"
-                @click="store.isPersonalFmDrawerOpen = false"
-              >
-                收起
-              </button>
-            </div>
-          </div>
-
-          <div class="dual-column-song-grid compact">
-            <div
-              v-for="(s, idx) in store.personalFmSongs"
-              :key="s.hash || idx"
-              class="plump-song-card"
-              :class="{
-                'track-card-playing': store.currentSong?.hash === s.hash,
-              }"
-              @click="
-                store.personalFmIndex = idx;
-                store.playSongFromList(
-                  s,
-                  store.personalFmSongs,
-                  '猜你喜欢 · 随心听'
-                );
-              "
-              @contextmenu="store.openSongContextMenu($event, s)"
-            >
-              <img v-if="s.coverUrl" :src="s.coverUrl" class="psc-cover" />
-              <div class="psc-main">
-                <div class="psc-title">{{ s.title }}</div>
-                <div class="psc-sub">
-                  <span v-if="s.isHiRes" class="mini-badge hires">Hi-Res</span>
-                  <span v-else-if="s.isLossless" class="mini-badge sq">SQ</span>
-                  <span>{{ s.artist }}</span>
+              </div>
+              <div class="stagger-cover-layer layer-center">
+                <img
+                  v-if="dailyCoverTriple[0]"
+                  :src="dailyCoverTriple[0]"
+                  alt="daily-center"
+                />
+                <div class="stagger-date-overlay">
+                  <span class="stagger-month">{{ todayMonthEng }}</span>
+                  <span class="stagger-day">{{ todayDayNum }}</span>
                 </div>
               </div>
-              <span class="psc-dur">{{ formatDuration(s.durationMs) }}</span>
+            </div>
+
+            <!-- 卡片主体文案：全无框沉浸式设计，展示实用曲目与推荐基因信息 -->
+            <div class="hero-card-copy">
+              <div class="hero-eyebrow-line">
+                <span class="hero-eyebrow-dot"></span>
+                <span>CONCEPT DAILY · {{ todayDateLabel }} · 每日 06:00 焕新</span>
+              </div>
+
+              <div class="hero-title-row">
+                <h2 class="hero-main-title">每日推荐</h2>
+                <span class="hero-count-inline">{{ store.recommendSongs.length || 30 }} 首专属定制</span>
+              </div>
+
+              <p class="hero-subtitle-text">
+                依据你的近期红心基因与完播偏好实时演算 · 帧享无损声学母带
+              </p>
+
+              <!-- 首页态显示前两首实时预览（无框纯文本流），展开态显示当前播放状态 -->
+              <div v-if="!isDailyExpandedMode" class="hero-frameless-previews">
+                <div
+                  v-for="(s, idx) in store.recommendSongs.slice(0, 2)"
+                  :key="s.hash"
+                  class="hero-preview-line"
+                >
+                  <span class="preview-note">♪</span>
+                  <span class="preview-song">{{ s.title }}</span>
+                  <span class="preview-sep">-</span>
+                  <span class="preview-artist">{{ s.artist }}</span>
+                  <span v-if="idx === 0 && s.hasHiRes" class="preview-tag">Hi-Res</span>
+                </div>
+              </div>
+              <div v-else class="hero-expanded-meta-line">
+                <span>正在浏览今日完整定制歌单 · 双击顶部「发现」可整体重算推荐池</span>
+              </div>
+            </div>
+
+            <!-- 右侧按钮区：未展开时为立体大播放圆钮，展开后自然变化为页面级无框操作栏 -->
+            <div class="hero-card-actions" @click.stop>
+              <template v-if="!isDailyExpandedMode">
+                <button
+                  class="hero-stereo-play-fab"
+                  title="立即播放今日全部推荐"
+                  @click.stop="playAllDaily"
+                >
+                  <PlumpIcon name="play" :size="22" />
+                </button>
+              </template>
+              <template v-else>
+                <div class="hero-banner-action-group">
+                  <button
+                    class="frameless-hover-btn primary-tint"
+                    @click.stop="playAllDaily"
+                  >
+                    <PlumpIcon name="play" :size="16" />
+                    <span>播放全部 ({{ store.recommendSongs.length }})</span>
+                  </button>
+                  <button
+                    class="frameless-hover-btn"
+                    :disabled="store.isLoadingRecommend"
+                    @click.stop="store.loadDailyRecommend()"
+                  >
+                    <PlumpIcon name="refresh" :size="16" />
+                    <span>{{ store.isLoadingRecommend ? "刷新中..." : "刷新日推" }}</span>
+                  </button>
+                  <button
+                    v-if="isCurrentSongInList(store.recommendSongs)"
+                    class="frameless-hover-btn"
+                    @click.stop="scrollToCurrentPlayingSong"
+                  >
+                    <PlumpIcon name="compass" :size="16" />
+                    <span>定位当前</span>
+                  </button>
+                  <button
+                    class="frameless-hover-btn collapse-btn"
+                    title="收起返回发现页"
+                    @click.stop="collapseToDiscoverHome"
+                  >
+                    <PlumpIcon name="back" :size="16" />
+                    <span>返回发现</span>
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右卡：猜你喜欢 · 私人漫游 (点击非按钮区域向左横向占满并化为页面标题栏) -->
+        <div
+          class="hero-immersive-card fm-immersive-card"
+          :class="{
+            'is-expanded-banner': isFmExpandedMode,
+            'is-collapsed-right': isDailyExpandedMode,
+          }"
+          @click="handleFmCardClick"
+        >
+          <div class="hero-ambient-glow fm-glow-a"></div>
+          <div class="hero-ambient-glow fm-glow-b"></div>
+
+          <div class="hero-card-inner">
+            <!-- 3D 立体黑胶与双层漫游封面堆叠 -->
+            <div class="fm-stereo-visual" :class="{ enlarged: isFmExpandedMode }">
+              <div class="fm-vinyl-disc" :class="{ spinning: isFmPlaying }">
+                <div class="fm-vinyl-grooves"></div>
+              </div>
+              <div v-if="store.nextFmSong?.coverUrl" class="fm-rear-cover">
+                <img :src="store.nextFmSong.coverUrl" alt="next-fm" />
+              </div>
+              <div class="fm-front-cover">
+                <img
+                  v-if="store.currentFmSong?.coverUrl"
+                  :src="store.currentFmSong.coverUrl"
+                  alt="current-fm"
+                />
+                <div v-else class="fm-cover-fallback">
+                  <PlumpIcon name="radio" :size="32" color="#fff" />
+                </div>
+                <div v-if="isFmPlaying" class="fm-playing-wave">
+                  <span></span><span></span><span></span><span></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 猜你喜欢无框沉浸信息区 -->
+            <div class="hero-card-copy">
+              <div class="hero-eyebrow-line fm-eyebrow">
+                <span class="hero-eyebrow-dot"></span>
+                <span>GUESS YOU LIKE · 私人声学漫游 · {{ store.personalFmSongs.length }} 首在列</span>
+              </div>
+
+              <div class="hero-title-row">
+                <h2 class="hero-main-title">
+                  {{ isFmExpandedMode ? "猜你喜欢 · 私人漫游" : (store.currentFmSong?.title || "猜你喜欢") }}
+                </h2>
+              </div>
+
+              <p class="hero-subtitle-text fm-subtitle">
+                <template v-if="!isFmExpandedMode && store.currentFmSong">
+                  {{ store.currentFmSong.artist }}
+                  <span v-if="store.currentFmSong.album"> · 《{{ store.currentFmSong.album }}》</span>
+                </template>
+                <template v-else>
+                  不设限私人曲库 · 基于听歌偏好全天候无缝探索未知好歌
+                </template>
+              </p>
+
+              <div class="hero-frameless-previews">
+                <div v-if="store.nextFmSong" class="hero-preview-line">
+                  <span class="preview-note">⏭</span>
+                  <span class="preview-artist">下一首漫游：</span>
+                  <span class="preview-song">{{ store.nextFmSong.title }} - {{ store.nextFmSong.artist }}</span>
+                </div>
+                <div v-else class="hero-preview-line">
+                  <span class="preview-note">✦</span>
+                  <span class="preview-artist">点击卡片展开完整漫游歌单，或点击右侧按钮直接切歌</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 右侧按钮区：未展开时为无框悬浮播控图标组，展开后自然变化为页面级操作栏 -->
+            <div class="hero-card-actions" @click.stop>
+              <template v-if="!isFmExpandedMode">
+                <div class="fm-compact-controls">
+                  <button
+                    class="hero-stereo-play-fab fm-fab"
+                    :title="isFmPlaying ? '暂停漫游' : '立即播放猜你喜欢'"
+                    @click.stop="toggleFmPlay"
+                  >
+                    <PlumpIcon :name="isFmPlaying ? 'pause' : 'play'" :size="21" />
+                  </button>
+                  <div class="fm-sub-icons">
+                    <button
+                      class="fm-frameless-icon-btn"
+                      title="跳至下一首漫游"
+                      @click.stop="store.nextPersonalFmTrack(true)"
+                    >
+                      <PlumpIcon name="next" :size="18" />
+                    </button>
+                    <button
+                      v-if="store.currentFmSong"
+                      class="fm-frameless-icon-btn"
+                      :class="{ liked: store.isSongLiked(store.currentFmSong.hash) }"
+                      title="收藏当前漫游歌曲"
+                      @click.stop="store.toggleFavoriteSong(store.currentFmSong)"
+                    >
+                      <PlumpIcon
+                        :name="store.isSongLiked(store.currentFmSong.hash) ? 'heart-filled' : 'heart'"
+                        :size="17"
+                      />
+                    </button>
+                    <button
+                      class="fm-frameless-icon-btn"
+                      title="换一批漫游推荐"
+                      @click.stop="store.loadPersonalFm(false)"
+                    >
+                      <PlumpIcon name="refresh" :size="16" />
+                    </button>
+                  </div>
+                </div>
+              </template>
+              <template v-else>
+                <div class="hero-banner-action-group">
+                  <button
+                    class="frameless-hover-btn primary-tint"
+                    @click.stop="playAllPersonalFm"
+                  >
+                    <PlumpIcon name="play" :size="16" />
+                    <span>全播漫游 ({{ store.personalFmSongs.length }})</span>
+                  </button>
+                  <button
+                    class="frameless-hover-btn"
+                    @click.stop="store.nextPersonalFmTrack(true)"
+                  >
+                    <PlumpIcon name="next" :size="16" />
+                    <span>下一首</span>
+                  </button>
+                  <button
+                    class="frameless-hover-btn"
+                    :disabled="store.isLoadingFm"
+                    @click.stop="store.loadPersonalFm(false)"
+                  >
+                    <PlumpIcon name="refresh" :size="16" />
+                    <span>换一批</span>
+                  </button>
+                  <button
+                    class="frameless-hover-btn"
+                    :disabled="store.isLoadingFm"
+                    @click.stop="store.loadPersonalFm(true)"
+                  >
+                    <PlumpIcon name="plus" :size="16" />
+                    <span>+20首续杯</span>
+                  </button>
+                  <button
+                    class="frameless-hover-btn collapse-btn"
+                    title="收起返回发现页"
+                    @click.stop="collapseToDiscoverHome"
+                  >
+                    <PlumpIcon name="back" :size="16" />
+                    <span>返回发现</span>
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== 点击日推或猜你喜欢后：自然浮现的独立无框歌曲列表 ==================== -->
+      <transition name="hero-songlist-enter">
+        <div
+          v-if="store.discoverSubView === 'daily' || store.discoverSubView === 'fm_detail'"
+          class="hero-expanded-song-stage"
+        >
+          <div class="frameless-sublist-toolbar">
+            <div class="frameless-sublist-info">
+              <span class="sublist-badge">
+                {{ store.discoverSubView === "daily" ? "DAILY RECOMMEND" : "PERSONAL ROAMING" }}
+              </span>
+              <span class="sublist-desc">
+                共 {{ activeHeroSongs.length }} 首精选曲目 · 点击任意曲目开启无损播放，右键呼出更多操作
+              </span>
+            </div>
+            <div class="frameless-sublist-search">
+              <PlumpIcon name="search" :size="15" />
+              <input
+                v-model="heroSongFilter"
+                type="text"
+                placeholder="在当前列表中筛选歌名 / 歌手 / 专辑..."
+              />
+              <button v-if="heroSongFilter" class="clear-inline-btn" @click="heroSongFilter = ''">
+                ×
+              </button>
+            </div>
+          </div>
+
+          <div class="frameless-songs-grid-2col">
+            <div
+              v-for="(song, index) in filteredHeroSongs"
+              :key="song.hash + '_' + index"
+              :data-song-hash="song.hash"
+              class="frameless-song-row"
+              :class="{ active: store.currentSong?.hash === song.hash }"
+              @click="store.playSongFromList(song, activeHeroSongs)"
+              @contextmenu.prevent="store.openSongContextMenu($event, song, activeHeroSongs)"
+            >
+              <span class="fs-index">
+                <template v-if="store.currentSong?.hash === song.hash && store.isPlaying">
+                  <span class="mini-eq-bars"><i></i><i></i><i></i></span>
+                </template>
+                <template v-else>
+                  {{ String(index + 1).padStart(2, "0") }}
+                </template>
+              </span>
+
+              <div class="fs-cover-wrap">
+                <img :src="song.coverUrl" class="fs-cover" loading="lazy" alt="" />
+                <div class="fs-cover-play">
+                  <PlumpIcon
+                    :name="store.currentSong?.hash === song.hash && store.isPlaying ? 'pause' : 'play'"
+                    :size="15"
+                    color="#fff"
+                  />
+                </div>
+              </div>
+
+              <div class="fs-meta">
+                <div class="fs-title-line">
+                  <span class="fs-title">{{ song.title }}</span>
+                  <span v-if="song.hasHiRes" class="fs-badge hires">Hi-Res</span>
+                  <span v-else-if="song.hasSq" class="fs-badge sq">SQ</span>
+                  <span v-if="song.isVip" class="fs-badge vip">VIP</span>
+                </div>
+                <div class="fs-sub-line">
+                  <span>{{ song.artist }}</span>
+                  <span v-if="song.album" class="fs-album">· {{ song.album }}</span>
+                </div>
+              </div>
+
+              <div class="fs-actions" @click.stop>
+                <button
+                  class="fs-icon-btn"
+                  :class="{ liked: store.isSongLiked(song.hash) }"
+                  title="喜欢"
+                  @click="store.toggleFavoriteSong(song)"
+                >
+                  <PlumpIcon
+                    :name="store.isSongLiked(song.hash) ? 'heart-filled' : 'heart'"
+                    :size="16"
+                  />
+                </button>
+                <button
+                  class="fs-icon-btn"
+                  title="添加到歌单"
+                  @click="store.addToPlaylistModalSong = song"
+                >
+                  <PlumpIcon name="plus" :size="16" />
+                </button>
+                <button
+                  class="fs-icon-btn"
+                  title="更多操作"
+                  @click="store.openSongContextMenu($event, song, activeHeroSongs)"
+                >
+                  <PlumpIcon name="more" :size="16" />
+                </button>
+              </div>
+
+              <span class="fs-duration">{{ formatDuration(song.durationSeconds) }}</span>
+            </div>
+          </div>
+        </div>
+      </transition>
+
+      <!-- ==================== 发现页下半部分主体内容（点击日推/猜你喜欢时虚化并向左消失） ==================== -->
+      <div
+        v-show="store.discoverSubView === 'home'"
+        class="discover-home-lower"
+        :class="{
+          'lower-blur-exit': store.discoverHeroExpanding !== 'none',
+        }"
+      >
+        <!-- 1. 新歌速递：分类标题沿用 App 端设计（含底部滑动横条）置于标题右侧；右侧刷新/全播/查看全部无框，悬停高亮；下方 3×4=12 首列优先无框网格 -->
+        <section class="discover-block">
+          <div class="block-header newsong-header">
+            <div class="block-title-with-tabs">
+              <h3 class="block-title">新歌速递</h3>
+              <span class="block-sub-date">/ {{ newSongDateRangeLabel }}</span>
+
+              <!-- 沿用 App 端 ConceptSlidingCategoryTabs（文字 + 底部滑动指示横条）置于标题右侧 -->
+              <div class="app-sliding-tabs newsong-sliding-tabs">
+                <button
+                  v-for="(area, idx) in newSongAreas"
+                  :key="area.id"
+                  class="app-sliding-tab-btn"
+                  :class="{ active: store.newSongPeriod === area.id }"
+                  @click="store.loadNewSongExpress(area.id)"
+                >
+                  <span class="tab-label">{{ area.label }}</span>
+                  <span
+                    class="tab-bottom-indicator"
+                    :style="{
+                      backgroundColor: area.color,
+                      opacity: store.newSongPeriod === area.id ? 1 : 0,
+                      transform: store.newSongPeriod === area.id ? 'scaleX(1)' : 'scaleX(0.2)',
+                    }"
+                  ></span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 右侧：刷新、全播、查看全部（无框设计，鼠标悬停显示圆角方形高亮框） -->
+            <div class="block-right-frameless-actions">
+              <button
+                class="frameless-hover-btn"
+                :disabled="store.isLoadingNewSongs"
+                title="刷新当前语种新歌"
+                @click="store.loadNewSongExpress(store.newSongPeriod)"
+              >
+                <PlumpIcon name="refresh" :size="16" />
+                <span>{{ store.isLoadingNewSongs ? "刷新中" : "刷新" }}</span>
+              </button>
+              <button
+                class="frameless-hover-btn"
+                title="播放当前分类全部新歌"
+                @click="playAllNewSongs"
+              >
+                <PlumpIcon name="play" :size="16" />
+                <span>全播</span>
+              </button>
+              <button
+                class="frameless-hover-btn"
+                title="查看全部新歌速递"
+                @click="store.discoverSubView = 'new_songs'"
+              >
+                <span>查看全部</span>
+                <PlumpIcon name="chevron-right" :size="15" />
+              </button>
+            </div>
+          </div>
+
+          <!-- 下方歌曲：无框设计，嵌入背景，显示 3×4=12 首歌（从上到下再从左到右，按时间倒序+同时间按首字母排序） -->
+          <div class="newsong-frameless-grid-3x4">
+            <div
+              v-for="(song, idx) in sortedTop12NewSongs"
+              :key="song.hash + '_' + idx"
+              class="newsong-frameless-item"
+              :class="{ active: store.currentSong?.hash === song.hash }"
+              @click="store.playSongFromList(song, sortedNewSongsAll)"
+              @contextmenu.prevent="store.openSongContextMenu($event, song, sortedNewSongsAll)"
+            >
+              <span class="ns-col-rank">{{ String(idx + 1).padStart(2, "0") }}</span>
+
+              <div class="ns-cover-box">
+                <img :src="song.coverUrl" class="ns-cover-img" loading="lazy" alt="" />
+                <div class="ns-cover-overlay">
+                  <PlumpIcon
+                    :name="store.currentSong?.hash === song.hash && store.isPlaying ? 'pause' : 'play'"
+                    :size="15"
+                    color="#fff"
+                  />
+                </div>
+              </div>
+
+              <div class="ns-meta-col">
+                <div class="ns-song-title-row">
+                  <span class="ns-song-title">{{ song.title }}</span>
+                  <span v-if="song.hasHiRes" class="fs-badge hires">Hi-Res</span>
+                  <span v-else-if="song.hasSq" class="fs-badge sq">SQ</span>
+                </div>
+                <div class="ns-song-sub-row">
+                  <span class="ns-song-artist">{{ song.artist }}</span>
+                  <span v-if="song.publishDate" class="ns-song-date">
+                    · {{ formatShortPublishDate(song.publishDate) }}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                class="ns-like-btn"
+                :class="{ liked: store.isSongLiked(song.hash) }"
+                title="收藏到我喜欢"
+                @click.stop="store.toggleFavoriteSong(song)"
+              >
+                <PlumpIcon
+                  :name="store.isSongLiked(song.hash) ? 'heart-filled' : 'heart'"
+                  :size="15"
+                />
+              </button>
             </div>
           </div>
         </section>
-      </transition>
 
-      <!-- 模块 2：新歌速递（5 语种切换 + 3×3 微卡矩阵 + 独立时间轴/A-Z索引页入口） -->
-      <section class="discover-block">
-        <div class="block-header">
-          <div class="block-title-row">
-            <h2 class="block-title">新歌速递</h2>
-            <span class="block-period-tag">/ {{ periodRangeLabel }}</span>
-          </div>
-
-          <div class="block-actions">
-            <div class="pill-tabs">
+        <!-- 2. 巅峰排行榜（与电台互换位置后置于前方，双行显示，左侧放大封面+播放按钮，右侧紧凑榜单预览） -->
+        <section class="discover-block">
+          <div class="block-header">
+            <div class="block-title-with-tabs">
+              <h3 class="block-title">巅峰排行榜</h3>
+              <span class="block-sub-date">/ 官方权威潮流风向标 · 双行矩阵</span>
+            </div>
+            <div class="block-right-frameless-actions">
               <button
-                v-for="t in newSongTabs"
-                :key="t.key"
-                class="pill-tab-btn"
-                :class="{ active: store.newSongPeriod === t.key }"
-                @click="store.loadNewSongExpress(t.key)"
+                class="frameless-hover-btn"
+                :disabled="store.isLoadingRanks"
+                @click="store.loadRankList()"
               >
-                {{ t.label }}
+                <PlumpIcon name="refresh" :size="16" />
+                <span>刷新榜单</span>
               </button>
-            </div>
-            <button
-              v-if="store.newSongs.length > 0"
-              class="tonal-pill-btn"
-              @click="
-                store.playSongFromList(
-                  store.newSongs[0],
-                  store.newSongs,
-                  '新歌速递'
-                )
-              "
-            >
-              <PlumpIcon name="play" :size="14" color="var(--cyan)" />
-              <span>全播</span>
-            </button>
-            <button
-              class="tonal-pill-btn primary"
-              @click="store.discoverSubView = 'new_songs'"
-            >
-              <span>查看全部时间轴</span>
-              <PlumpIcon name="chevron-right" :size="14" />
-            </button>
-          </div>
-        </div>
-
-        <div class="newsong-bento-grid">
-          <div
-            v-for="song in store.newSongs.slice(0, 9)"
-            :key="song.hash || song.id"
-            class="newsong-card-item"
-            :class="{ playing: store.currentSong?.hash === song.hash }"
-            @click="
-              store.playSongFromList(song, store.newSongs, '新歌速递')
-            "
-            @contextmenu="store.openSongContextMenu($event, song)"
-          >
-            <div class="ns-cover-box">
-              <img
-                v-if="song.coverUrl"
-                :src="song.coverUrl"
-                class="ns-cover"
-                loading="lazy"
-              />
-              <div v-else class="ns-cover-placeholder">
-                <PlumpIcon name="disc" :size="20" />
-              </div>
-              <span class="ns-date-pill">
-                {{
-                  song.publishDate
-                    ? song.publishDate.slice(5)
-                    : todayMonthDay.replace("/", "-")
-                }}
-              </span>
-            </div>
-
-            <div class="ns-info">
-              <div class="ns-title">{{ song.title }}</div>
-              <div class="ns-meta">
-                <span v-if="song.isHiRes" class="mini-badge hires">Hi-Res</span>
-                <span v-else-if="song.isLossless" class="mini-badge sq">SQ</span>
-                <span v-if="song.isVip" class="mini-badge vip">VIP</span>
-                <span class="ns-artist">{{ song.artist }}</span>
-              </div>
-            </div>
-
-            <button
-              class="ns-more-orb"
-              title="更多操作"
-              @click.stop="store.openSongContextMenu($event, song)"
-            >
-              <PlumpIcon name="more" :size="16" />
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <!-- 模块 3：精选场景电台走廊（带 FM 赫兹频率铭牌 + 一键调频漫游） -->
-      <section class="discover-block">
-        <div class="block-header">
-          <div class="block-title-row">
-            <h2 class="block-title">精选场景电台</h2>
-            <span class="block-sub">全天候 FM 赫兹漫游 · 轻触卡片即刻调频</span>
-          </div>
-
-          <div class="block-actions">
-            <div class="pill-tabs">
               <button
-                v-for="cat in fmCategoryTabs"
-                :key="cat"
-                class="pill-tab-btn"
-                :class="{ active: store.selectedFmCategory === cat }"
-                @click="store.selectedFmCategory = cat"
+                class="frameless-hover-btn"
+                @click="store.isRankGridModalOpen = true"
               >
-                {{ cat }}
-              </button>
-            </div>
-            <button
-              class="tonal-pill-btn primary"
-              @click="store.activeTab = 'radio'"
-            >
-              <span>进入调频台</span>
-              <PlumpIcon name="chevron-right" :size="14" />
-            </button>
-          </div>
-        </div>
-
-        <div class="fm-corridor-grid">
-          <div
-            v-for="ch in homeFmStations.slice(0, 5)"
-            :key="ch.id"
-            class="fm-station-card"
-            :class="{ active: store.activeFmChannel?.id === ch.id }"
-            @click="
-              store.loadFmStationSongs(ch.id, false, true);
-              store.activeTab = 'radio';
-            "
-          >
-            <div class="fsc-top">
-              <span class="fsc-freq-pill">{{ ch.freqLabel }}</span>
-              <span class="fsc-cat-tag">{{ ch.category }}</span>
-            </div>
-            <div class="fsc-name">{{ ch.name }}</div>
-            <div class="fsc-desc">{{ ch.description }}</div>
-            <div class="fsc-bottom">
-              <span class="fsc-listeners">{{ ch.listenerCountText }}</span>
-              <button
-                class="fsc-play-orb"
-                title="立即调频播放该电台"
-                @click.stop="store.loadFmStationSongs(ch.id, false, true)"
-              >
-                <PlumpIcon name="play" :size="15" color="#ffffff" />
+                <span>全部榜单 ({{ store.rankList.length }})</span>
+                <PlumpIcon name="chevron-right" :size="15" />
               </button>
             </div>
           </div>
-        </div>
-      </section>
 
-      <!-- 模块 4：巅峰排行榜画廊（含「全部榜单宫格」选择器） -->
-      <section class="discover-block">
-        <div class="block-header">
-          <div class="block-title-row">
-            <h2 class="block-title">巅峰排行榜</h2>
-            <span class="block-sub">官方实时榜单 · 覆盖热榜、特色曲风与全球权威</span>
-          </div>
-
-          <div class="block-actions">
-            <button
-              class="tonal-pill-btn primary"
-              @click="store.isRankGridModalOpen = true"
+          <!-- 双行榜单卡片矩阵（2行 × 4列 = 8张卡片，卡片左侧大尺寸封面 + 独立播放按钮） -->
+          <div class="rank-double-row-grid">
+            <div
+              v-for="rk in homeDoubleRowRanks"
+              :key="rk.rankId"
+              class="rank-horizontal-card"
+              @click="store.openRankDetail(rk)"
             >
-              <PlumpIcon name="grid" :size="15" />
-              <span>全部榜单 ({{ store.rankList.length }})</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="rank-bento-grid">
-          <div
-            v-for="rk in store.rankList.slice(0, 6)"
-            :key="rk.rankId"
-            class="rank-bento-card"
-            @click="store.openRankDetail(rk)"
-          >
-            <div class="rank-card-top">
-              <img
-                v-if="rk.coverUrl"
-                :src="rk.coverUrl"
-                class="rank-thumb-img"
-              />
-              <div v-else class="rank-icon-badge">
-                <PlumpIcon name="trophy" :size="20" color="#ffd54f" />
+              <!-- 左侧增大榜单头像 + 悬浮播放按钮 -->
+              <div class="rank-left-cover-wrap">
+                <img :src="rk.coverUrl" class="rank-left-cover" loading="lazy" alt="" />
+                <span class="rank-freq-badge">{{ rk.updateFrequency || "每日更新" }}</span>
+                <button
+                  class="rank-cover-play-btn"
+                  title="直接播放该榜单曲目"
+                  @click.stop="store.playRankDirectly(rk)"
+                >
+                  <PlumpIcon name="play" :size="17" color="#fff" />
+                </button>
               </div>
-              <div class="rank-head-meta">
-                <div class="rank-name">{{ rk.rankName }}</div>
-                <div class="rank-freq">
-                  {{ rk.category }} · {{ rk.updateFrequency || "每日更新" }}
+
+              <!-- 右侧榜单标题与前三曲目预览 -->
+              <div class="rank-right-body">
+                <div class="rank-card-title-row">
+                  <h4 class="rank-card-name">{{ rk.name }}</h4>
+                  <span class="rank-card-cat">{{ rk.category || "官方榜" }}</span>
+                </div>
+
+                <div class="rank-card-previews">
+                  <div
+                    v-for="(line, lIdx) in getRankPreviewLines(rk)"
+                    :key="lIdx"
+                    class="rank-preview-item"
+                  >
+                    <span class="rp-num" :class="'top-' + (lIdx + 1)">{{ lIdx + 1 }}</span>
+                    <span class="rp-text">{{ line }}</span>
+                  </div>
                 </div>
               </div>
-              <PlumpIcon name="chevron-right" :size="16" />
             </div>
+          </div>
+        </section>
 
-            <div class="rank-preview-lines">
-              <div
-                v-for="(line, lIdx) in rk.topSongsPreview.slice(0, 3)"
-                :key="lIdx"
-                class="rank-preview-line"
+        <!-- 3. 精选场景电台（置于最后，获取真实封面并单行显示，删除分类标题栏，右上角改为“电台广场”二级页入口） -->
+        <section class="discover-block">
+          <div class="block-header">
+            <div class="block-title-with-tabs">
+              <h3 class="block-title">精选场景电台</h3>
+              <span class="block-sub-date">/ 概念版全天候声学漫游频率</span>
+            </div>
+            <div class="block-right-frameless-actions">
+              <button
+                class="frameless-hover-btn"
+                @click="openRadioPlaza"
               >
-                {{ line }}
+                <PlumpIcon name="radio" :size="16" />
+                <span>电台广场</span>
+                <PlumpIcon name="chevron-right" :size="15" />
+              </button>
+            </div>
+          </div>
+
+          <!-- 单行显示带封面的电台卡片 -->
+          <div class="radio-single-row-corridor">
+            <div
+              v-for="(ch, idx) in singleRowFmChannels"
+              :key="ch.id"
+              class="radio-cover-card"
+              :class="{ active: store.activeFmChannel?.id === ch.id }"
+              @click="playFmChannelFromHome(ch)"
+            >
+              <div class="rc-cover-stage">
+                <img
+                  v-if="getStationCover(ch, idx)"
+                  :src="getStationCover(ch, idx)"
+                  class="rc-cover-img"
+                  loading="lazy"
+                  alt=""
+                />
+                <div v-else class="rc-cover-fallback">
+                  <PlumpIcon name="radio" :size="28" color="#fff" />
+                </div>
+                <div class="rc-cover-shade"></div>
+                <span class="rc-freq-tag">{{ ch.freqLabel }}</span>
+                <button
+                  class="rc-play-btn"
+                  title="立即调频播放"
+                  @click.stop="playFmChannelFromHome(ch)"
+                >
+                  <PlumpIcon
+                    :name="store.activeFmChannel?.id === ch.id && store.isPlaying ? 'pause' : 'play'"
+                    :size="16"
+                    color="#fff"
+                  />
+                </button>
               </div>
-              <div
-                v-if="rk.topSongsPreview.length === 0"
-                class="rank-preview-line muted"
-              >
-                点击查看 {{ rk.rankName }} 实时 TOP 100 曲目
+              <div class="rc-meta">
+                <div class="rc-name">{{ ch.name }}</div>
+                <div class="rc-desc">{{ ch.description }}</div>
               </div>
             </div>
           </div>
-        </div>
-      </section>
-    </template>
+        </section>
+      </div>
+    </div>
 
-    <!-- ==================== 2. 每日推荐全屏双列沉浸视图（含当前播放定位） ==================== -->
-    <template v-else-if="store.discoverSubView === 'daily'">
-      <div class="subpage-banner">
-        <div class="subpage-top-bar">
-          <button
-            class="tonal-pill-btn"
-            @click="store.discoverSubView = 'home'"
-          >
-            <PlumpIcon name="back" :size="15" />
+    <!-- ==================== 二级页面 A：新歌速递 · 查看全部（全无框设计） ==================== -->
+    <div v-else-if="store.discoverSubView === 'new_songs'" class="discover-subpage frameless-subpage">
+      <div class="subpage-frameless-header">
+        <div class="sfh-left">
+          <button class="frameless-hover-btn" @click="store.discoverSubView = 'home'">
+            <PlumpIcon name="back" :size="17" />
             <span>返回发现</span>
           </button>
+          <h2 class="sfh-title">新歌速递 · 全部曲库</h2>
 
-          <div class="subpage-right-tools">
+          <!-- App 端风格滑动分类栏 -->
+          <div class="app-sliding-tabs">
             <button
-              class="tonal-pill-btn"
-              title="平滑滚动定位到当前正在播放的歌曲"
-              @click="locateCurrentPlayingSong"
+              v-for="area in newSongAreas"
+              :key="area.id"
+              class="app-sliding-tab-btn"
+              :class="{ active: store.newSongPeriod === area.id }"
+              @click="store.loadNewSongExpress(area.id)"
             >
-              <PlumpIcon name="locate" :size="15" />
-              <span>定位当前播放</span>
-            </button>
-            <button
-              class="tonal-pill-btn"
-              @click="store.loadDailyRecommend()"
-            >
-              <PlumpIcon name="refresh" :size="15" />
-              <span>刷新推荐</span>
+              <span class="tab-label">{{ area.label }}</span>
+              <span
+                class="tab-bottom-indicator"
+                :style="{
+                  backgroundColor: area.color,
+                  opacity: store.newSongPeriod === area.id ? 1 : 0,
+                  transform: store.newSongPeriod === area.id ? 'scaleX(1)' : 'scaleX(0.2)',
+                }"
+              ></span>
             </button>
           </div>
         </div>
 
-        <div class="daily-detail-hero">
-          <div class="daily-big-date">
-            <span class="big-day">{{ todayDayNum }}</span>
-            <span class="big-month">/ {{ todayMonthNum }} 每日专属推荐</span>
+        <div class="sfh-right">
+          <div class="frameless-sublist-search">
+            <PlumpIcon name="search" :size="15" />
+            <input
+              v-model="newSongSearchKw"
+              type="text"
+              placeholder="筛选新歌名称 / 歌手..."
+            />
           </div>
-          <p class="daily-detail-sub">
-            循着你的听歌轨迹 · 每日 6:00 更新 {{ store.recommendSongs.length }} 首高解析音源
-          </p>
           <button
-            v-if="store.recommendSongs.length > 0"
-            class="coral-play-all-pill"
-            @click="
-              store.playSongFromList(
-                store.recommendSongs[0],
-                store.recommendSongs,
-                '每日推荐'
-              )
-            "
+            class="frameless-hover-btn"
+            @click="store.loadNewSongExpress(store.newSongPeriod)"
           >
-            <PlumpIcon name="play" :size="16" color="#ffffff" />
-            <span>播放全部 ({{ store.recommendSongs.length }})</span>
+            <PlumpIcon name="refresh" :size="16" />
+            <span>刷新</span>
+          </button>
+          <button class="frameless-hover-btn primary-tint" @click="playAllNewSongs">
+            <PlumpIcon name="play" :size="16" />
+            <span>播放全部 ({{ sortedNewSongsAll.length }})</span>
           </button>
         </div>
       </div>
 
-      <!-- 桌面端双列无框软润歌曲卡片网格 -->
-      <div class="dual-column-song-grid">
+      <!-- 按发行日期倒序 + 同日按首字母无框分组列表 -->
+      <div class="ns-frameless-timeline">
         <div
-          v-for="(song, idx) in store.recommendSongs"
-          :key="song.hash || song.id"
-          class="plump-song-card"
-          :class="{
-            'track-card-playing': store.currentSong?.hash === song.hash,
-          }"
-          @click="
-            store.playSongFromList(song, store.recommendSongs, '每日推荐')
-          "
-          @contextmenu="store.openSongContextMenu($event, song)"
+          v-for="group in groupedNewSongsByDate"
+          :key="group.dateKey"
+          class="ns-frameless-date-group"
         >
-          <div class="psc-index">
-            <PlumpIcon
-              v-if="store.currentSong?.hash === song.hash"
-              name="wave"
-              :size="16"
-              color="var(--cyan)"
-            />
-            <span v-else>{{ String(idx + 1).padStart(2, "0") }}</span>
-          </div>
-
-          <img
-            v-if="song.coverUrl"
-            :src="song.coverUrl"
-            class="psc-cover"
-            loading="lazy"
-          />
-          <div v-else class="psc-cover-fallback">
-            <PlumpIcon name="disc" :size="18" />
-          </div>
-
-          <div class="psc-main">
-            <div class="psc-title">{{ song.title }}</div>
-            <div class="psc-sub">
-              <span v-if="song.isHiRes" class="mini-badge hires">Hi-Res</span>
-              <span v-else-if="song.isLossless" class="mini-badge sq">SQ</span>
-              <span v-if="song.isVip" class="mini-badge vip">VIP</span>
-              <span>{{ song.artist }}</span>
-              <span v-if="song.album" class="psc-album">· {{ song.album }}</span>
+          <div class="ns-frameless-date-bar">
+            <div class="ns-date-title-wrap">
+              <span class="ns-date-dot"></span>
+              <span class="ns-date-title">{{ group.displayLabel }}</span>
+              <span class="ns-date-count">{{ group.songs.length }} 首新发单曲</span>
+            </div>
+            <div class="ns-az-pills">
+              <button
+                v-for="letter in group.letters"
+                :key="letter"
+                class="ns-az-btn"
+                @click="scrollToNewSongLetter(group.dateKey, letter)"
+              >
+                {{ letter }}
+              </button>
             </div>
           </div>
 
-          <div class="psc-actions" @click.stop>
+          <div class="frameless-songs-grid-2col">
+            <div
+              v-for="(song, sIdx) in group.songs"
+              :key="song.hash + '_' + sIdx"
+              :id="getFirstLetterAnchorId(group.dateKey, song, sIdx, group.songs)"
+              class="frameless-song-row"
+              :class="{ active: store.currentSong?.hash === song.hash }"
+              @click="store.playSongFromList(song, sortedNewSongsAll)"
+              @contextmenu.prevent="store.openSongContextMenu($event, song, sortedNewSongsAll)"
+            >
+              <span class="fs-letter-badge">{{ extractFirstLetter(song.title) }}</span>
+              <div class="fs-cover-wrap">
+                <img :src="song.coverUrl" class="fs-cover" loading="lazy" alt="" />
+                <div class="fs-cover-play">
+                  <PlumpIcon
+                    :name="store.currentSong?.hash === song.hash && store.isPlaying ? 'pause' : 'play'"
+                    :size="15"
+                    color="#fff"
+                  />
+                </div>
+              </div>
+              <div class="fs-meta">
+                <div class="fs-title-line">
+                  <span class="fs-title">{{ song.title }}</span>
+                  <span v-if="song.hasHiRes" class="fs-badge hires">Hi-Res</span>
+                  <span v-else-if="song.hasSq" class="fs-badge sq">SQ</span>
+                  <span v-if="song.isVip" class="fs-badge vip">VIP</span>
+                </div>
+                <div class="fs-sub-line">
+                  <span>{{ song.artist }}</span>
+                  <span v-if="song.album" class="fs-album">· {{ song.album }}</span>
+                </div>
+              </div>
+              <div class="fs-actions" @click.stop>
+                <button
+                  class="fs-icon-btn"
+                  :class="{ liked: store.isSongLiked(song.hash) }"
+                  @click="store.toggleFavoriteSong(song)"
+                >
+                  <PlumpIcon
+                    :name="store.isSongLiked(song.hash) ? 'heart-filled' : 'heart'"
+                    :size="16"
+                  />
+                </button>
+                <button
+                  class="fs-icon-btn"
+                  @click="store.addToPlaylistModalSong = song"
+                >
+                  <PlumpIcon name="plus" :size="16" />
+                </button>
+              </div>
+              <span class="fs-duration">{{ formatDuration(song.durationSeconds) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 二级页面 B：榜单详情页（全无框歌曲列表） ==================== -->
+    <div v-else-if="store.discoverSubView === 'rank'" class="discover-subpage frameless-subpage">
+      <div class="subpage-frameless-header">
+        <div class="sfh-left">
+          <button class="frameless-hover-btn" @click="store.discoverSubView = 'home'">
+            <PlumpIcon name="back" :size="17" />
+            <span>返回发现</span>
+          </button>
+          <img
+            v-if="store.activeRank?.coverUrl"
+            :src="store.activeRank.coverUrl"
+            class="sfh-rank-cover"
+            alt=""
+          />
+          <div>
+            <h2 class="sfh-title">{{ store.activeRank?.name || "巅峰排行榜" }}</h2>
+            <div class="sfh-sub">
+              {{ store.activeRank?.updateFrequency || "官方实时更新" }} · 共 {{ store.activeRankSongs.length }} 首上榜曲目
+            </div>
+          </div>
+        </div>
+
+        <div class="sfh-right">
+          <div class="frameless-sublist-search">
+            <PlumpIcon name="search" :size="15" />
+            <input
+              v-model="store.rankSearchKeyword"
+              type="text"
+              placeholder="筛选榜单内歌曲 / 歌手..."
+            />
+          </div>
+          <button
+            class="frameless-hover-btn"
+            @click="store.isRankGridModalOpen = true"
+          >
+            <PlumpIcon name="grid" :size="16" />
+            <span>切换榜单</span>
+          </button>
+          <button
+            class="frameless-hover-btn primary-tint"
+            @click="playAllActiveRank"
+          >
+            <PlumpIcon name="play" :size="16" />
+            <span>播放全部</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="frameless-songs-grid-2col">
+        <div
+          v-for="(song, idx) in filteredRankSongs"
+          :key="song.hash + '_' + idx"
+          class="frameless-song-row"
+          :class="{ active: store.currentSong?.hash === song.hash }"
+          @click="store.playSongFromList(song, store.activeRankSongs)"
+          @contextmenu.prevent="store.openSongContextMenu($event, song, store.activeRankSongs)"
+        >
+          <span class="fs-index" :class="idx < 3 ? 'rank-top-' + (idx + 1) : ''">
+            {{ idx + 1 }}
+          </span>
+          <div class="fs-cover-wrap">
+            <img :src="song.coverUrl" class="fs-cover" loading="lazy" alt="" />
+            <div class="fs-cover-play">
+              <PlumpIcon
+                :name="store.currentSong?.hash === song.hash && store.isPlaying ? 'pause' : 'play'"
+                :size="15"
+                color="#fff"
+              />
+            </div>
+          </div>
+          <div class="fs-meta">
+            <div class="fs-title-line">
+              <span class="fs-title">{{ song.title }}</span>
+              <span v-if="song.hasHiRes" class="fs-badge hires">Hi-Res</span>
+              <span v-else-if="song.hasSq" class="fs-badge sq">SQ</span>
+              <span v-if="song.isVip" class="fs-badge vip">VIP</span>
+            </div>
+            <div class="fs-sub-line">
+              <span>{{ song.artist }}</span>
+              <span v-if="song.album" class="fs-album">· {{ song.album }}</span>
+            </div>
+          </div>
+          <div class="fs-actions" @click.stop>
             <button
-              class="psc-act-btn"
-              title="喜欢"
+              class="fs-icon-btn"
+              :class="{ liked: store.isSongLiked(song.hash) }"
               @click="store.toggleFavoriteSong(song)"
             >
               <PlumpIcon
-                name="heart"
-                :size="15"
-                :filled="store.isSongLiked(song)"
-                :color="store.isSongLiked(song) ? '#ff4d6d' : 'currentColor'"
+                :name="store.isSongLiked(song.hash) ? 'heart-filled' : 'heart'"
+                :size="16"
               />
             </button>
-            <button
-              class="psc-act-btn"
-              title="添加到歌单"
-              @click="store.addToPlaylistModalSong = song"
-            >
-              <PlumpIcon name="playlist-add" :size="15" />
-            </button>
-            <button
-              class="psc-act-btn"
-              title="更多操作"
-              @click="store.openSongContextMenu($event, song)"
-            >
-              <PlumpIcon name="more" :size="15" />
+            <button class="fs-icon-btn" @click="store.addToPlaylistModalSong = song">
+              <PlumpIcon name="plus" :size="16" />
             </button>
           </div>
-
-          <div class="psc-dur">{{ formatDuration(song.durationMs) }}</div>
+          <span class="fs-duration">{{ formatDuration(song.durationSeconds) }}</span>
         </div>
       </div>
-    </template>
+    </div>
 
-    <!-- ==================== 3. 新歌速递独立页面（按日期折叠时间轴 + 右侧 A-Z 索引） ==================== -->
-    <template v-else-if="store.discoverSubView === 'new_songs'">
-      <div class="subpage-banner compact">
-        <div class="subpage-top-bar">
-          <button
-            class="tonal-pill-btn"
-            @click="store.discoverSubView = 'home'"
-          >
-            <PlumpIcon name="back" :size="15" />
+    <!-- ==================== 二级页面 C：全新重构的“电台广场”（二级页面，不再是一级导航） ==================== -->
+    <div v-else-if="store.discoverSubView === 'radio'" class="discover-subpage radio-plaza-page">
+      <!-- 顶部无框导航与 App 端风格滑动分类栏 -->
+      <div class="subpage-frameless-header">
+        <div class="sfh-left">
+          <button class="frameless-hover-btn" @click="store.discoverSubView = 'home'">
+            <PlumpIcon name="back" :size="17" />
             <span>返回发现</span>
           </button>
+          <h2 class="sfh-title">电台广场</h2>
 
-          <div class="pill-tabs">
+          <div class="app-sliding-tabs">
             <button
-              v-for="t in newSongTabs"
-              :key="t.key"
-              class="pill-tab-btn"
-              :class="{ active: store.newSongPeriod === t.key }"
-              @click="store.loadNewSongExpress(t.key)"
+              v-for="cat in radioPlazaCategories"
+              :key="cat.id"
+              class="app-sliding-tab-btn"
+              :class="{ active: store.selectedFmCategory === cat.id }"
+              @click="store.selectedFmCategory = cat.id"
             >
-              {{ t.label }}
-            </button>
-          </div>
-
-          <div class="subpage-right-tools">
-            <button class="tonal-pill-btn" @click="toggleAllDates(false)">
-              展开全部日期
-            </button>
-            <button class="tonal-pill-btn" @click="toggleAllDates(true)">
-              折叠全部日期
-            </button>
-            <button
-              v-if="store.newSongs.length > 0"
-              class="coral-play-all-pill sm"
-              @click="
-                store.playSongFromList(
-                  store.newSongs[0],
-                  store.newSongs,
-                  '新歌速递'
-                )
-              "
-            >
-              <PlumpIcon name="play" :size="14" color="#ffffff" />
-              <span>播放全部 ({{ store.newSongs.length }})</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="newsong-timeline-layout">
-        <!-- 左侧 93%：按精确发行日期分组的时间轴双列网格 -->
-        <div class="ns-timeline-main">
-          <div
-            v-for="group in newSongDateGroups"
-            :key="group.date"
-            class="ns-date-group"
-          >
-            <div
-              class="ns-date-header"
-              @click="collapsedDates[group.date] = !collapsedDates[group.date]"
-            >
-              <div class="ns-date-left">
-                <span class="ns-timeline-dot"></span>
-                <span class="ns-date-title">{{ group.date }}</span>
-                <span class="ns-date-count">{{ group.songs.length }} 首新歌</span>
-              </div>
-              <span class="ns-collapse-label">
-                {{ collapsedDates[group.date] ? "展开" : "收起" }}
-              </span>
-            </div>
-
-            <div
-              v-if="!collapsedDates[group.date]"
-              class="dual-column-song-grid"
-            >
-              <div
-                v-for="(song, idx) in group.songs"
-                :key="song.hash || idx"
-                class="plump-song-card"
-                :class="{
-                  'track-card-playing': store.currentSong?.hash === song.hash,
+              <span class="tab-label">{{ cat.label }}</span>
+              <span
+                class="tab-bottom-indicator"
+                :style="{
+                  backgroundColor: cat.color,
+                  opacity: store.selectedFmCategory === cat.id ? 1 : 0,
+                  transform: store.selectedFmCategory === cat.id ? 'scaleX(1)' : 'scaleX(0.2)',
                 }"
-                @click="
-                  store.playSongFromList(song, store.newSongs, '新歌速递')
-                "
-                @contextmenu="store.openSongContextMenu($event, song)"
-              >
-                <img
-                  v-if="song.coverUrl"
-                  :src="song.coverUrl"
-                  class="psc-cover"
-                />
-                <div class="psc-main">
-                  <div class="psc-title">{{ song.title }}</div>
-                  <div class="psc-sub">
-                    <span v-if="song.isHiRes" class="mini-badge hires">Hi-Res</span>
-                    <span v-else-if="song.isLossless" class="mini-badge sq">SQ</span>
-                    <span>{{ song.artist }}</span>
-                    <span v-if="song.album" class="psc-album">
-                      · {{ song.album }}
-                    </span>
-                  </div>
-                </div>
-                <div class="psc-dur">{{ formatDuration(song.durationMs) }}</div>
-              </div>
-            </div>
+              ></span>
+            </button>
           </div>
         </div>
 
-        <!-- 右侧悬浮 A-Z 首字母快速索引栏 -->
-        <aside class="ns-alpha-rail">
+        <div class="sfh-right">
           <button
-            v-for="ch in alphabetList"
-            :key="ch"
-            class="alpha-pill"
-            :class="{ active: activeAlphaFilter === ch }"
-            @click="activeAlphaFilter = ch"
+            class="frameless-hover-btn"
+            :disabled="store.isLoadingFmStation"
+            @click="refreshCurrentRadioStation"
           >
-            {{ ch === "ALL" ? "全" : ch }}
+            <PlumpIcon name="refresh" :size="16" />
+            <span>换一批频率曲目</span>
           </button>
-        </aside>
+          <button
+            class="frameless-hover-btn primary-tint"
+            :disabled="store.isLoadingFmStation"
+            @click="appendCurrentRadioStation"
+          >
+            <PlumpIcon name="plus" :size="16" />
+            <span>+20首漫游续杯</span>
+          </button>
+        </div>
       </div>
-    </template>
 
-    <!-- ==================== 4. 巅峰排行榜详情双栏工作台 ==================== -->
-    <template v-else-if="store.discoverSubView === 'rank' && store.activeRank">
-      <div class="rank-detail-workspace">
-        <!-- 左栏（固定 280px）：当前榜单海报信息 + 同分类榜单快捷切换列 -->
-        <aside class="rank-left-sidebar">
-          <button
-            class="tonal-pill-btn full-w"
-            @click="store.discoverSubView = 'home'"
-          >
-            <PlumpIcon name="back" :size="15" />
-            <span>返回发现画廊</span>
-          </button>
-
-          <div class="rank-hero-box">
+      <!-- 电台广场主舞台：左侧当前锁定电台 3D 播控舱 + 右侧全封面电台矩阵 -->
+      <div class="radio-plaza-hero-split">
+        <div class="rp-now-tuning-deck">
+          <div class="rp-deck-vinyl-wrap">
+            <div class="rp-deck-vinyl" :class="{ spinning: store.isPlaying }"></div>
             <img
-              v-if="store.activeRank.coverUrl"
-              :src="store.activeRank.coverUrl"
-              class="rank-big-cover"
+              v-if="activePlazaCover"
+              :src="activePlazaCover"
+              class="rp-deck-cover"
+              alt=""
             />
-            <div v-else class="rank-big-cover-fallback">
-              <PlumpIcon name="trophy" :size="38" color="#ffd54f" />
+          </div>
+          <div class="rp-deck-info">
+            <div class="rp-freq-pill">
+              <span class="live-dot"></span>
+              <span>{{ store.activeFmChannel?.freqLabel || "FM 98.6 MHz" }} · 正在调频广播</span>
             </div>
-            <h2 class="rank-side-title">{{ store.activeRank.rankName }}</h2>
-            <p class="rank-side-sub">
-              {{ store.activeRank.category }} ·
-              {{ store.activeRank.updateFrequency || "每日更新" }}
+            <h3 class="rp-station-title">{{ store.activeFmChannel?.name || "流行风向标" }}</h3>
+            <p class="rp-station-desc">
+              {{ store.activeFmChannel?.description || "全天候智能音乐伴听 · 热歌与品味共振" }}
             </p>
-            <button
-              v-if="filteredActiveRankSongs.length > 0"
-              class="coral-play-all-pill full-w"
-              @click="
-                store.playSongFromList(
-                  filteredActiveRankSongs[0],
-                  filteredActiveRankSongs,
-                  store.activeRank.rankName
-                )
-              "
-            >
-              <PlumpIcon name="play" :size="16" color="#ffffff" />
-              <span>播放榜单 ({{ filteredActiveRankSongs.length }})</span>
-            </button>
-          </div>
-
-          <div class="rank-quick-switcher">
-            <div class="rqs-label">快捷切换榜单</div>
-            <button
-              v-for="rk in store.rankList"
-              :key="rk.rankId"
-              class="rqs-item"
-              :class="{ active: store.activeRank?.rankId === rk.rankId }"
-              @click="store.openRankDetail(rk)"
-            >
-              <span>{{ rk.rankName }}</span>
-              <span class="rqs-cat">{{ rk.category }}</span>
-            </button>
-          </div>
-        </aside>
-
-        <!-- 右栏：榜单内搜索过滤 + TOP 3 皇冠曲目与双列流 -->
-        <div class="rank-right-tracks">
-          <div class="rank-tracks-toolbar">
-            <div class="rank-search-box">
-              <PlumpIcon name="search" :size="15" color="var(--text-secondary)" />
-              <input
-                v-model="store.rankSearchKeyword"
-                type="text"
-                placeholder="搜索榜单内歌曲 / 歌手..."
-                class="rank-search-input"
-              />
+            <div class="rp-deck-actions">
+              <button class="frameless-hover-btn primary-tint" @click="playActiveStationAll">
+                <PlumpIcon name="play" :size="16" />
+                <span>立即播放本台 ({{ store.fmStationSongs.length }})</span>
+              </button>
+              <button class="frameless-hover-btn" @click="pickRandomFmChannel">
+                <PlumpIcon name="shuffle" :size="16" />
+                <span>随机探索电台</span>
+              </button>
             </div>
-
-            <button
-              class="tonal-pill-btn"
-              @click="locateCurrentPlayingSong"
-            >
-              <PlumpIcon name="locate" :size="15" />
-              <span>定位当前播放</span>
-            </button>
           </div>
+        </div>
 
-          <div v-if="store.isLoadingRankSongs" class="loading-box">
-            正在拉取榜单实时曲目与概念版无损音源规格...
-          </div>
-
-          <div v-else class="dual-column-song-grid">
-            <div
-              v-for="(song, idx) in filteredActiveRankSongs"
-              :key="song.hash || song.id"
-              class="plump-song-card"
-              :class="{
-                'track-card-playing': store.currentSong?.hash === song.hash,
-                'top-three-card': idx < 3,
-              }"
-              @click="
-                store.playSongFromList(
-                  song,
-                  filteredActiveRankSongs,
-                  store.activeRank?.rankName
-                )
-              "
-              @contextmenu="store.openSongContextMenu($event, song)"
-            >
-              <div class="psc-index" :class="`rank-top-${idx + 1}`">
-                {{ String(idx + 1).padStart(2, "0") }}
-              </div>
+        <!-- 分类电台封面墙 -->
+        <div class="rp-stations-wall">
+          <div
+            v-for="(ch, idx) in filteredPlazaChannels"
+            :key="ch.id"
+            class="rp-station-tile"
+            :class="{ active: store.activeFmChannel?.id === ch.id }"
+            @click="selectAndPlayPlazaChannel(ch)"
+          >
+            <div class="rp-tile-cover-wrap">
               <img
-                v-if="song.coverUrl"
-                :src="song.coverUrl"
-                class="psc-cover"
+                v-if="getStationCover(ch, idx)"
+                :src="getStationCover(ch, idx)"
+                class="rp-tile-cover"
                 loading="lazy"
+                alt=""
               />
-              <div class="psc-main">
-                <div class="psc-title">{{ song.title }}</div>
-                <div class="psc-sub">
-                  <span v-if="song.isHiRes" class="mini-badge hires">Hi-Res</span>
-                  <span v-else-if="song.isLossless" class="mini-badge sq">SQ</span>
-                  <span v-if="song.isVip" class="mini-badge vip">VIP</span>
-                  <span>{{ song.artist }}</span>
-                </div>
-              </div>
-              <div class="psc-dur">{{ formatDuration(song.durationMs) }}</div>
+              <span class="rp-tile-freq">{{ ch.freqLabel }}</span>
+              <button
+                class="rp-tile-play"
+                @click.stop="selectAndPlayPlazaChannel(ch, true)"
+              >
+                <PlumpIcon
+                  :name="store.activeFmChannel?.id === ch.id && store.isPlaying ? 'pause' : 'play'"
+                  :size="15"
+                  color="#fff"
+                />
+              </button>
+            </div>
+            <div class="rp-tile-meta">
+              <div class="rp-tile-name">{{ ch.name }}</div>
+              <div class="rp-tile-listeners">{{ ch.listenerCountText }}</div>
             </div>
           </div>
         </div>
       </div>
-    </template>
 
-    <!-- 全部榜单分类宫格选择器弹窗 (RankGridPickerSheet) -->
-    <transition name="fade">
+      <!-- 当前电台实时漫游歌曲流（无框双列） -->
+      <div class="rp-stream-section">
+        <div class="frameless-sublist-toolbar">
+          <div class="frameless-sublist-info">
+            <span class="sublist-badge">LIVE STREAM</span>
+            <span class="sublist-desc">
+              「{{ store.activeFmChannel?.name || "精选电台" }}」实时漫游曲库 ({{ store.fmStationSongs.length }} 首)
+            </span>
+          </div>
+        </div>
+
+        <div class="frameless-songs-grid-2col">
+          <div
+            v-for="(song, idx) in store.fmStationSongs"
+            :key="song.hash + '_' + idx"
+            class="frameless-song-row"
+            :class="{ active: store.currentSong?.hash === song.hash }"
+            @click="store.playSongFromList(song, store.fmStationSongs)"
+            @contextmenu.prevent="store.openSongContextMenu($event, song, store.fmStationSongs)"
+          >
+            <span class="fs-index">{{ String(idx + 1).padStart(2, "0") }}</span>
+            <div class="fs-cover-wrap">
+              <img :src="song.coverUrl" class="fs-cover" loading="lazy" alt="" />
+              <div class="fs-cover-play">
+                <PlumpIcon
+                  :name="store.currentSong?.hash === song.hash && store.isPlaying ? 'pause' : 'play'"
+                  :size="15"
+                  color="#fff"
+                />
+              </div>
+            </div>
+            <div class="fs-meta">
+              <div class="fs-title-line">
+                <span class="fs-title">{{ song.title }}</span>
+                <span v-if="song.hasHiRes" class="fs-badge hires">Hi-Res</span>
+                <span v-else-if="song.hasSq" class="fs-badge sq">SQ</span>
+              </div>
+              <div class="fs-sub-line">
+                <span>{{ song.artist }}</span>
+                <span v-if="song.album" class="fs-album">· {{ song.album }}</span>
+              </div>
+            </div>
+            <div class="fs-actions" @click.stop>
+              <button
+                class="fs-icon-btn"
+                :class="{ liked: store.isSongLiked(song.hash) }"
+                @click="store.toggleFavoriteSong(song)"
+              >
+                <PlumpIcon
+                  :name="store.isSongLiked(song.hash) ? 'heart-filled' : 'heart'"
+                  :size="16"
+                />
+              </button>
+              <button class="fs-icon-btn" @click="store.addToPlaylistModalSong = song">
+                <PlumpIcon name="plus" :size="16" />
+              </button>
+            </div>
+            <span class="fs-duration">{{ formatDuration(song.durationSeconds) }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 全部榜单网格选择弹窗 -->
+    <transition name="fade-pop">
       <div
         v-if="store.isRankGridModalOpen"
         class="modal-backdrop"
         @click.self="store.isRankGridModalOpen = false"
       >
-        <div class="vip-modal-card rank-grid-modal">
-          <div class="modal-header">
-            <div class="vip-title-row">
-              <div class="vip-icon-orb">
-                <PlumpIcon name="trophy" :size="19" color="#ffd54f" />
-              </div>
-              <h3>巅峰榜单全集宫格</h3>
-            </div>
-            <button
-              class="icon-close-btn"
-              @click="store.isRankGridModalOpen = false"
-            >
-              <PlumpIcon name="close" :size="15" />
+        <div class="rank-all-modal glass-popover">
+          <div class="modal-top-bar">
+            <h3>全部官方巅峰榜单 ({{ store.rankList.length }})</h3>
+            <button class="frameless-hover-btn" @click="store.isRankGridModalOpen = false">
+              <PlumpIcon name="close" :size="16" />
             </button>
           </div>
-
-          <div class="pill-tabs mb-14">
-            <button
-              v-for="cat in rankCategories"
-              :key="cat"
-              class="pill-tab-btn"
-              :class="{ active: store.selectedRankCategory === cat }"
-              @click="store.selectedRankCategory = cat"
-            >
-              {{ cat }}
-            </button>
-          </div>
-
-          <div class="rank-picker-grid">
-            <button
-              v-for="rk in filteredRankGrid"
+          <div class="rank-modal-grid">
+            <div
+              v-for="rk in store.rankList"
               :key="rk.rankId"
-              class="rank-picker-cell"
+              class="rank-horizontal-card"
               @click="store.openRankDetail(rk)"
             >
-              <img
-                v-if="rk.coverUrl"
-                :src="rk.coverUrl"
-                class="rpc-cover"
-              />
-              <div v-else class="rpc-fallback">
-                <PlumpIcon name="trophy" :size="20" color="#ffd54f" />
+              <div class="rank-left-cover-wrap">
+                <img :src="rk.coverUrl" class="rank-left-cover" loading="lazy" alt="" />
+                <button
+                  class="rank-cover-play-btn"
+                  @click.stop="store.playRankDirectly(rk)"
+                >
+                  <PlumpIcon name="play" :size="16" color="#fff" />
+                </button>
               </div>
-              <div class="rpc-meta">
-                <div class="rpc-name">{{ rk.rankName }}</div>
-                <div class="rpc-sub">
-                  {{ rk.category }} · {{ rk.updateFrequency || "每日更新" }}
-                </div>
+              <div class="rank-right-body">
+                <h4 class="rank-card-name">{{ rk.name }}</h4>
+                <span class="rank-card-cat">{{ rk.updateFrequency || "每日更新" }}</span>
               </div>
-            </button>
+            </div>
           </div>
         </div>
       </div>
     </transition>
   </div>
 </template>
+
+<script setup lang="ts">
+import { computed, ref } from "vue";
+import { useAppStore } from "../stores/appStore";
+import { formatDuration } from "../api/kugou";
+import type { FmChannel, RankItem, Song } from "../types";
+import PlumpIcon from "../components/PlumpIcon.vue";
+
+const store = useAppStore();
+
+const heroSongFilter = ref("");
+const newSongSearchKw = ref("");
+
+// 判断是否处于日推或猜你喜欢的横向占满模式
+const isDailyExpandedMode = computed(
+  () => store.discoverHeroExpanding === "daily" || store.discoverSubView === "daily"
+);
+const isFmExpandedMode = computed(
+  () => store.discoverHeroExpanding === "fm" || store.discoverSubView === "fm_detail"
+);
+
+// 日期文案
+const now = new Date();
+const todayDayNum = String(now.getDate()).padStart(2, "0");
+const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+const todayMonthEng = monthNames[now.getMonth()];
+const weekNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+const todayDateLabel = `${now.getMonth() + 1}月${now.getDate()}日 · ${weekNames[now.getDay()]}`;
+
+const newSongDateRangeLabel = computed(() => {
+  const end = new Date();
+  const start = new Date(end.getTime() - 6 * 86400000);
+  const fmt = (d: Date) =>
+    `${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+  return `${fmt(start)} - ${fmt(end)}`;
+});
+
+// 复刻 Android StaggeredThreeCovers 的三封面源
+const dailyCoverTriple = computed(() => {
+  const covers = store.recommendSongs
+    .map((s) => s.coverUrl)
+    .filter((u) => Boolean(u));
+  return [
+    covers[0] || store.currentSong?.coverUrl || "",
+    covers[1] || covers[0] || "",
+    covers[2] || covers[1] || covers[0] || "",
+  ];
+});
+
+const isFmPlaying = computed(
+  () =>
+    Boolean(
+      store.isPlaying &&
+        store.currentSong &&
+        store.currentFmSong &&
+        store.currentSong.hash === store.currentFmSong.hash
+    )
+);
+
+// 点击日推卡片（非按钮区域）：猜你喜欢向右消失，日推向右扩展占满，下方虚化左移，浮现日推歌曲
+function handleDailyCardClick() {
+  if (isDailyExpandedMode.value) return;
+  heroSongFilter.value = "";
+  store.openDailyRecommendPage();
+}
+
+// 点击猜你喜欢卡片（非按钮区域）：日推向左消失，猜你喜欢向左扩展占满，下方虚化左移，浮现猜你喜欢歌曲
+function handleFmCardClick() {
+  if (isFmExpandedMode.value) return;
+  heroSongFilter.value = "";
+  store.openGuessYouLikePage();
+}
+
+function collapseToDiscoverHome() {
+  store.discoverHeroExpanding = "none";
+  store.discoverSubView = "home";
+}
+
+function playAllDaily() {
+  if (store.recommendSongs.length > 0) {
+    store.playSongFromList(store.recommendSongs[0], store.recommendSongs);
+  } else {
+    store.loadDailyRecommend();
+  }
+}
+
+function playAllPersonalFm() {
+  if (store.personalFmSongs.length > 0) {
+    store.playSongFromList(store.personalFmSongs[0], store.personalFmSongs);
+  } else {
+    store.loadPersonalFm(false);
+  }
+}
+
+function toggleFmPlay() {
+  if (isFmPlaying.value) {
+    store.togglePlayPause();
+  } else if (store.currentFmSong) {
+    store.playSongFromList(store.currentFmSong, store.personalFmSongs);
+  } else {
+    store.nextPersonalFmTrack(true);
+  }
+}
+
+const activeHeroSongs = computed<Song[]>(() => {
+  if (store.discoverSubView === "fm_detail") {
+    return store.personalFmSongs;
+  }
+  return store.recommendSongs;
+});
+
+const filteredHeroSongs = computed(() => {
+  const kw = heroSongFilter.value.trim().toLowerCase();
+  if (!kw) return activeHeroSongs.value;
+  return activeHeroSongs.value.filter(
+    (s) =>
+      s.title.toLowerCase().includes(kw) ||
+      s.artist.toLowerCase().includes(kw) ||
+      (s.album && s.album.toLowerCase().includes(kw))
+  );
+});
+
+function isCurrentSongInList(list: Song[]) {
+  if (!store.currentSong) return false;
+  return list.some((s) => s.hash === store.currentSong?.hash);
+}
+
+function scrollToCurrentPlayingSong() {
+  if (!store.currentSong) return;
+  const el = document.querySelector(`[data-song-hash="${store.currentSong.hash}"]`);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
+// ==================== 新歌速递：分类栏 + 时间顺序&同时间按首字母排序 + 3×4=12首列优先 ====================
+const newSongAreas = [
+  { id: "CHINESE", label: "华语", color: "#2b8cff" },
+  { id: "WESTERN", label: "欧美", color: "#ff6b6b" },
+  { id: "JAPAN_KOREA", label: "日韩", color: "#15c493" },
+  { id: "CANTONESE", label: "粤语", color: "#f5a623" },
+  { id: "ALL", label: "全部", color: "#8e75ff" },
+];
+
+const COLLATOR_LETTERS = "ABCDEFGHJKLMNOPQRSTWXYZ".split("");
+const COLLATOR_BOUNDARIES = "阿八嚓哒妸发旮哈讥咔垃妈拿噢啪期然撒塌挖昔压匝".split("");
+
+function extractFirstLetter(text: string): string {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return "#";
+  const firstChar = trimmed[0].toUpperCase();
+  if (firstChar >= "A" && firstChar <= "Z") return firstChar;
+  if (firstChar >= "0" && firstChar <= "9") return "#";
+  const code = firstChar.charCodeAt(0);
+  if (code >= 0x4e00 && code <= 0x9fa5) {
+    for (let i = COLLATOR_BOUNDARIES.length - 1; i >= 0; i--) {
+      if (firstChar.localeCompare(COLLATOR_BOUNDARIES[i], "zh-CN") >= 0) {
+        return COLLATOR_LETTERS[i];
+      }
+    }
+  }
+  return "#";
+}
+
+function normalizeDateKey(raw: string, fallbackIndex: number): string {
+  const cleaned = (raw || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(cleaned)) {
+    return cleaned.slice(0, 10);
+  }
+  const offsetDays = Math.min(6, Math.floor(fallbackIndex / 5));
+  const d = new Date(Date.now() - offsetDays * 86400000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function formatShortPublishDate(raw: string): string {
+  if (!raw || raw.length < 10) return "最新上架";
+  return raw.slice(5, 10).replace("-", ".");
+}
+
+// 严格按时间顺序（最新在前），同时间按首字母排序
+const sortedNewSongsAll = computed<Song[]>(() => {
+  const list = store.newSongs.map((s, idx) => ({
+    ...s,
+    publishDate: normalizeDateKey(s.publishDate, idx),
+  }));
+  return list.sort((a, b) => {
+    if (a.publishDate !== b.publishDate) {
+      return b.publishDate.localeCompare(a.publishDate);
+    }
+    const la = extractFirstLetter(a.title);
+    const lb = extractFirstLetter(b.title);
+    if (la !== lb) {
+      if (la === "#") return 1;
+      if (lb === "#") return -1;
+      return la.localeCompare(lb);
+    }
+    return a.title.localeCompare(b.title, "zh-CN");
+  });
+});
+
+// 首页展示 3×4 = 12 首（若不足 12 首则按实际数量展示）
+const sortedTop12NewSongs = computed(() => sortedNewSongsAll.value.slice(0, 12));
+
+function playAllNewSongs() {
+  if (sortedNewSongsAll.value.length > 0) {
+    store.playSongFromList(sortedNewSongsAll.value[0], sortedNewSongsAll.value);
+  }
+}
+
+const groupedNewSongsByDate = computed(() => {
+  const kw = newSongSearchKw.value.trim().toLowerCase();
+  const base = kw
+    ? sortedNewSongsAll.value.filter(
+        (s) =>
+          s.title.toLowerCase().includes(kw) ||
+          s.artist.toLowerCase().includes(kw)
+      )
+    : sortedNewSongsAll.value;
+
+  const map = new Map<string, Song[]>();
+  for (const s of base) {
+    const d = s.publishDate || "最新发行";
+    if (!map.has(d)) map.set(d, []);
+    map.get(d)!.push(s);
+  }
+  const todayStr = normalizeDateKey("", 0);
+  return Array.from(map.entries()).map(([dateKey, songs]) => {
+    const letters = Array.from(new Set(songs.map((s) => extractFirstLetter(s.title))));
+    return {
+      dateKey,
+      displayLabel: dateKey === todayStr ? `今日首发 · ${dateKey}` : `发行日 · ${dateKey}`,
+      songs,
+      letters,
+    };
+  });
+});
+
+function getFirstLetterAnchorId(dateKey: string, song: Song, idx: number, list: Song[]) {
+  const letter = extractFirstLetter(song.title);
+  if (idx === 0 || extractFirstLetter(list[idx - 1].title) !== letter) {
+    return `ns-${dateKey}-${letter}`;
+  }
+  return undefined;
+}
+
+function scrollToNewSongLetter(dateKey: string, letter: string) {
+  const el = document.getElementById(`ns-${dateKey}-${letter}`);
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// ==================== 巅峰排行榜：双行显示（2行 × 4列 = 8个榜单） ====================
+const homeDoubleRowRanks = computed(() => store.rankList.slice(0, 8));
+
+function getRankPreviewLines(rk: RankItem): string[] {
+  if (rk.songPreviews && rk.songPreviews.length > 0) {
+    return rk.songPreviews.slice(0, 3);
+  }
+  const fallbackPool = store.recommendSongs.length > 0 ? store.recommendSongs : store.newSongs;
+  if (fallbackPool.length >= 3) {
+    const offset = rk.rankId % Math.max(1, fallbackPool.length - 3);
+    return fallbackPool.slice(offset, offset + 3).map((s) => `${s.title} - ${s.artist}`);
+  }
+  return ["概念版实时热播曲目", "无损母带音源飙升中", "点击查看完整权威榜单"];
+}
+
+const filteredRankSongs = computed(() => {
+  const kw = store.rankSearchKeyword.trim().toLowerCase();
+  if (!kw) return store.activeRankSongs;
+  return store.activeRankSongs.filter(
+    (s) =>
+      s.title.toLowerCase().includes(kw) ||
+      s.artist.toLowerCase().includes(kw)
+  );
+});
+
+function playAllActiveRank() {
+  if (store.activeRankSongs.length > 0) {
+    store.playSongFromList(store.activeRankSongs[0], store.activeRankSongs);
+  }
+}
+
+// ==================== 精选场景电台 & 电台广场（单行封面显示 + 独立二级电台广场） ====================
+const singleRowFmChannels = computed(() => store.fmChannels.slice(0, 6));
+
+const radioCoverFallbackPool = computed(() => {
+  const pool: string[] = [];
+  for (const s of store.recommendSongs) {
+    if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
+  }
+  for (const s of store.newSongs) {
+    if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
+  }
+  for (const r of store.rankList) {
+    if (r.coverUrl && !pool.includes(r.coverUrl)) pool.push(r.coverUrl);
+  }
+  return pool;
+});
+
+function getStationCover(ch: FmChannel, idx: number): string {
+  if (ch.coverUrl && !ch.coverUrl.includes("20210519")) {
+    return ch.coverUrl;
+  }
+  const pool = radioCoverFallbackPool.value;
+  if (pool.length > 0) {
+    return pool[idx % pool.length];
+  }
+  return store.currentSong?.coverUrl || "";
+}
+
+function playFmChannelFromHome(ch: FmChannel) {
+  store.activeFmChannel = ch;
+  store.loadFmStationSongs(ch.id, false, true);
+}
+
+function openRadioPlaza() {
+  store.discoverSubView = "radio";
+  if (!store.activeFmChannel && store.fmChannels.length > 0) {
+    store.activeFmChannel = store.fmChannels[0];
+    store.loadFmStationSongs(store.fmChannels[0].id, false, false);
+  }
+}
+
+const radioPlazaCategories = [
+  { id: "全部", label: "全部频率", color: "#2b8cff" },
+  { id: "推荐电台", label: "推荐", color: "#ff6b6b" },
+  { id: "场景", label: "场景", color: "#15c493" },
+  { id: "心情", label: "心情", color: "#f5a623" },
+  { id: "曲风", label: "曲风", color: "#8e75ff" },
+  { id: "年代语种", label: "年代语种", color: "#00c4a7" },
+];
+
+const filteredPlazaChannels = computed(() => {
+  const cat = store.selectedFmCategory;
+  if (!cat || cat === "全部") return store.fmChannels;
+  const list = store.fmChannels.filter((c) => c.category.includes(cat) || cat.includes(c.category));
+  return list.length > 0 ? list : store.fmChannels;
+});
+
+const activePlazaCover = computed(() => {
+  if (store.activeFmChannel) {
+    const c = getStationCover(store.activeFmChannel, 0);
+    if (c) return c;
+  }
+  return store.fmStationSongs[0]?.coverUrl || store.currentSong?.coverUrl || "";
+});
+
+function selectAndPlayPlazaChannel(ch: FmChannel, autoPlay = true) {
+  store.activeFmChannel = ch;
+  store.loadFmStationSongs(ch.id, false, autoPlay);
+}
+
+function refreshCurrentRadioStation() {
+  const cid = store.activeFmChannel?.id || store.fmChannels[0]?.id || "hot";
+  store.loadFmStationSongs(cid, false, false);
+}
+
+function appendCurrentRadioStation() {
+  const cid = store.activeFmChannel?.id || store.fmChannels[0]?.id || "hot";
+  store.loadFmStationSongs(cid, true, false);
+}
+
+function playActiveStationAll() {
+  if (store.fmStationSongs.length > 0) {
+    store.playSongFromList(store.fmStationSongs[0], store.fmStationSongs);
+  } else if (store.activeFmChannel) {
+    store.loadFmStationSongs(store.activeFmChannel.id, false, true);
+  }
+}
+
+function pickRandomFmChannel() {
+  if (store.fmChannels.length === 0) return;
+  const idx = Math.floor(Math.random() * store.fmChannels.length);
+  const picked = store.fmChannels[idx];
+  selectAndPlayPlazaChannel(picked, true);
+}
+</script>

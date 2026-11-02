@@ -1,1232 +1,751 @@
-<script setup lang="ts">
-import { computed, ref } from "vue";
-import { useAppStore } from "../stores/appStore";
-import PlumpIcon from "../components/PlumpIcon.vue";
-
-const store = useAppStore();
-
-// 新建歌单与导入外部歌单弹窗状态
-const showCreateModal = ref(false);
-const newPlaylistName = ref("");
-const showImportModal = ref(false);
-const importPlaylistName = ref("");
-const importRawText = ref("");
-const isImporting = ref(false);
-const trackFilterKeyword = ref("");
-
-const activeListSongs = computed(() => {
-  const base =
-    store.libraryAssetTab === "liked"
-      ? store.likedSongs
-      : store.libraryAssetTab === "recent"
-      ? store.recentHistorySongs
-      : store.playlistSongs;
-  const kw = trackFilterKeyword.value.trim().toLowerCase();
-  if (!kw) return base;
-  return base.filter(
-    (s) =>
-      s.title.toLowerCase().includes(kw) ||
-      s.artist.toLowerCase().includes(kw) ||
-      s.album.toLowerCase().includes(kw)
-  );
-});
-
-const rawActiveListCount = computed(() => {
-  if (store.libraryAssetTab === "liked") {
-    return Math.max(
-      store.likedPlaylistMeta?.trackCount || 0,
-      store.likedSongs.length
-    );
-  }
-  if (store.libraryAssetTab === "recent") {
-    return store.recentHistorySongs.length;
-  }
-  return Math.max(
-    store.selectedPlaylist?.trackCount || 0,
-    store.playlistSongs.length
-  );
-});
-
-const activeListTitle = computed(() => {
-  if (store.libraryAssetTab === "liked") {
-    return "我喜欢的音乐";
-  }
-  if (store.libraryAssetTab === "recent") {
-    return "最近播放记录";
-  }
-  return store.selectedPlaylist?.title || "选择歌单";
-});
-
-function openLikedSongs() {
-  store.libraryDetailMode = "playlist";
-  store.libraryAssetTab = "liked";
-  trackFilterKeyword.value = "";
-  if (store.likedSongs.length === 0 && store.likedPlaylistMeta) {
-    store.selectPlaylist(store.likedPlaylistMeta);
-  }
-}
-
-function openRecentSongs() {
-  store.libraryDetailMode = "playlist";
-  store.libraryAssetTab = "recent";
-  trackFilterKeyword.value = "";
-  if (store.recentHistorySongs.length === 0) {
-    store.loadRecentHistory();
-  }
-}
-
-function locateCurrentPlayingSong() {
-  const el = document.querySelector(".track-card-playing");
-  if (el) {
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    store.notify("已为您平滑居中定位到当前播放歌曲");
-  } else {
-    store.notify("当前播放歌曲不在本歌单列表中");
-  }
-}
-
-async function handleCreateSubmit() {
-  if (!newPlaylistName.value.trim()) return;
-  const ok = await store.createNewPlaylist(newPlaylistName.value.trim());
-  if (ok) {
-    newPlaylistName.value = "";
-    showCreateModal.value = false;
-  }
-}
-
-async function handleImportSubmit() {
-  if (!importPlaylistName.value.trim() || !importRawText.value.trim()) return;
-  isImporting.value = true;
-  try {
-    await store.importExternalPlaylist(
-      importPlaylistName.value.trim(),
-      importRawText.value
-    );
-    importPlaylistName.value = "";
-    importRawText.value = "";
-    showImportModal.value = false;
-  } finally {
-    isImporting.value = false;
-  }
-}
-
-function formatDuration(ms: number): string {
-  if (!ms || ms <= 0) return "03:30";
-  const sec = Math.floor(ms / 1000);
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-</script>
-
 <template>
-  <div class="page-scroll-canvas" @click="store.closeSongContextMenu()">
-    <!-- ==================== 子视图 A：歌手主页详情 (ArtistDetailScreen：热门单曲 / 专辑列表 / 歌手百科) ==================== -->
-    <template
-      v-if="store.libraryDetailMode === 'artist' && store.activeArtistDetail"
-    >
-      <div class="subpage-banner">
-        <div class="subpage-top-bar">
-          <button
-            class="tonal-pill-btn"
-            @click="store.libraryDetailMode = 'playlist'"
-          >
-            <PlumpIcon name="back" :size="15" />
-            <span>返回我的音乐</span>
-          </button>
-
-          <div class="pill-tabs">
-            <button
-              class="pill-tab-btn"
-              :class="{ active: store.artistDetailSubTab === 'songs' }"
-              @click="store.artistDetailSubTab = 'songs'"
-            >
-              代表单曲 ({{
-                store.activeArtistDetail.songCount ||
-                store.activeArtistSongs.length
-              }})
-            </button>
-            <button
-              class="pill-tab-btn"
-              :class="{ active: store.artistDetailSubTab === 'albums' }"
-              @click="store.artistDetailSubTab = 'albums'"
-            >
-              发行专辑 ({{
-                store.activeArtistAlbums.length ||
-                store.activeArtistDetail.albumCount ||
-                0
-              }})
-            </button>
-            <button
-              class="pill-tab-btn"
-              :class="{ active: store.artistDetailSubTab === 'about' }"
-              @click="store.artistDetailSubTab = 'about'"
-            >
-              歌手百科简介
-            </button>
-          </div>
-
-          <div
-            v-if="store.artistDetailSubTab === 'songs'"
-            class="pill-tabs"
-          >
-            <button
-              class="pill-tab-btn"
-              :class="{ active: store.artistSongsSort === 'hot' }"
-              @click="
-                store.artistSongsSort = 'hot';
-                store.openArtistDetail(
-                  store.activeArtistDetail!.artistId,
-                  store.activeArtistDetail!.name,
-                  store.activeArtistDetail!.avatarUrl
-                );
-              "
-            >
-              最热
-            </button>
-            <button
-              class="pill-tab-btn"
-              :class="{ active: store.artistSongsSort === 'new' }"
-              @click="
-                store.artistSongsSort = 'new';
-                store.openArtistDetail(
-                  store.activeArtistDetail!.artistId,
-                  store.activeArtistDetail!.name,
-                  store.activeArtistDetail!.avatarUrl
-                );
-              "
-            >
-              最新
-            </button>
-          </div>
-        </div>
-
-        <div class="artist-hero-row">
-          <img
-            v-if="store.activeArtistDetail.avatarUrl"
-            :src="store.activeArtistDetail.avatarUrl"
-            class="artist-hero-avatar"
-          />
-          <div v-else class="artist-hero-avatar fallback">
-            {{ store.activeArtistDetail.name.slice(0, 1) }}
-          </div>
-          <div class="artist-hero-meta">
-            <h2 class="artist-hero-name">{{ store.activeArtistDetail.name }}</h2>
-            <p class="artist-hero-stats">
-              单曲
-              {{
-                store.activeArtistDetail.songCount ||
-                store.activeArtistSongs.length
-              }}
-              首 · 专辑
-              {{
-                store.activeArtistDetail.albumCount ||
-                store.activeArtistAlbums.length ||
-                12
-              }}
-              张 · 粉丝 {{ store.activeArtistDetail.fansCount || "18.6w" }}
-            </p>
-            <p v-if="store.activeArtistDetail.intro" class="artist-hero-intro">
-              {{ store.activeArtistDetail.intro }}
-            </p>
-          </div>
-          <div class="artist-hero-actions">
-            <button
-              class="tonal-pill-btn"
-              :class="{ primary: !store.activeArtistDetail.isFollowed }"
-              @click="store.toggleFollowArtist(store.activeArtistDetail!)"
-            >
-              <PlumpIcon
-                :name="store.activeArtistDetail.isFollowed ? 'check' : 'plus'"
-                :size="15"
-              />
-              <span>
-                {{
-                  store.activeArtistDetail.isFollowed ? "已关注" : "关注歌手"
-                }}
-              </span>
-            </button>
-            <button
-              v-if="store.activeArtistSongs.length > 0"
-              class="coral-play-all-pill sm"
-              @click="
-                store.playSongFromList(
-                  store.activeArtistSongs[0],
-                  store.activeArtistSongs,
-                  store.activeArtistDetail!.name
-                )
-              "
-            >
-              <PlumpIcon name="play" :size="15" color="#ffffff" />
-              <span>播放热门 ({{ store.activeArtistSongs.length }})</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="store.isLoadingArtist" class="loading-box">
-        正在加载歌手代表作品与概念版无损音源规格...
-      </div>
-
-      <!-- 1. 歌手热门单曲 -->
+  <div class="library-page">
+    <!-- ==================== 顶部三张 3D 立体核心快捷卡片（已上移，无冗余顶栏，内部无框沉浸排版） ==================== -->
+    <section class="library-hero-trio">
+      <!-- 1. 我喜欢的音乐 -->
       <div
-        v-else-if="store.artistDetailSubTab === 'songs'"
-        class="dual-column-song-grid"
+        class="lib-stereo-card fav-stereo-card"
+        :class="{ active: rightStageMode === 'liked' }"
+        @click="activateLikedMode"
       >
-        <div
-          v-for="(song, idx) in store.activeArtistSongs"
-          :key="song.hash || idx"
-          class="plump-song-card"
-          :class="{
-            'track-card-playing': store.currentSong?.hash === song.hash,
-          }"
-          @click="
-            store.playSongFromList(
-              song,
-              store.activeArtistSongs,
-              store.activeArtistDetail.name
-            )
-          "
-          @contextmenu="store.openSongContextMenu($event, song)"
-        >
-          <div class="psc-index">{{ String(idx + 1).padStart(2, "0") }}</div>
-          <img v-if="song.coverUrl" :src="song.coverUrl" class="psc-cover" />
-          <div class="psc-main">
-            <div class="psc-title">{{ song.title }}</div>
-            <div class="psc-sub">
-              <span v-if="song.isHiRes" class="mini-badge hires">Hi-Res</span>
-              <span v-else-if="song.isLossless" class="mini-badge sq">SQ</span>
-              <span v-if="song.isVip" class="mini-badge vip">VIP</span>
-              <span>{{ song.artist }}</span>
-              <span v-if="song.album" class="psc-album">· {{ song.album }}</span>
-            </div>
+        <div class="lib-card-glow fav-glow"></div>
+        <div class="lib-card-visual">
+          <div v-if="store.likedSongs[1]?.coverUrl" class="lib-visual-back">
+            <img :src="store.likedSongs[1].coverUrl" alt="" />
           </div>
-          <div class="psc-actions" @click.stop>
-            <button
-              class="psc-act-btn"
-              title="喜欢"
-              @click="store.toggleFavoriteSong(song)"
-            >
-              <PlumpIcon
-                name="heart"
-                :size="15"
-                :filled="store.isSongLiked(song)"
-                :color="store.isSongLiked(song) ? '#ff4d6d' : 'currentColor'"
-              />
-            </button>
-            <button
-              class="psc-act-btn"
-              title="添加到歌单"
-              @click="store.addToPlaylistModalSong = song"
-            >
-              <PlumpIcon name="playlist-add" :size="15" />
-            </button>
-            <button
-              class="psc-act-btn"
-              title="更多操作"
-              @click="store.openSongContextMenu($event, song)"
-            >
-              <PlumpIcon name="more" :size="15" />
-            </button>
-          </div>
-          <div class="psc-dur">{{ formatDuration(song.durationMs) }}</div>
-        </div>
-      </div>
-
-      <!-- 2. 歌手发行专辑网格 -->
-      <div
-        v-else-if="store.artistDetailSubTab === 'albums'"
-        class="album-cards-grid"
-      >
-        <div
-          v-if="store.activeArtistAlbums.length === 0"
-          class="empty-box"
-          style="grid-column: 1 / -1"
-        >
-          暂未获取到该歌手的独立数字专辑列表
-        </div>
-        <div
-          v-for="alb in store.activeArtistAlbums"
-          :key="alb.albumId"
-          class="plump-album-card"
-          @click="
-            store.openAlbumDetail(
-              alb.albumId,
-              alb.albumName,
-              alb.artistName || store.activeArtistDetail.name,
-              alb.coverUrl
-            )
-          "
-        >
-          <img v-if="alb.coverUrl" :src="alb.coverUrl" class="palb-cover" />
-          <div class="palb-info">
-            <div class="palb-name">{{ alb.albumName }}</div>
-            <div class="palb-sub">
-              {{ alb.publishDate || "数字发行" }} · {{ alb.songCount || 10 }} 首
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 3. 歌手百科长简介 -->
-      <div v-else class="settings-card-panel">
-        <h3>关于 {{ store.activeArtistDetail.name }}</h3>
-        <p
-          style="
-            font-size: 13.5px;
-            line-height: 1.75;
-            color: var(--text-secondary);
-            white-space: pre-wrap;
-            margin-top: 10px;
-          "
-        >
-          {{
-            store.activeArtistDetail.intro ||
-            "酷狗概念版官方音乐人，收录高解析度 Hi-Res 与 SQ 无损母带作品。"
-          }}
-        </p>
-      </div>
-    </template>
-
-    <!-- ==================== 子视图 B：专辑详情页 (AlbumDetailScreen) ==================== -->
-    <template
-      v-else-if="store.libraryDetailMode === 'album' && store.activeAlbumDetail"
-    >
-      <div class="subpage-banner">
-        <div class="subpage-top-bar">
-          <button
-            class="tonal-pill-btn"
-            @click="store.libraryDetailMode = 'playlist'"
-          >
-            <PlumpIcon name="back" :size="15" />
-            <span>返回我的音乐</span>
-          </button>
-        </div>
-
-        <div class="artist-hero-row">
-          <img
-            v-if="store.activeAlbumDetail.coverUrl"
-            :src="store.activeAlbumDetail.coverUrl"
-            class="album-hero-cover"
-          />
-          <div class="artist-hero-meta">
-            <h2 class="artist-hero-name">
-              {{ store.activeAlbumDetail.albumName }}
-            </h2>
-            <p class="artist-hero-stats">
-              歌手：{{ store.activeAlbumDetail.artistName || "群星" }} ·
-              发行日期：{{
-                store.activeAlbumDetail.publishDate || "数字正版"
-              }}
-              · 出品：{{
-                store.activeAlbumDetail.publishCompany || "概念版正版曲库"
-              }}
-              · 共 {{ store.activeAlbumSongs.length }} 首曲目
-            </p>
-            <p v-if="store.activeAlbumDetail.intro" class="artist-hero-intro">
-              {{ store.activeAlbumDetail.intro }}
-            </p>
-          </div>
-          <button
-            v-if="store.activeAlbumSongs.length > 0"
-            class="coral-play-all-pill sm"
-            @click="
-              store.playSongFromList(
-                store.activeAlbumSongs[0],
-                store.activeAlbumSongs,
-                store.activeAlbumDetail!.albumName
-              )
-            "
-          >
-            <PlumpIcon name="play" :size="15" color="#ffffff" />
-            <span>播放整张专辑 ({{ store.activeAlbumSongs.length }})</span>
-          </button>
-        </div>
-      </div>
-
-      <div v-if="store.isLoadingAlbum" class="loading-box">
-        正在解析专辑曲目与无损音质标签...
-      </div>
-      <div v-else class="dual-column-song-grid">
-        <div
-          v-for="(song, idx) in store.activeAlbumSongs"
-          :key="song.hash || idx"
-          class="plump-song-card"
-          :class="{
-            'track-card-playing': store.currentSong?.hash === song.hash,
-          }"
-          @click="
-            store.playSongFromList(
-              song,
-              store.activeAlbumSongs,
-              store.activeAlbumDetail.albumName
-            )
-          "
-          @contextmenu="store.openSongContextMenu($event, song)"
-        >
-          <div class="psc-index">{{ String(idx + 1).padStart(2, "0") }}</div>
-          <img v-if="song.coverUrl" :src="song.coverUrl" class="psc-cover" />
-          <div class="psc-main">
-            <div class="psc-title">{{ song.title }}</div>
-            <div class="psc-sub">
-              <span v-if="song.isHiRes" class="mini-badge hires">Hi-Res</span>
-              <span v-else-if="song.isLossless" class="mini-badge sq">SQ</span>
-              <span v-if="song.isVip" class="mini-badge vip">VIP</span>
-              <span>{{ song.artist }}</span>
-            </div>
-          </div>
-          <div class="psc-actions" @click.stop>
-            <button
-              class="psc-act-btn"
-              title="喜欢"
-              @click="store.toggleFavoriteSong(song)"
-            >
-              <PlumpIcon
-                name="heart"
-                :size="15"
-                :filled="store.isSongLiked(song)"
-                :color="store.isSongLiked(song) ? '#ff4d6d' : 'currentColor'"
-              />
-            </button>
-            <button
-              class="psc-act-btn"
-              title="添加到歌单"
-              @click="store.addToPlaylistModalSong = song"
-            >
-              <PlumpIcon name="playlist-add" :size="15" />
-            </button>
-          </div>
-          <div class="psc-dur">{{ formatDuration(song.durationMs) }}</div>
-        </div>
-      </div>
-    </template>
-
-    <!-- ==================== 主视图：我的音乐资产与数字名片中心 ==================== -->
-    <template v-else>
-      <header class="discover-top-header">
-        <div>
-          <h1 class="discover-main-title">我的音乐资产</h1>
-          <div class="discover-greeting-line">
-            <span class="greeting-dot"></span>
-            <span>云端歌单、听歌等级、关注歌手与数字专辑实时双向同步</span>
-          </div>
-        </div>
-
-        <div v-if="store.isLoggedIn" class="discover-header-actions">
-          <button
-            class="tonal-pill-btn"
-            @click="store.refreshAccountAndVip(false)"
-          >
-            <PlumpIcon
-              name="refresh"
-              :size="15"
-              :class="{ 'spin-icon': store.isLoadingLibrary }"
+          <div class="lib-visual-front">
+            <img
+              v-if="store.likedSongs[0]?.coverUrl"
+              :src="store.likedSongs[0].coverUrl"
+              alt=""
             />
-            <span>同步云端资产</span>
-          </button>
-          <button
-            class="tonal-pill-btn"
-            @click="store.isLoginModalOpen = true"
-          >
-            <span>切换账号</span>
-          </button>
+            <div class="lib-visual-badge coral">
+              <PlumpIcon name="heart-filled" :size="20" color="#fff" />
+            </div>
+          </div>
         </div>
-      </header>
 
-      <!-- 未登录引导卡片 -->
-      <div v-if="!store.isLoggedIn" class="unauth-bento-card">
-        <div class="unauth-bento-inner">
-          <PlumpIcon name="crown" :size="36" color="#ffd54f" />
-          <h3>登录酷狗概念版账号</h3>
-          <p>
-            支持酷狗 App 扫码登录与手机验证码登录（含同手机号多账号切换）。登录后自动同步「我喜欢的音乐」、云端歌单、关注歌手、已购数字专辑及听歌等级时长，并解锁每日免费概念版 VIP。
+        <div class="lib-card-copy">
+          <span class="lib-card-eyebrow">MY FAVORITES · 红心珍藏</span>
+          <div class="lib-card-title-row">
+            <h3 class="lib-card-title">我喜欢的音乐</h3>
+            <span class="lib-card-count">{{ store.likedSongs.length }} 首</span>
+          </div>
+          <p class="lib-card-preview">
+            <template v-if="store.likedSongs[0]">
+              ♪ {{ store.likedSongs[0].title }} - {{ store.likedSongs[0].artist }}
+            </template>
+            <template v-else>
+              双端实时同步红心曲库 · 珍藏每一份心动旋律
+            </template>
           </p>
-          <button class="primary-btn" @click="store.isLoginModalOpen = true">
-            <PlumpIcon name="crown" :size="16" color="#ffffff" />
-            <span>立即登录账号</span>
-          </button>
         </div>
+
+        <button
+          class="lib-card-play-fab coral"
+          title="立即播放我喜欢的音乐"
+          @click.stop="playAllLiked"
+        >
+          <PlumpIcon name="play" :size="19" color="#fff" />
+        </button>
       </div>
 
-      <template v-else>
-        <!-- 上层：快捷三联胶囊矩阵（我喜欢的音乐 + 最近播放 + 概念胶囊 Focus Pod 心流舱） -->
-        <section class="library-shortcut-trio">
-          <div
-            class="lib-shortcut-card liked-card"
-            :class="{ active: store.libraryAssetTab === 'liked' }"
-            @click="openLikedSongs"
-          >
-            <div class="sc-top">
-              <div class="sc-icon-circle red">
-                <PlumpIcon name="heart-filled" :size="20" color="#ff4d6d" />
-              </div>
-              <span class="sc-pill-tag">红心同步</span>
-            </div>
-            <div class="sc-bottom">
-              <div class="sc-title">我喜欢的音乐</div>
-              <div class="sc-count">
-                {{
-                  Math.max(
-                    store.likedPlaylistMeta?.trackCount || 0,
-                    store.likedSongs.length
-                  )
-                }}
-                首珍藏曲目
-              </div>
+      <!-- 2. 最近播放 -->
+      <div
+        class="lib-stereo-card recent-stereo-card"
+        :class="{ active: rightStageMode === 'recent' }"
+        @click="activateRecentMode"
+      >
+        <div class="lib-card-glow recent-glow"></div>
+        <div class="lib-card-visual">
+          <div v-if="store.recentHistorySongs[1]?.coverUrl" class="lib-visual-back">
+            <img :src="store.recentHistorySongs[1].coverUrl" alt="" />
+          </div>
+          <div class="lib-visual-front">
+            <img
+              v-if="store.recentHistorySongs[0]?.coverUrl"
+              :src="store.recentHistorySongs[0].coverUrl"
+              alt=""
+            />
+            <div class="lib-visual-badge blue">
+              <PlumpIcon name="clock" :size="20" color="#fff" />
             </div>
           </div>
+        </div>
 
-          <div
-            class="lib-shortcut-card recent-card"
-            :class="{ active: store.libraryAssetTab === 'recent' }"
-            @click="openRecentSongs"
-          >
-            <div class="sc-top">
-              <div class="sc-icon-circle cyan">
-                <PlumpIcon name="history" :size="20" color="#00e5ff" />
-              </div>
-              <span class="sc-pill-tag">多端漫游</span>
-            </div>
-            <div class="sc-bottom">
-              <div class="sc-title">最近播放</div>
-              <div class="sc-count">
-                {{ store.recentHistorySongs.length }} 首聆听足迹
-              </div>
-            </div>
+        <div class="lib-card-copy">
+          <span class="lib-card-eyebrow">RECENT FOOTPRINTS · 听歌足迹</span>
+          <div class="lib-card-title-row">
+            <h3 class="lib-card-title">最近播放</h3>
+            <span class="lib-card-count">{{ store.recentHistorySongs.length }} 首</span>
           </div>
+          <p class="lib-card-preview">
+            <template v-if="store.recentHistorySongs[0]">
+              ♪ {{ store.recentHistorySongs[0].title }} - {{ store.recentHistorySongs[0].artist }}
+            </template>
+            <template v-else>
+              自动记录本机与云端最近播放曲目与频次
+            </template>
+          </p>
+        </div>
 
-          <div
-            class="lib-shortcut-card focus-card"
-            @click="store.isFocusPodOpen = true"
-          >
-            <div class="sc-top">
-              <div class="sc-icon-circle violet">
-                <PlumpIcon
-                  name="timer"
-                  :size="20"
-                  color="#b388ff"
-                  accent="#00e5ff"
-                />
-              </div>
-              <span class="sc-pill-tag violet">开启心流 &gt;</span>
-            </div>
-            <div class="sc-bottom">
-              <div class="sc-title">概念胶囊 · Focus Pod</div>
-              <div class="sc-count">番茄钟专注计时 × 4 路实时白噪音混音</div>
-            </div>
+        <button
+          class="lib-card-play-fab blue"
+          title="立即播放最近听过"
+          @click.stop="playAllRecent"
+        >
+          <PlumpIcon name="play" :size="19" color="#fff" />
+        </button>
+      </div>
+
+      <!-- 3. 心流舱 · Focus Pod -->
+      <div
+        class="lib-stereo-card focus-stereo-card"
+        @click="store.isFocusPodOpen = true"
+      >
+        <div class="lib-card-glow focus-glow"></div>
+        <div class="lib-card-visual">
+          <div class="lib-visual-front focus-orb-visual">
+            <div class="focus-orb-ring"></div>
+            <PlumpIcon name="sparkle" :size="26" color="#fff" />
           </div>
-        </section>
+        </div>
 
-        <!-- 下层：开放式音乐资产滑块导航栏（自建 / 收藏 / 关注 / 已购 / 我喜欢 / 最近） -->
-        <section class="library-explorer-section">
-          <div class="explorer-tabs-bar">
-            <div class="explorer-tabs-left">
-              <button
-                class="exp-tab"
-                :class="{ active: store.libraryAssetTab === 'created' }"
-                @click="
-                  store.libraryAssetTab = 'created';
-                  if (
-                    store.selectedPlaylist?.isLiked &&
-                    store.createdPlaylists.length > 0
-                  ) {
-                    store.selectPlaylist(store.createdPlaylists[0]);
-                  }
-                "
-              >
-                自建歌单 <span>{{ store.createdPlaylists.length }}</span>
-              </button>
-              <button
-                class="exp-tab"
-                :class="{ active: store.libraryAssetTab === 'collected' }"
-                @click="
-                  store.libraryAssetTab = 'collected';
-                  if (store.collectedPlaylists.length > 0) {
-                    store.selectPlaylist(store.collectedPlaylists[0]);
-                  }
-                "
-              >
-                收藏歌单 <span>{{ store.collectedPlaylists.length }}</span>
-              </button>
-              <button
-                class="exp-tab"
-                :class="{ active: store.libraryAssetTab === 'followed' }"
-                @click="
-                  store.libraryAssetTab = 'followed';
-                  store.followedArtists.length === 0 &&
-                    store.loadFollowedArtists();
-                "
-              >
-                关注歌手 <span>{{ store.followedArtists.length }}</span>
-              </button>
-              <button
-                class="exp-tab"
-                :class="{ active: store.libraryAssetTab === 'purchased' }"
-                @click="
-                  store.libraryAssetTab = 'purchased';
-                  store.purchasedAlbums.length === 0 &&
-                    store.loadPurchasedAssets();
-                "
-              >
-                已购音乐
-                <span>
-                  {{
-                    store.purchasedAlbums.length + store.purchasedSongs.length
-                  }}
-                </span>
-              </button>
-              <button
-                class="exp-tab"
-                :class="{ active: store.libraryAssetTab === 'liked' }"
-                @click="openLikedSongs"
-              >
-                我喜欢
-                <span>
-                  {{
-                    Math.max(
-                      store.likedPlaylistMeta?.trackCount || 0,
-                      store.likedSongs.length
-                    )
-                  }}
-                </span>
-              </button>
-              <button
-                class="exp-tab"
-                :class="{ active: store.libraryAssetTab === 'recent' }"
-                @click="openRecentSongs"
-              >
-                最近 <span>{{ store.recentHistorySongs.length }}</span>
-              </button>
-            </div>
-
-            <!-- 右侧随当前资产 Tab 动态显示的软润无框工具按钮 -->
-            <div class="explorer-tabs-tools">
-              <template v-if="store.libraryAssetTab === 'created'">
-                <button
-                  class="tonal-pill-btn sm"
-                  title="新建自定义歌单"
-                  @click="showCreateModal = true"
-                >
-                  <PlumpIcon name="plus" :size="14" color="var(--cyan)" />
-                  <span>新建歌单</span>
-                </button>
-                <button
-                  class="tonal-pill-btn sm"
-                  title="批量匹配导入外部歌单"
-                  @click="showImportModal = true"
-                >
-                  <PlumpIcon name="upload" :size="14" />
-                  <span>导入外部歌单</span>
-                </button>
-              </template>
-              <button
-                v-if="
-                  store.libraryAssetTab === 'created' ||
-                  store.libraryAssetTab === 'collected'
-                "
-                class="tonal-pill-btn sm"
-                :title="
-                  store.isLibraryGridView ? '切换为紧凑列表' : '切换为双列网格'
-                "
-                @click="store.isLibraryGridView = !store.isLibraryGridView"
-              >
-                <PlumpIcon
-                  :name="store.isLibraryGridView ? 'list' : 'grid'"
-                  :size="14"
-                />
-              </button>
-            </div>
+        <div class="lib-card-copy">
+          <span class="lib-card-eyebrow">FOCUS POD · 概念心流舱</span>
+          <div class="lib-card-title-row">
+            <h3 class="lib-card-title">心流舱</h3>
+            <span class="lib-card-count">番茄钟 × 白噪音</span>
           </div>
+          <p class="lib-card-preview">
+            雨声 / 篝火 / 咖啡馆环境音混音 · 打造沉浸式专注声场
+          </p>
+        </div>
 
-          <!-- 分支 1：关注歌手画廊网格 (followedArtists) -->
-          <div
-            v-if="store.libraryAssetTab === 'followed'"
-            class="followed-artists-stage"
-          >
-            <div
-              v-if="store.followedArtists.length === 0"
-              class="empty-box"
+        <button
+          class="lib-card-play-fab mint"
+          title="开启概念心流舱"
+          @click.stop="store.isFocusPodOpen = true"
+        >
+          <PlumpIcon name="compass" :size="19" color="#fff" />
+        </button>
+      </div>
+    </section>
+
+    <!-- ==================== 下方左右分栏：左侧【自建/收藏/关注/已购 标题+内容整体面板】 vs 右侧【无框歌曲列表】 ==================== -->
+    <section class="library-split-workspace">
+      <!-- 左侧整体面板：左上角分类标题严格沿用 App 端设计（含底部滑动横条），右上角新建/导入用纯 UI 图标显示 -->
+      <aside class="library-left-unified-panel">
+        <div class="lib-left-header">
+          <div class="app-sliding-tabs lib-asset-sliding-tabs">
+            <button
+              v-for="tab in assetTabs"
+              :key="tab.id"
+              class="app-sliding-tab-btn"
+              :class="{ active: store.libraryAssetTab === tab.id }"
+              @click="handleSelectAssetTab(tab.id)"
             >
-              <PlumpIcon name="compass" :size="32" />
-              <p>暂未获取到已关注的歌手，可在搜索或播放页点击歌手名字添加关注</p>
+              <span class="tab-label">{{ tab.label }}</span>
+              <span class="tab-count">{{ tab.count }}</span>
+              <span
+                class="tab-bottom-indicator"
+                :style="{
+                  backgroundColor: tab.color,
+                  opacity: store.libraryAssetTab === tab.id ? 1 : 0,
+                  transform: store.libraryAssetTab === tab.id ? 'scaleX(1)' : 'scaleX(0.2)',
+                }"
+              ></span>
+            </button>
+          </div>
+
+          <!-- 右上角：新建歌单、导入外部歌单、视图切换 纯 UI 图标按钮 -->
+          <div class="lib-left-icon-tools">
+            <button
+              class="frameless-icon-square-btn"
+              title="新建自建歌单"
+              @click="openCreateModal"
+            >
+              <PlumpIcon name="plus" :size="17" />
+            </button>
+            <button
+              class="frameless-icon-square-btn"
+              title="导入外部歌单链接或酷狗歌单码"
+              @click="openImportModal"
+            >
+              <PlumpIcon name="upload" :size="17" />
+            </button>
+            <button
+              v-if="store.libraryAssetTab === 'created' || store.libraryAssetTab === 'collected'"
+              class="frameless-icon-square-btn"
+              :title="store.isLibraryGridView ? '切换为紧凑列表' : '切换为封面宫格'"
+              @click="store.isLibraryGridView = !store.isLibraryGridView"
+            >
+              <PlumpIcon :name="store.isLibraryGridView ? 'list' : 'grid'" :size="17" />
+            </button>
+          </div>
+        </div>
+
+        <!-- 左面板下方内容区（与上方四个分类标题融为一个整体） -->
+        <div class="lib-left-body">
+          <!-- A. 自建歌单 / 收藏歌单 -->
+          <template v-if="store.libraryAssetTab === 'created' || store.libraryAssetTab === 'collected'">
+            <div v-if="activePlaylistGroup.length === 0" class="lib-left-empty">
+              <PlumpIcon name="folder" :size="28" />
+              <p>{{ store.libraryAssetTab === "created" ? "暂无自建歌单，点击右上角 + 新建" : "暂无收藏歌单，点击右上角图标可导入" }}</p>
             </div>
 
-            <div v-else class="artist-cards-grid">
+            <!-- 宫格模式 -->
+            <div v-else-if="store.isLibraryGridView" class="lib-playlist-grid">
+              <div
+                v-for="pl in activePlaylistGroup"
+                :key="pl.id"
+                class="lib-pl-grid-item"
+                :class="{ active: rightStageMode === 'playlist' && store.selectedPlaylist?.id === pl.id }"
+                @click="selectPlaylistToRight(pl)"
+              >
+                <div class="lib-pl-cover-wrap">
+                  <img :src="pl.coverUrl" class="lib-pl-cover" loading="lazy" alt="" />
+                  <span class="lib-pl-count-tag">{{ pl.trackCount }}首</span>
+                </div>
+                <div class="lib-pl-name">{{ pl.name }}</div>
+              </div>
+            </div>
+
+            <!-- 列表模式 -->
+            <div v-else class="lib-playlist-list">
+              <div
+                v-for="pl in activePlaylistGroup"
+                :key="pl.id"
+                class="lib-pl-row-item"
+                :class="{ active: rightStageMode === 'playlist' && store.selectedPlaylist?.id === pl.id }"
+                @click="selectPlaylistToRight(pl)"
+              >
+                <img :src="pl.coverUrl" class="lib-pl-row-cover" loading="lazy" alt="" />
+                <div class="lib-pl-row-meta">
+                  <div class="lib-pl-row-name">{{ pl.name }}</div>
+                  <div class="lib-pl-row-sub">
+                    {{ pl.trackCount }} 首 · {{ pl.creatorName || "概念版歌单" }}
+                  </div>
+                </div>
+                <button
+                  v-if="store.libraryAssetTab === 'created' && pl.listId > 0"
+                  class="frameless-icon-square-btn danger-hover"
+                  title="删除歌单"
+                  @click.stop="confirmDeletePlaylist(pl)"
+                >
+                  <PlumpIcon name="trash" :size="14" />
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- B. 关注歌手列表 -->
+          <template v-else-if="store.libraryAssetTab === 'artists'">
+            <div v-if="store.followedArtists.length === 0" class="lib-left-empty">
+              <PlumpIcon name="user" :size="28" />
+              <p>暂无关注的歌手</p>
+            </div>
+            <div v-else class="lib-playlist-list">
               <div
                 v-for="art in store.followedArtists"
-                :key="art.artistId"
-                class="plump-artist-card"
-                @click="
-                  store.openArtistDetail(art.artistId, art.name, art.avatarUrl)
-                "
+                :key="art.singerId"
+                class="lib-pl-row-item"
+                :class="{ active: rightStageMode === 'artist' && store.activeArtistDetail?.singerId === art.singerId }"
+                @click="selectArtistToRight(art)"
               >
-                <img
-                  v-if="art.avatarUrl"
-                  :src="art.avatarUrl"
-                  class="pac-avatar"
-                />
-                <div v-else class="pac-avatar fallback">
-                  {{ art.name.slice(0, 1) }}
-                </div>
-                <div class="pac-info">
-                  <div class="pac-name">{{ art.name }}</div>
-                  <div class="pac-sub">
-                    单曲 {{ art.songCount }} 首 · 专辑 {{ art.albumCount }} 张
+                <img :src="art.avatarUrl" class="lib-pl-row-cover round" loading="lazy" alt="" />
+                <div class="lib-pl-row-meta">
+                  <div class="lib-pl-row-name">{{ art.name }}</div>
+                  <div class="lib-pl-row-sub">
+                    {{ art.albumCount ? `${art.albumCount} 张专辑` : "已关注音乐人" }}
                   </div>
                 </div>
-                <button
-                  class="tonal-pill-btn sm"
-                  @click.stop="store.toggleFollowArtist(art)"
-                >
-                  {{ art.isFollowed ? "已关注" : "关注" }}
-                </button>
+                <PlumpIcon name="chevron-right" :size="14" />
               </div>
             </div>
-          </div>
+          </template>
 
-          <!-- 分支 2：已购数字专辑与已购单曲 (purchasedAlbums & purchasedSongs) -->
-          <div
-            v-else-if="store.libraryAssetTab === 'purchased'"
-            class="purchased-assets-stage"
-          >
+          <!-- C. 已购数字专辑与单曲 -->
+          <template v-else-if="store.libraryAssetTab === 'purchased'">
             <div
-              v-if="
-                store.purchasedAlbums.length === 0 &&
-                store.purchasedSongs.length === 0
-              "
-              class="empty-box"
+              v-if="store.purchasedAlbums.length === 0 && store.purchasedSongs.length === 0"
+              class="lib-left-empty"
             >
-              <PlumpIcon name="disc" :size="32" />
-              <p>当前账号暂无已购数字专辑或单曲资产</p>
+              <PlumpIcon name="disc" :size="28" />
+              <p>暂无已购数字专辑或单曲</p>
             </div>
-
-            <template v-else>
-              <div v-if="store.purchasedAlbums.length > 0" class="mb-18">
-                <h4 class="sub-sec-title">
-                  数字专辑 · {{ store.purchasedAlbums.length }}
-                </h4>
-                <div class="album-cards-grid">
-                  <div
-                    v-for="alb in store.purchasedAlbums"
-                    :key="alb.albumId"
-                    class="plump-album-card"
-                    @click="
-                      store.openAlbumDetail(
-                        alb.albumId,
-                        alb.albumName,
-                        alb.artistName,
-                        alb.coverUrl
-                      )
-                    "
-                  >
-                    <img
-                      v-if="alb.coverUrl"
-                      :src="alb.coverUrl"
-                      class="palb-cover"
-                    />
-                    <div class="palb-info">
-                      <div class="palb-name">{{ alb.albumName }}</div>
-                      <div class="palb-sub">
-                        {{ alb.artistName }} · {{ alb.songCount }} 首
-                      </div>
-                    </div>
-                  </div>
+            <div v-else class="lib-playlist-list">
+              <div
+                v-if="store.purchasedSongs.length > 0"
+                class="lib-pl-row-item"
+                :class="{ active: rightStageMode === 'purchased_songs' }"
+                @click="rightStageMode = 'purchased_songs'"
+              >
+                <div class="lib-purchased-icon-cover">
+                  <PlumpIcon name="sparkle" :size="20" color="#fff" />
+                </div>
+                <div class="lib-pl-row-meta">
+                  <div class="lib-pl-row-name">已购尊享单曲合集</div>
+                  <div class="lib-pl-row-sub">共 {{ store.purchasedSongs.length }} 首已购曲目</div>
                 </div>
               </div>
 
-              <div v-if="store.purchasedSongs.length > 0">
-                <h4 class="sub-sec-title">
-                  已购单曲 · {{ store.purchasedSongs.length }}
-                </h4>
-                <div class="dual-column-song-grid">
-                  <div
-                    v-for="(item, idx) in store.purchasedSongs"
-                    :key="item.song.hash || idx"
-                    class="plump-song-card"
-                    @click="
-                      store.playSongFromList(
-                        item.song,
-                        store.purchasedSongs.map((p) => p.song),
-                        '已购单曲'
-                      )
-                    "
-                    @contextmenu="store.openSongContextMenu($event, item.song)"
-                  >
-                    <img
-                      v-if="item.song.coverUrl"
-                      :src="item.song.coverUrl"
-                      class="psc-cover"
-                    />
-                    <div class="psc-main">
-                      <div class="psc-title">{{ item.song.title }}</div>
-                      <div class="psc-sub">
-                        <span v-if="item.song.isHiRes" class="mini-badge hires">
-                          Hi-Res
-                        </span>
-                        <span
-                          v-else-if="item.song.isLossless"
-                          class="mini-badge sq"
-                        >
-                          SQ
-                        </span>
-                        <span>{{ item.song.artist }}</span>
-                      </div>
-                    </div>
-                    <div class="psc-dur">
-                      {{ formatDuration(item.song.durationMs) }}
-                    </div>
-                  </div>
+              <div
+                v-for="alb in store.purchasedAlbums"
+                :key="alb.id"
+                class="lib-pl-row-item"
+                :class="{ active: rightStageMode === 'album' && store.activeAlbumDetail?.albumId === alb.id }"
+                @click="selectPurchasedAlbumToRight(alb)"
+              >
+                <img :src="alb.coverUrl" class="lib-pl-row-cover" loading="lazy" alt="" />
+                <div class="lib-pl-row-meta">
+                  <div class="lib-pl-row-name">{{ alb.albumName }}</div>
+                  <div class="lib-pl-row-sub">{{ alb.singerName }} · {{ alb.songCount }} 首</div>
                 </div>
               </div>
-            </template>
+            </div>
+          </template>
+        </div>
+      </aside>
+
+      <!-- 右侧歌曲列表舞台：与左侧留出明显间隔区分左右，且歌曲列表部分全面采用无框设计 -->
+      <main class="library-right-frameless-stage">
+        <!-- 右侧顶部无框歌单/曲库信息栏 -->
+        <div class="lib-right-frameless-header">
+          <div class="lrf-info-left">
+            <img
+              v-if="rightStageCover"
+              :src="rightStageCover"
+              class="lrf-cover"
+              :class="{ round: rightStageMode === 'artist' }"
+              alt=""
+            />
+            <div class="lrf-title-block">
+              <div class="lrf-eyebrow">{{ rightStageEyebrow }}</div>
+              <div class="lrf-title-row">
+                <h2 class="lrf-title">{{ rightStageTitle }}</h2>
+                <span class="lrf-count">{{ rightStageSongs.length }} 首曲目</span>
+              </div>
+              <p v-if="rightStageSubtitle" class="lrf-sub">{{ rightStageSubtitle }}</p>
+            </div>
           </div>
 
-          <!-- 分支 3：自建歌单 / 收藏歌单 / 我喜欢 / 最近播放（左窄右宽同屏展开工作台） -->
-          <div v-else class="explorer-workspace">
-            <!-- 左栏：歌单胶片画廊（当处于自建或收藏 Tab 时展示） -->
-            <div
-              v-if="
-                store.libraryAssetTab === 'created' ||
-                store.libraryAssetTab === 'collected'
-              "
-              class="explorer-playlists-col"
-              :class="{ 'grid-mode': store.isLibraryGridView }"
+          <div class="lrf-actions-right">
+            <div class="frameless-sublist-search">
+              <PlumpIcon name="search" :size="15" />
+              <input
+                v-model="songFilterKw"
+                type="text"
+                placeholder="筛选歌名 / 歌手 / 专辑..."
+              />
+              <button v-if="songFilterKw" class="clear-inline-btn" @click="songFilterKw = ''">
+                ×
+              </button>
+            </div>
+
+            <button
+              v-if="isCurrentSongInRightStage"
+              class="frameless-hover-btn"
+              title="定位到当前正在播放的歌曲"
+              @click="scrollToPlayingSongInLibrary"
             >
-              <!-- 置顶展示「我喜欢」以便在自建歌单列随时切回 -->
-              <div
-                v-if="
-                  store.libraryAssetTab === 'created' && store.likedPlaylistMeta
-                "
-                class="exp-playlist-item"
-                :class="{
-                  active:
-                    store.selectedPlaylist?.id === store.likedPlaylistMeta.id,
-                }"
-                @click="store.selectPlaylist(store.likedPlaylistMeta)"
-              >
-                <img
-                  v-if="store.likedPlaylistMeta.coverUrl"
-                  :src="store.likedPlaylistMeta.coverUrl"
-                  class="exp-pl-cover"
-                />
-                <div v-else class="exp-pl-cover-fallback">
-                  <PlumpIcon name="heart-filled" :size="20" color="#ff4d6d" />
-                </div>
-                <div class="exp-pl-info">
-                  <div class="exp-pl-title">
-                    {{ store.likedPlaylistMeta.title }}
-                  </div>
-                  <div class="exp-pl-sub">
-                    {{
-                      Math.max(
-                        store.likedPlaylistMeta.trackCount,
-                        store.likedSongs.length
-                      )
-                    }}
-                    首歌曲
-                  </div>
-                </div>
-              </div>
+              <PlumpIcon name="compass" :size="16" />
+              <span>定位播放</span>
+            </button>
 
-              <div
-                v-for="pl in store.libraryAssetTab === 'created'
-                  ? store.createdPlaylists
-                  : store.collectedPlaylists"
-                :key="pl.id"
-                class="exp-playlist-item"
-                :class="{ active: store.selectedPlaylist?.id === pl.id }"
-                @click="store.selectPlaylist(pl)"
-              >
-                <img
-                  v-if="pl.coverUrl"
-                  :src="pl.coverUrl"
-                  class="exp-pl-cover"
-                  loading="lazy"
-                />
-                <div v-else class="exp-pl-cover-fallback">
-                  <PlumpIcon name="disc" :size="20" />
-                </div>
-                <div class="exp-pl-info">
-                  <div class="exp-pl-title" :title="pl.title">
-                    {{ pl.title }}
-                  </div>
-                  <div class="exp-pl-sub">{{ pl.trackCount }} 首歌曲</div>
-                </div>
-                <button
-                  v-if="pl.isCreatedByMe && !pl.isLiked && pl.listId"
-                  class="exp-pl-del-btn"
-                  title="删除该自建歌单"
-                  @click.stop="store.deletePlaylist(pl)"
-                >
-                  <PlumpIcon name="close" :size="12" />
-                </button>
-              </div>
-            </div>
-
-            <!-- 右栏：当前选中歌单 / 我喜欢 / 最近播放的双列曲目流 -->
-            <div class="explorer-tracks-col">
-              <div class="exp-tracks-header">
-                <div class="eth-left">
-                  <img
-                    v-if="
-                      store.libraryAssetTab !== 'liked' &&
-                      store.libraryAssetTab !== 'recent' &&
-                      store.selectedPlaylist?.coverUrl
-                    "
-                    :src="store.selectedPlaylist.coverUrl"
-                    class="eth-cover"
-                  />
-                  <div>
-                    <h3 class="exp-tracks-title">{{ activeListTitle }}</h3>
-                    <span class="exp-tracks-count">
-                      共 {{ rawActiveListCount }} 首曲目（已加载
-                      {{ activeListSongs.length }} 首无损与高品曲目）
-                    </span>
-                  </div>
-                </div>
-
-                <div class="eth-actions">
-                  <!-- 歌单内歌曲快速检索过滤框 -->
-                  <div class="rank-search-box" style="max-width: 220px; height: 34px">
-                    <PlumpIcon
-                      name="search"
-                      :size="14"
-                      color="var(--text-secondary)"
-                    />
-                    <input
-                      v-model="trackFilterKeyword"
-                      type="text"
-                      placeholder="筛选歌单内歌曲..."
-                      class="rank-search-input"
-                    />
-                  </div>
-
-                  <button
-                    class="tonal-pill-btn sm"
-                    title="定位到当前正在播放的歌曲"
-                    @click="locateCurrentPlayingSong"
-                  >
-                    <PlumpIcon name="locate" :size="14" />
-                    <span>定位播放</span>
-                  </button>
-
-                  <button
-                    v-if="
-                      store.selectedPlaylist &&
-                      !store.selectedPlaylist.isCreatedByMe &&
-                      store.libraryAssetTab !== 'liked' &&
-                      store.libraryAssetTab !== 'recent'
-                    "
-                    class="tonal-pill-btn sm"
-                    @click="store.toggleCollectPlaylist(store.selectedPlaylist)"
-                  >
-                    <PlumpIcon
-                      name="heart"
-                      :size="15"
-                      :filled="
-                        store.isPlaylistCollected(store.selectedPlaylist)
-                      "
-                      :color="
-                        store.isPlaylistCollected(store.selectedPlaylist)
-                          ? '#ff4d6d'
-                          : 'currentColor'
-                      "
-                    />
-                    <span>
-                      {{
-                        store.isPlaylistCollected(store.selectedPlaylist)
-                          ? "已收藏"
-                          : "收藏歌单"
-                      }}
-                    </span>
-                  </button>
-
-                  <button
-                    v-if="activeListSongs.length > 0"
-                    class="coral-play-all-pill sm"
-                    @click="
-                      store.playSongFromList(
-                        activeListSongs[0],
-                        activeListSongs,
-                        activeListTitle
-                      )
-                    "
-                  >
-                    <PlumpIcon name="play" :size="15" color="#ffffff" />
-                    <span>播放全部 ({{ activeListSongs.length }})</span>
-                  </button>
-                </div>
-              </div>
-
-              <div v-if="store.isLoadingLibrary" class="loading-box">
-                正在同步云端全量曲目与概念版无损音源规格...
-              </div>
-
-              <div
-                v-else-if="activeListSongs.length === 0"
-                class="empty-box"
-              >
-                <PlumpIcon name="sparkles" :size="30" />
-                <p>当前列表暂无匹配的歌曲，请从左侧选择有曲目的歌单</p>
-              </div>
-
-              <div v-else class="dual-column-song-grid">
-                <div
-                  v-for="(song, idx) in activeListSongs"
-                  :key="song.hash || song.id"
-                  class="plump-song-card"
-                  :class="{
-                    'track-card-playing': store.currentSong?.hash === song.hash,
-                  }"
-                  @click="
-                    store.playSongFromList(
-                      song,
-                      activeListSongs,
-                      activeListTitle
-                    )
-                  "
-                  @contextmenu="store.openSongContextMenu($event, song)"
-                >
-                  <div class="psc-index">
-                    <PlumpIcon
-                      v-if="store.currentSong?.hash === song.hash"
-                      name="wave"
-                      :size="16"
-                      color="var(--cyan)"
-                    />
-                    <span v-else>{{ String(idx + 1).padStart(2, "0") }}</span>
-                  </div>
-                  <img
-                    v-if="song.coverUrl"
-                    :src="song.coverUrl"
-                    class="psc-cover"
-                    loading="lazy"
-                  />
-                  <div v-else class="psc-cover-fallback">
-                    <PlumpIcon name="disc" :size="18" />
-                  </div>
-                  <div class="psc-main">
-                    <div class="psc-title">{{ song.title }}</div>
-                    <div class="psc-sub">
-                      <span v-if="song.isHiRes" class="mini-badge hires">
-                        Hi-Res
-                      </span>
-                      <span v-else-if="song.isLossless" class="mini-badge sq">
-                        SQ
-                      </span>
-                      <span v-if="song.isVip" class="mini-badge vip">VIP</span>
-                      <span>{{ song.artist }}</span>
-                      <span v-if="song.album" class="psc-album">
-                        · {{ song.album }}
-                      </span>
-                    </div>
-                  </div>
-                  <div class="psc-actions" @click.stop>
-                    <button
-                      class="psc-act-btn"
-                      title="喜欢"
-                      @click="store.toggleFavoriteSong(song)"
-                    >
-                      <PlumpIcon
-                        name="heart"
-                        :size="15"
-                        :filled="store.isSongLiked(song)"
-                        :color="
-                          store.isSongLiked(song) ? '#ff4d6d' : 'currentColor'
-                        "
-                      />
-                    </button>
-                    <button
-                      class="psc-act-btn"
-                      title="添加到歌单"
-                      @click="store.addToPlaylistModalSong = song"
-                    >
-                      <PlumpIcon name="playlist-add" :size="15" />
-                    </button>
-                    <button
-                      class="psc-act-btn"
-                      title="更多操作"
-                      @click="store.openSongContextMenu($event, song)"
-                    >
-                      <PlumpIcon name="more" :size="15" />
-                    </button>
-                  </div>
-                  <div class="psc-dur">{{ formatDuration(song.durationMs) }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-      </template>
-    </template>
-
-    <!-- 新建歌单弹窗 (对齐 CreatePlaylistDialog.kt) -->
-    <transition name="fade">
-      <div
-        v-if="showCreateModal"
-        class="modal-backdrop"
-        @click.self="showCreateModal = false"
-      >
-        <div class="compact-glass-modal">
-          <div class="modal-header">
-            <h3>新建云端自定义歌单</h3>
-            <button class="icon-close-btn" @click="showCreateModal = false">
-              <PlumpIcon name="close" :size="15" />
+            <button
+              class="frameless-hover-btn primary-tint"
+              @click="playAllRightStage"
+            >
+              <PlumpIcon name="play" :size="16" />
+              <span>播放全部</span>
             </button>
           </div>
+        </div>
+
+        <!-- 右侧无框歌曲列表（双列高密度沉浸排布，无任何卡片框） -->
+        <div v-if="filteredRightStageSongs.length === 0" class="lib-right-empty">
+          <PlumpIcon name="music" :size="32" />
+          <p>{{ store.isLoadingLibrary ? "正在同步歌单曲目..." : "当前列表暂无匹配的歌曲" }}</p>
+        </div>
+
+        <div v-else class="frameless-songs-grid-2col lib-frameless-songs">
+          <div
+            v-for="(song, idx) in filteredRightStageSongs"
+            :key="song.hash + '_' + idx"
+            :data-lib-song-hash="song.hash"
+            class="frameless-song-row"
+            :class="{ active: store.currentSong?.hash === song.hash }"
+            @click="store.playSongFromList(song, rightStageSongs)"
+            @contextmenu.prevent="store.openSongContextMenu($event, song, rightStageSongs)"
+          >
+            <span class="fs-index">
+              <template v-if="store.currentSong?.hash === song.hash && store.isPlaying">
+                <span class="mini-eq-bars"><i></i><i></i><i></i></span>
+              </template>
+              <template v-else>
+                {{ String(idx + 1).padStart(2, "0") }}
+              </template>
+            </span>
+
+            <div class="fs-cover-wrap">
+              <img :src="song.coverUrl" class="fs-cover" loading="lazy" alt="" />
+              <div class="fs-cover-play">
+                <PlumpIcon
+                  :name="store.currentSong?.hash === song.hash && store.isPlaying ? 'pause' : 'play'"
+                  :size="15"
+                  color="#fff"
+                />
+              </div>
+            </div>
+
+            <div class="fs-meta">
+              <div class="fs-title-line">
+                <span class="fs-title">{{ song.title }}</span>
+                <span v-if="song.hasHiRes" class="fs-badge hires">Hi-Res</span>
+                <span v-else-if="song.hasSq" class="fs-badge sq">SQ</span>
+                <span v-if="song.isVip" class="fs-badge vip">VIP</span>
+              </div>
+              <div class="fs-sub-line">
+                <span>{{ song.artist }}</span>
+                <span v-if="song.album" class="fs-album">· {{ song.album }}</span>
+              </div>
+            </div>
+
+            <div class="fs-actions" @click.stop>
+              <button
+                class="fs-icon-btn"
+                :class="{ liked: store.isSongLiked(song.hash) }"
+                title="喜欢"
+                @click="store.toggleFavoriteSong(song)"
+              >
+                <PlumpIcon
+                  :name="store.isSongLiked(song.hash) ? 'heart-filled' : 'heart'"
+                  :size="16"
+                />
+              </button>
+              <button
+                class="fs-icon-btn"
+                title="添加到歌单"
+                @click="store.addToPlaylistModalSong = song"
+              >
+                <PlumpIcon name="plus" :size="16" />
+              </button>
+              <button
+                class="fs-icon-btn"
+                title="更多操作"
+                @click="store.openSongContextMenu($event, song, rightStageSongs)"
+              >
+                <PlumpIcon name="more" :size="16" />
+              </button>
+            </div>
+
+            <span class="fs-duration">{{ formatDuration(song.durationSeconds) }}</span>
+          </div>
+        </div>
+      </main>
+    </section>
+
+    <!-- 新建歌单弹窗 -->
+    <transition name="fade-pop">
+      <div v-if="showCreateModal" class="modal-backdrop" @click.self="showCreateModal = false">
+        <div class="compact-dialog glass-popover">
+          <h3>新建自建歌单</h3>
+          <p class="dialog-sub">创建后将同步至你的酷狗概念版云端资产</p>
           <input
             v-model="newPlaylistName"
             type="text"
-            class="plump-text-input mb-14"
-            placeholder="输入新歌单名称（例如：深夜写代码专属）"
-            @keydown.enter="handleCreateSubmit"
+            class="dialog-input"
+            placeholder="请输入新歌单名称..."
+            @keydown.enter="submitCreatePlaylist"
           />
-          <button class="primary-btn full-w" @click="handleCreateSubmit">
-            <PlumpIcon name="plus" :size="16" color="#ffffff" />
-            <span>立即创建并同步云端</span>
-          </button>
+          <div class="dialog-actions">
+            <button class="frameless-hover-btn" @click="showCreateModal = false">取消</button>
+            <button class="frameless-hover-btn primary-tint" @click="submitCreatePlaylist">
+              立即创建
+            </button>
+          </div>
         </div>
       </div>
     </transition>
 
-    <!-- 导入外部歌单弹窗 (对齐 LibraryScreen.kt 导入外部歌单) -->
-    <transition name="fade">
-      <div
-        v-if="showImportModal"
-        class="modal-backdrop"
-        @click.self="showImportModal = false"
-      >
-        <div class="compact-glass-modal">
-          <div class="modal-header">
-            <h3>批量匹配导入外部歌单</h3>
-            <button class="icon-close-btn" @click="showImportModal = false">
-              <PlumpIcon name="close" :size="15" />
+    <!-- 导入外部歌单弹窗 -->
+    <transition name="fade-pop">
+      <div v-if="showImportModal" class="modal-backdrop" @click.self="showImportModal = false">
+        <div class="compact-dialog glass-popover">
+          <h3>导入外部歌单</h3>
+          <p class="dialog-sub">支持粘贴酷狗歌单码、分享口令或歌单链接自动解析收藏</p>
+          <input
+            v-model="importInputText"
+            type="text"
+            class="dialog-input"
+            placeholder="粘贴歌单链接、口令或 global_collection_id..."
+            @keydown.enter="submitImportPlaylist"
+          />
+          <div class="dialog-actions">
+            <button class="frameless-hover-btn" @click="showImportModal = false">取消</button>
+            <button class="frameless-hover-btn primary-tint" @click="submitImportPlaylist">
+              解析并导入
             </button>
           </div>
-          <input
-            v-model="importPlaylistName"
-            type="text"
-            class="plump-text-input mb-10"
-            placeholder="新歌单名称（例如：我的精选导入）"
-          />
-          <textarea
-            v-model="importRawText"
-            rows="6"
-            class="plump-textarea mb-14"
-            placeholder="曲目列表（每行一首：歌名 - 歌手）&#10;晴天 - 周杰伦&#10;江南 - 林俊杰"
-          ></textarea>
-          <button
-            class="primary-btn full-w"
-            :disabled="isImporting"
-            @click="handleImportSubmit"
-          >
-            <PlumpIcon name="upload" :size="16" color="#ffffff" />
-            <span>
-              {{ isImporting ? "正在智能匹配导入..." : "开始匹配导入" }}
-            </span>
-          </button>
         </div>
       </div>
     </transition>
   </div>
 </template>
+
+<script setup lang="ts">
+import { computed, onMounted, ref } from "vue";
+import { useAppStore } from "../stores/appStore";
+import { formatDuration } from "../api/kugou";
+import type { FollowedArtistItem, PlaylistItem, PurchasedAlbumItem, Song } from "../types";
+import PlumpIcon from "../components/PlumpIcon.vue";
+
+const store = useAppStore();
+
+type RightStageMode = "liked" | "recent" | "playlist" | "artist" | "album" | "purchased_songs";
+const rightStageMode = ref<RightStageMode>("liked");
+const songFilterKw = ref("");
+
+const showCreateModal = ref(false);
+const newPlaylistName = ref("");
+const showImportModal = ref(false);
+const importInputText = ref("");
+
+// 左上角四个分类标题严格沿用 App 端设计：自建、收藏、关注、已购
+const assetTabs = computed(() => [
+  {
+    id: "created" as const,
+    label: "自建",
+    count: store.createdPlaylists.length,
+    color: "#2b8cff",
+  },
+  {
+    id: "collected" as const,
+    label: "收藏",
+    count: store.collectedPlaylists.length,
+    color: "#ff6b6b",
+  },
+  {
+    id: "artists" as const,
+    label: "关注",
+    count: store.followedArtists.length,
+    color: "#15c493",
+  },
+  {
+    id: "purchased" as const,
+    label: "已购",
+    count: store.purchasedAlbums.length + store.purchasedSongs.length,
+    color: "#f5a623",
+  },
+]);
+
+const activePlaylistGroup = computed(() => {
+  return store.libraryAssetTab === "collected"
+    ? store.collectedPlaylists
+    : store.createdPlaylists;
+});
+
+function handleSelectAssetTab(tabId: "created" | "collected" | "artists" | "purchased") {
+  store.libraryAssetTab = tabId;
+  if (tabId === "artists" && store.followedArtists.length === 0) {
+    store.loadFollowedArtists();
+  } else if (tabId === "purchased" && store.purchasedAlbums.length === 0 && store.purchasedSongs.length === 0) {
+    store.loadPurchasedAssets();
+  }
+}
+
+function activateLikedMode() {
+  rightStageMode.value = "liked";
+  songFilterKw.value = "";
+}
+
+function activateRecentMode() {
+  rightStageMode.value = "recent";
+  songFilterKw.value = "";
+  if (store.recentHistorySongs.length === 0) {
+    store.loadRecentHistory();
+  }
+}
+
+function selectPlaylistToRight(pl: PlaylistItem) {
+  rightStageMode.value = "playlist";
+  songFilterKw.value = "";
+  store.selectPlaylist(pl);
+}
+
+async function selectArtistToRight(art: FollowedArtistItem) {
+  rightStageMode.value = "artist";
+  songFilterKw.value = "";
+  await store.openArtistDetail(art.singerId, art.name, art.avatarUrl);
+  // 保持在当前分栏视图，不遮挡左栏
+  store.libraryDetailMode = "playlists";
+}
+
+async function selectPurchasedAlbumToRight(alb: PurchasedAlbumItem) {
+  rightStageMode.value = "album";
+  songFilterKw.value = "";
+  await store.openAlbumDetail(alb.id, alb.albumName, alb.singerName, alb.coverUrl);
+  store.libraryDetailMode = "playlists";
+}
+
+const rightStageSongs = computed<Song[]>(() => {
+  switch (rightStageMode.value) {
+    case "liked":
+      return store.likedSongs;
+    case "recent":
+      return store.recentHistorySongs;
+    case "playlist":
+      return store.playlistSongs;
+    case "artist":
+      return store.activeArtistSongs;
+    case "album":
+      return store.activeAlbumSongs;
+    case "purchased_songs":
+      return store.purchasedSongs;
+    default:
+      return store.likedSongs;
+  }
+});
+
+const filteredRightStageSongs = computed(() => {
+  const kw = songFilterKw.value.trim().toLowerCase();
+  if (!kw) return rightStageSongs.value;
+  return rightStageSongs.value.filter(
+    (s) =>
+      s.title.toLowerCase().includes(kw) ||
+      s.artist.toLowerCase().includes(kw) ||
+      (s.album && s.album.toLowerCase().includes(kw))
+  );
+});
+
+const rightStageTitle = computed(() => {
+  switch (rightStageMode.value) {
+    case "liked":
+      return "我喜欢的音乐";
+    case "recent":
+      return "最近播放记录";
+    case "playlist":
+      return store.selectedPlaylist?.name || "精选歌单";
+    case "artist":
+      return store.activeArtistDetail?.name || "关注歌手代表作";
+    case "album":
+      return store.activeAlbumDetail?.albumName || "已购数字专辑";
+    case "purchased_songs":
+      return "已购尊享单曲";
+  }
+});
+
+const rightStageEyebrow = computed(() => {
+  switch (rightStageMode.value) {
+    case "liked":
+      return "MY FAVORITES · 红心曲库";
+    case "recent":
+      return "RECENT PLAYED · 听歌足迹";
+    case "playlist":
+      return store.libraryAssetTab === "collected" ? "COLLECTED PLAYLIST · 收藏歌单" : "CREATED PLAYLIST · 自建歌单";
+    case "artist":
+      return "FOLLOWED ARTIST · 关注音乐人";
+    case "album":
+    case "purchased_songs":
+      return "PURCHASED ASSET · 已购数字音乐";
+  }
+});
+
+const rightStageSubtitle = computed(() => {
+  if (rightStageMode.value === "playlist" && store.selectedPlaylist?.description) {
+    return store.selectedPlaylist.description;
+  }
+  if (rightStageMode.value === "artist" && store.activeArtistDetail?.intro) {
+    return store.activeArtistDetail.intro.slice(0, 80);
+  }
+  return "双击顶部导航栏「我的」可随时同步云端歌单与红心曲库";
+});
+
+const rightStageCover = computed(() => {
+  switch (rightStageMode.value) {
+    case "liked":
+      return store.likedSongs[0]?.coverUrl || store.likedPlaylistMeta?.coverUrl || "";
+    case "recent":
+      return store.recentHistorySongs[0]?.coverUrl || "";
+    case "playlist":
+      return store.selectedPlaylist?.coverUrl || store.playlistSongs[0]?.coverUrl || "";
+    case "artist":
+      return store.activeArtistDetail?.avatarUrl || "";
+    case "album":
+      return store.activeAlbumDetail?.coverUrl || "";
+    case "purchased_songs":
+      return store.purchasedSongs[0]?.coverUrl || "";
+  }
+});
+
+function playAllLiked() {
+  rightStageMode.value = "liked";
+  if (store.likedSongs.length > 0) {
+    store.playSongFromList(store.likedSongs[0], store.likedSongs);
+  }
+}
+
+function playAllRecent() {
+  rightStageMode.value = "recent";
+  if (store.recentHistorySongs.length > 0) {
+    store.playSongFromList(store.recentHistorySongs[0], store.recentHistorySongs);
+  }
+}
+
+function playAllRightStage() {
+  if (rightStageSongs.value.length > 0) {
+    store.playSongFromList(rightStageSongs.value[0], rightStageSongs.value);
+  }
+}
+
+const isCurrentSongInRightStage = computed(() => {
+  if (!store.currentSong) return false;
+  return rightStageSongs.value.some((s) => s.hash === store.currentSong?.hash);
+});
+
+function scrollToPlayingSongInLibrary() {
+  if (!store.currentSong) return;
+  const el = document.querySelector(`[data-lib-song-hash="${store.currentSong.hash}"]`);
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function openCreateModal() {
+  newPlaylistName.value = "";
+  showCreateModal.value = true;
+}
+
+async function submitCreatePlaylist() {
+  const name = newPlaylistName.value.trim();
+  if (!name) return;
+  showCreateModal.value = false;
+  await store.createNewPlaylist(name);
+}
+
+function openImportModal() {
+  importInputText.value = "";
+  showImportModal.value = true;
+}
+
+async function submitImportPlaylist() {
+  const raw = importInputText.value.trim();
+  if (!raw) return;
+  showImportModal.value = false;
+  await store.importExternalPlaylist(raw);
+}
+
+function confirmDeletePlaylist(pl: PlaylistItem) {
+  if (window.confirm(`确定要删除自建歌单「${pl.name}」吗？`)) {
+    store.deletePlaylist(pl);
+  }
+}
+
+onMounted(() => {
+  if (store.userPlaylists.length === 0) {
+    store.loadUserPlaylists();
+  }
+  if (store.recentHistorySongs.length === 0) {
+    store.loadRecentHistory();
+  }
+});
+</script>

@@ -16,16 +16,8 @@ function formatDuration(ms: number): string {
 <template>
   <div class="page-scroll-canvas" @click="store.closeSongContextMenu()">
     <header class="discover-top-header">
-      <div>
-        <h1 class="discover-main-title">
-          全曲库检索 · 「{{ store.searchKeyword || "热搜漫游" }}」
-        </h1>
-        <div class="discover-greeting-line">
-          <span class="greeting-dot"></span>
-          <span>
-            支持单曲、歌单（双向收藏同步）、数字专辑与歌手四维直连搜索
-          </span>
-        </div>
+      <div class="block-title-with-tabs">
+        <h3 class="block-title">检索词：「{{ store.searchKeyword || "热搜漫游" }}」</h3>
       </div>
 
       <!-- 四维分类胶囊切换 -->

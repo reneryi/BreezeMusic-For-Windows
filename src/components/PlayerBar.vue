@@ -3,7 +3,7 @@
     class="fixed-bottom-player-bar"
     :class="{ 'player-bar-hidden': store.isNowPlayingOpen }"
   >
-    <!-- 左侧：专辑封面 + 歌名/歌手 + 喜欢按钮 + 音质角标 -->
+    <!-- 左侧：专辑封面 + 歌名/歌手 + 喜欢按钮 + 高对比音质角标 -->
     <div class="pb-left-zone">
       <div
         class="pb-cover-frame"
@@ -42,7 +42,7 @@
           >
             <PlumpIcon
               :name="store.isSongLiked(store.currentSong.hash) ? 'heart-filled' : 'heart'"
-              :size="17"
+              :size="16"
             />
           </button>
         </div>
@@ -54,8 +54,8 @@
           <span
             v-if="store.currentSong"
             class="pb-quality-pill"
-            @click.stop="cycleQualityQuick"
             title="点击切换流媒体音质档位"
+            @click.stop="cycleQualityQuick"
           >
             {{ qualityBadgeText }}
           </span>
@@ -69,7 +69,7 @@
       </div>
     </div>
 
-    <!-- 中间：参考图5双层结构 —— 上层【当前时间 + 进度条 + 总时长】，下层【随机/模式 + 上一首 + 大圆形播放暂停 + 下一首 + 高潮/伴奏】 -->
+    <!-- 中间：参考图5双层结构 —— 上层【当前时间 + 进度条 + 总时长】，下层【模式 + 上一首 + 大圆形播放暂停 + 下一首 + 高潮】 -->
     <div class="pb-center-zone">
       <!-- 上层：时间与可拖拽进度条 -->
       <div class="pb-progress-timeline-row">
@@ -101,11 +101,11 @@
           :title="playModeTitle"
           @click="store.cyclePlayMode()"
         >
-          <PlumpIcon :name="playModeIcon" :size="18" />
+          <PlumpIcon :name="playModeIcon" :size="17" />
         </button>
 
         <button class="pb-ctrl-btn" title="上一曲 (Ctrl + Left)" @click="store.playPrev()">
-          <PlumpIcon name="prev" :size="20" />
+          <PlumpIcon name="prev" :size="19" />
         </button>
 
         <button
@@ -113,11 +113,11 @@
           :title="store.isPlaying ? '暂停 (Space)' : '播放 (Space)'"
           @click="store.togglePlayPause()"
         >
-          <PlumpIcon :name="store.isPlaying ? 'pause' : 'play'" :size="22" />
+          <PlumpIcon :name="store.isPlaying ? 'pause' : 'play'" :size="20" color="#ffffff" />
         </button>
 
         <button class="pb-ctrl-btn" title="下一曲 (Ctrl + Right)" @click="store.playNext()">
-          <PlumpIcon name="next" :size="20" />
+          <PlumpIcon name="next" :size="19" />
         </button>
 
         <button
@@ -126,21 +126,21 @@
           title="30秒副歌高潮精听模式"
           @click="toggleClimaxQuick"
         >
-          <PlumpIcon name="sparkle" :size="18" />
+          <PlumpIcon name="sparkle" :size="17" />
         </button>
       </div>
     </div>
 
-    <!-- 右侧：音质/调音台胶囊 + 音量图标与滑块 + 桌面歌词 + 播放队列（带曲目数角标，参考图5右侧） -->
+    <!-- 右侧：音质/调音台胶囊 + 自定义无原生丑滑块的音量条 + 桌面歌词 + 播放队列（角标不遮挡图标） -->
     <div class="pb-right-zone">
       <button
         class="pb-feature-pill"
-        :class="{ active: store.activeViperEffectId !== 'none' || !store.peqBypass }"
-        title="前往概念版调音台 / 切换无损音质"
+        :class="{ active: store.activeViperEffectId !== 'off' && store.activeViperEffectId !== 'none' }"
+        title="前往概念版调音台"
         @click="openTunerDesk"
       >
-        <PlumpIcon name="tuning" :size="15" />
-        <span>{{ store.activeViperEffectId !== "none" ? "蝰蛇母带" : qualityBadgeText }}</span>
+        <PlumpIcon name="tuning" :size="14" />
+        <span>{{ store.activeViperEffectId !== "off" && store.activeViperEffectId !== "none" ? "蝰蛇母带" : qualityBadgeText }}</span>
       </button>
 
       <div class="pb-volume-control">
@@ -149,17 +149,21 @@
           :title="`音量 ${Math.round(store.volume * 100)}%`"
           @click="toggleMute"
         >
-          <PlumpIcon :name="store.volume === 0 ? 'volume-mute' : 'volume'" :size="18" />
+          <PlumpIcon :name="store.volume === 0 ? 'volume-mute' : 'volume'" :size="17" />
         </button>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.01"
-          :value="store.volume"
-          class="pb-volume-slider"
-          @input="onVolumeInput"
-        />
+        <div
+          class="pb-custom-volume-track"
+          :title="`音量 ${Math.round(store.volume * 100)}%`"
+          @mousedown="handleVolumeMouseDown"
+        >
+          <div class="pb-custom-volume-bg"></div>
+          <div
+            class="pb-custom-volume-fill"
+            :style="{ width: `${Math.round(store.volume * 100)}%` }"
+          >
+            <span class="pb-custom-volume-thumb"></span>
+          </div>
+        </div>
       </div>
 
       <button
@@ -168,7 +172,7 @@
         title="桌面悬浮逐字歌词"
         @click="toggleDesktopLyric"
       >
-        <PlumpIcon name="lyric" :size="18" />
+        <PlumpIcon name="lyric" :size="17" />
       </button>
 
       <button
@@ -177,7 +181,7 @@
         title="当前播放队列"
         @click="store.isGlobalQueueOpen = !store.isGlobalQueueOpen"
       >
-        <PlumpIcon name="queue" :size="18" />
+        <PlumpIcon name="queue" :size="17" />
         <span v-if="store.playQueue.length > 0" class="pb-queue-count-badge">
           {{ store.playQueue.length }}
         </span>
@@ -258,6 +262,7 @@ const qualityBadgeText = computed(() => {
     case "master":
       return "母带 Master";
     case "hires":
+    case "high":
       return "Hi-Res";
     case "flac":
       return "FLAC 无损";
@@ -273,6 +278,7 @@ const playModeIcon = computed(() => {
     case "shuffle":
       return "shuffle";
     case "loop_one":
+    case "repeat_one":
       return "repeat-one";
     default:
       return "repeat";
@@ -284,11 +290,15 @@ const playModeTitle = computed(() => {
     case "sequence":
       return "顺序播放";
     case "loop_all":
+    case "repeat_all":
       return "列表循环";
     case "loop_one":
+    case "repeat_one":
       return "单曲循环";
     case "shuffle":
       return "随机漫游";
+    default:
+      return "列表循环";
   }
 });
 
@@ -309,9 +319,21 @@ function handleSeekMouseDown(e: MouseEvent) {
   window.addEventListener("mouseup", onUp);
 }
 
-function onVolumeInput(e: Event) {
-  const val = parseFloat((e.target as HTMLInputElement).value);
-  store.setVolume(val);
+function handleVolumeMouseDown(e: MouseEvent) {
+  const bar = e.currentTarget as HTMLElement;
+  const updateVol = (ev: MouseEvent) => {
+    const rect = bar.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
+    store.setVolume(Number(ratio.toFixed(2)));
+  };
+  updateVol(e);
+  const onMove = (ev: MouseEvent) => updateVol(ev);
+  const onUp = () => {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+  };
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
 }
 
 function toggleMute() {

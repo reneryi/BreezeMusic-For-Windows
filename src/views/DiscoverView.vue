@@ -26,33 +26,39 @@
           }"
           @click="handleDailyCardClick"
         >
+          <!-- 动态封面高斯柔光背景层 + 3D 渐变景深 -->
+          <div
+            v-if="dailyCoverTriple[0]"
+            class="hero-cover-blur-bg"
+            :style="{ backgroundImage: `url(${dailyCoverTriple[0]})` }"
+          ></div>
           <div class="hero-ambient-glow daily-glow-a"></div>
           <div class="hero-ambient-glow daily-glow-b"></div>
 
           <div class="hero-card-inner">
-            <!-- 复刻 Android 端 StaggeredThreeCovers 错落三封面 3D 立体堆叠 -->
+            <!-- 复刻 Android 端 StaggeredThreeCovers 3D 阶梯扇形三封面叠层 -->
             <div class="staggered-three-covers" :class="{ enlarged: isDailyExpandedMode }">
-              <div class="stagger-cover-layer layer-left">
-                <img
-                  v-if="dailyCoverTriple[1]"
-                  :src="dailyCoverTriple[1]"
-                  alt="daily-left"
-                />
-              </div>
-              <div class="stagger-cover-layer layer-right">
+              <div class="stagger-cover-layer layer-back">
                 <img
                   v-if="dailyCoverTriple[2]"
                   :src="dailyCoverTriple[2]"
-                  alt="daily-right"
+                  alt="daily-back"
                 />
               </div>
-              <div class="stagger-cover-layer layer-center">
+              <div class="stagger-cover-layer layer-mid">
+                <img
+                  v-if="dailyCoverTriple[1]"
+                  :src="dailyCoverTriple[1]"
+                  alt="daily-mid"
+                />
+              </div>
+              <div class="stagger-cover-layer layer-front">
                 <img
                   v-if="dailyCoverTriple[0]"
                   :src="dailyCoverTriple[0]"
-                  alt="daily-center"
+                  alt="daily-front"
                 />
-                <div class="stagger-date-overlay">
+                <div class="stagger-date-badge">
                   <span class="stagger-month">{{ todayMonthEng }}</span>
                   <span class="stagger-day">{{ todayDayNum }}</span>
                 </div>
@@ -102,7 +108,7 @@
                   title="立即播放今日全部推荐"
                   @click.stop="playAllDaily"
                 >
-                  <PlumpIcon name="play" :size="22" />
+                  <PlumpIcon name="play" :size="22" color="#0f3878" />
                 </button>
               </template>
               <template v-else>
@@ -153,6 +159,11 @@
           }"
           @click="handleFmCardClick"
         >
+          <div
+            v-if="store.currentFmSong?.coverUrl"
+            class="hero-cover-blur-bg"
+            :style="{ backgroundImage: `url(${store.currentFmSong.coverUrl})` }"
+          ></div>
           <div class="hero-ambient-glow fm-glow-a"></div>
           <div class="hero-ambient-glow fm-glow-b"></div>
 
@@ -225,7 +236,7 @@
                     :title="isFmPlaying ? '暂停漫游' : '立即播放猜你喜欢'"
                     @click.stop="toggleFmPlay"
                   >
-                    <PlumpIcon :name="isFmPlaying ? 'pause' : 'play'" :size="21" />
+                    <PlumpIcon :name="isFmPlaying ? 'pause' : 'play'" :size="21" color="#881d5f" />
                   </button>
                   <div class="fm-sub-icons">
                     <button
@@ -233,7 +244,7 @@
                       title="跳至下一首漫游"
                       @click.stop="store.nextPersonalFmTrack(true)"
                     >
-                      <PlumpIcon name="next" :size="18" />
+                      <PlumpIcon name="next" :size="17" />
                     </button>
                     <button
                       v-if="store.currentFmSong"
@@ -244,7 +255,7 @@
                     >
                       <PlumpIcon
                         :name="store.isSongLiked(store.currentFmSong.hash) ? 'heart-filled' : 'heart'"
-                        :size="17"
+                        :size="16"
                       />
                     </button>
                     <button
@@ -252,7 +263,7 @@
                       title="换一批漫游推荐"
                       @click.stop="store.loadPersonalFm(false)"
                     >
-                      <PlumpIcon name="refresh" :size="16" />
+                      <PlumpIcon name="refresh" :size="15" />
                     </button>
                   </div>
                 </div>
@@ -427,7 +438,7 @@
               <!-- 沿用 App 端 ConceptSlidingCategoryTabs（文字 + 底部滑动指示横条）置于标题右侧 -->
               <div class="app-sliding-tabs newsong-sliding-tabs">
                 <button
-                  v-for="(area, idx) in newSongAreas"
+                  v-for="area in newSongAreas"
                   :key="area.id"
                   class="app-sliding-tab-btn"
                   :class="{ active: store.newSongPeriod === area.id }"
@@ -486,7 +497,14 @@
               @click="store.playSongFromList(song, sortedNewSongsAll)"
               @contextmenu.prevent="store.openSongContextMenu($event, song, sortedNewSongsAll)"
             >
-              <span class="ns-col-rank">{{ String(idx + 1).padStart(2, "0") }}</span>
+              <span class="ns-col-rank">
+                <template v-if="store.currentSong?.hash === song.hash && store.isPlaying">
+                  <span class="mini-eq-bars"><i></i><i></i><i></i></span>
+                </template>
+                <template v-else>
+                  {{ String(idx + 1).padStart(2, "0") }}
+                </template>
+              </span>
 
               <div class="ns-cover-box">
                 <img :src="song.coverUrl" class="ns-cover-img" loading="lazy" alt="" />
@@ -528,7 +546,7 @@
           </div>
         </section>
 
-        <!-- 2. 巅峰排行榜（与电台互换位置后置于前方，双行显示，左侧放大封面+播放按钮，右侧紧凑榜单预览） -->
+        <!-- 2. 巅峰排行榜（与电台互换位置后置于前方，双行显示，左侧放大封面+播放按钮，不遮挡封面原生文字） -->
         <section class="discover-block">
           <div class="block-header">
             <div class="block-title-with-tabs">
@@ -554,7 +572,7 @@
             </div>
           </div>
 
-          <!-- 双行榜单卡片矩阵（2行 × 4列 = 8张卡片，卡片左侧大尺寸封面 + 独立播放按钮） -->
+          <!-- 双行榜单卡片矩阵（2行 × 4列 = 8张卡片，卡片左侧大尺寸封面 + 右下磨砂播放按钮，绝不遮挡封面标题） -->
           <div class="rank-double-row-grid">
             <div
               v-for="rk in homeDoubleRowRanks"
@@ -562,24 +580,23 @@
               class="rank-horizontal-card"
               @click="store.openRankDetail(rk)"
             >
-              <!-- 左侧增大榜单头像 + 悬浮播放按钮 -->
+              <!-- 左侧增大榜单头像 + 右下角精致磨砂播放按钮 -->
               <div class="rank-left-cover-wrap">
                 <img :src="rk.coverUrl" class="rank-left-cover" loading="lazy" alt="" />
-                <span class="rank-freq-badge">{{ rk.updateFrequency || "每日更新" }}</span>
                 <button
                   class="rank-cover-play-btn"
                   title="直接播放该榜单曲目"
                   @click.stop="store.playRankDirectly(rk)"
                 >
-                  <PlumpIcon name="play" :size="17" color="#fff" />
+                  <PlumpIcon name="play" :size="15" color="#fff" />
                 </button>
               </div>
 
-              <!-- 右侧榜单标题与前三曲目预览 -->
+              <!-- 右侧榜单标题、更新频率与前三曲目预览 -->
               <div class="rank-right-body">
                 <div class="rank-card-title-row">
                   <h4 class="rank-card-name">{{ rk.name }}</h4>
-                  <span class="rank-card-cat">{{ rk.category || "官方榜" }}</span>
+                  <span class="rank-card-cat">{{ rk.updateFrequency || rk.category || "每日更新" }}</span>
                 </div>
 
                 <div class="rank-card-previews">
@@ -597,7 +614,7 @@
           </div>
         </section>
 
-        <!-- 3. 精选场景电台（置于最后，获取真实封面并单行显示，删除分类标题栏，右上角改为“电台广场”二级页入口） -->
+        <!-- 3. 精选场景电台（置于最后，获取真实封面并单行完整显示，删除分类标题栏，右上角改为“电台广场”二级页入口） -->
         <section class="discover-block">
           <div class="block-header">
             <div class="block-title-with-tabs">
@@ -616,7 +633,7 @@
             </div>
           </div>
 
-          <!-- 单行显示带封面的电台卡片 -->
+          <!-- 单行显示带封面的电台卡片（紧凑横幅比例，确保封面与下方电台名称、描述完整呈现不裁切） -->
           <div class="radio-single-row-corridor">
             <div
               v-for="(ch, idx) in singleRowFmChannels"
@@ -645,7 +662,7 @@
                 >
                   <PlumpIcon
                     :name="store.activeFmChannel?.id === ch.id && store.isPlaying ? 'pause' : 'play'"
-                    :size="16"
+                    :size="15"
                     color="#fff"
                   />
                 </button>
@@ -1113,7 +1130,7 @@
                   class="rank-cover-play-btn"
                   @click.stop="store.playRankDirectly(rk)"
                 >
-                  <PlumpIcon name="play" :size="16" color="#fff" />
+                  <PlumpIcon name="play" :size="15" color="#fff" />
                 </button>
               </div>
               <div class="rank-right-body">
@@ -1413,14 +1430,14 @@ const singleRowFmChannels = computed(() => store.fmChannels.slice(0, 6));
 
 const radioCoverFallbackPool = computed(() => {
   const pool: string[] = [];
-  for (const s of store.recommendSongs) {
-    if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
-  }
   for (const s of store.newSongs) {
     if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
   }
-  for (const r of store.rankList) {
-    if (r.coverUrl && !pool.includes(r.coverUrl)) pool.push(r.coverUrl);
+  for (const s of store.recommendSongs) {
+    if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
+  }
+  for (const s of store.personalFmSongs) {
+    if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
   }
   return pool;
 });

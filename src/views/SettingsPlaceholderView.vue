@@ -23,6 +23,24 @@ type SettingsCategoryKey =
   | "feedback_about";
 
 const activeCategory = ref<SettingsCategoryKey>("appearance");
+const showPlainCredentials = ref(false);
+
+function formatCred(val?: string) {
+  if (!val) return "已就绪";
+  if (showPlainCredentials.value) return val;
+  if (val.length <= 10) return val;
+  return `${val.slice(0, 6)}••••••${val.slice(-4)}`;
+}
+
+async function copyCred(label: string, val?: string) {
+  if (!val) return;
+  try {
+    await navigator.clipboard.writeText(val);
+    store.notify(`已复制 ${label} 至剪贴板`);
+  } catch {
+    store.notify(`${label}: ${val}`);
+  }
+}
 
 const categories = computed(() => {
   const base: {
@@ -585,6 +603,69 @@ async function copyEnvDiagnostic() {
                 />
                 <span class="plump-slider"></span>
               </label>
+            </div>
+          </section>
+
+          <section class="settings-card-panel">
+            <div class="dev-card-head" style="margin-bottom: 12px;">
+              <div class="dev-head-left">
+                <PlumpIcon name="shield" :size="17" color="#00e5ff" />
+                <h3 style="margin: 0;">设备标识与音源鉴权凭证</h3>
+              </div>
+              <button
+                class="tonal-pill-btn sm"
+                @click="showPlainCredentials = !showPlainCredentials"
+              >
+                {{ showPlainCredentials ? "隐藏明文" : "展开明文" }}
+              </button>
+            </div>
+            <p class="panel-desc">
+              酷狗概念版 (appid=3116) 硬件设备指纹与会话鉴权标识，支持一键重签刷新与网关链路延迟诊断
+            </p>
+
+            <div class="dev-kv-row">
+              <span>DFID 设备指纹</span>
+              <div class="dev-kv-right">
+                <code>{{ formatCred(store.vipStatus?.dfid || store.gatewayDiag?.dfid) }}</code>
+                <button
+                  class="dev-copy-btn"
+                  @click="copyCred('DFID', store.vipStatus?.dfid || store.gatewayDiag?.dfid)"
+                >
+                  复制
+                </button>
+              </div>
+            </div>
+
+            <div class="dev-kv-row">
+              <span>GUID 会话标识</span>
+              <div class="dev-kv-right">
+                <code>{{ formatCred(store.vipStatus?.guid || store.gatewayDiag?.guid) }}</code>
+                <button
+                  class="dev-copy-btn"
+                  @click="copyCred('GUID', store.vipStatus?.guid || store.gatewayDiag?.guid)"
+                >
+                  复制
+                </button>
+              </div>
+            </div>
+
+            <div class="dev-actions-row" style="margin-top: 14px; display: flex; gap: 12px;">
+              <button
+                class="tonal-pill-btn"
+                :disabled="store.isDiagnosingGateway"
+                @click="store.resignDeviceAndRefresh()"
+              >
+                <PlumpIcon name="refresh" :size="15" />
+                <span>刷新设备标识</span>
+              </button>
+              <button
+                class="tonal-pill-btn primary"
+                :disabled="store.isDiagnosingGateway"
+                @click="store.runGatewayDiagnostic()"
+              >
+                <PlumpIcon name="sparkles" :size="15" />
+                <span>音源链路诊断</span>
+              </button>
             </div>
           </section>
         </template>

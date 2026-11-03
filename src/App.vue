@@ -4,7 +4,6 @@ import { useAppStore } from "./stores/appStore";
 import TitleBar from "./components/TitleBar.vue";
 import PlayerBar from "./components/PlayerBar.vue";
 import LoginModal from "./components/LoginModal.vue";
-import VipCenterModal from "./components/VipCenterModal.vue";
 import FocusPodModal from "./components/FocusPodModal.vue";
 import LyricPosterModal from "./components/LyricPosterModal.vue";
 import SongContextMenu from "./components/SongContextMenu.vue";
@@ -44,6 +43,38 @@ const currentLyricPair = computed(() => {
   };
 });
 
+const greetingSubtitle = computed(() => {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 11) return "晨光微风 · 用清澈旋律唤醒耳朵";
+  if (h >= 11 && h < 14) return "午间小憩 · 漫游属于你的声学绿洲";
+  if (h >= 14 && h < 18) return "午后灵感 · 无损音质伴你专注时光";
+  if (h >= 18 && h < 23) return "夜幕微蓝 · 卸下喧嚣沉浸私人旋律";
+  return "深夜静谧 · 让温柔乐音陪你入眠";
+});
+
+const canGoBack = computed(
+  () =>
+    store.isNowPlayingOpen ||
+    (store.activeTab === "discover" && store.discoverSubView !== "home") ||
+    (store.activeTab === "library" && store.libraryDetailMode !== "playlists")
+);
+
+function goBack() {
+  if (store.isNowPlayingOpen) {
+    store.isNowPlayingOpen = false;
+    return;
+  }
+  if (store.activeTab === "discover" && store.discoverSubView !== "home") {
+    store.discoverSubView = "home";
+    return;
+  }
+  if (store.activeTab === "library" && store.libraryDetailMode !== "playlists") {
+    store.libraryDetailMode = "playlists";
+    return;
+  }
+  store.activeTab = "discover";
+}
+
 onMounted(() => {
   store.bootstrap();
 });
@@ -67,7 +98,7 @@ onMounted(() => {
       store.closeSongContextMenu();
     "
   >
-    <!-- 全局浮动提示胶囊 (无框柔光胶囊) -->
+    <!-- 全局浮动提示胶囊 -->
     <transition name="pop-spring">
       <div v-if="store.statusBanner" class="toast-banner">
         <PlumpIcon name="sparkles" :size="15" color="#00e5ff" />
@@ -75,7 +106,7 @@ onMounted(() => {
       </div>
     </transition>
 
-    <!-- 形态 C：Windows 桌面置顶迷你黑胶挂件模式 (Mini Turntable Widget) -->
+    <!-- 形态 C：Windows 桌面置顶迷你黑胶挂件模式 -->
     <template v-if="store.layoutMode === 'mini_turntable'">
       <div class="mini-widget-shell" data-tauri-drag-region>
         <div
@@ -128,12 +159,38 @@ onMounted(() => {
       </div>
     </template>
 
-    <!-- 形态 A & B：方案二「顶部天际线中枢画廊 (Skyline Command & Bento)」100% 全宽无遮挡视野 -->
+    <!-- 形态 A & B：全屏沉浸式背景渲染 + 顶层悬浮胶囊导航与右上角融合卡片 -->
     <template v-else>
       <TitleBar />
 
       <div class="skyline-workspace">
-        <main class="skyline-stage-viewport">
+        <main
+          class="skyline-stage-viewport"
+          :class="{
+            'viewport-locked-library': store.activeTab === 'library' && !store.isNowPlayingOpen,
+            'viewport-locked-nowplaying': store.isNowPlayingOpen,
+          }"
+        >
+          <!-- 左上角时段语句：置于页面内容流顶部，无标题名称，放大字号，下滑浏览时随页面自然向上消失 -->
+          <div
+            v-if="!store.isNowPlayingOpen"
+            class="inflow-top-greeting-row"
+            data-tauri-drag-region
+          >
+            <button
+              v-if="canGoBack"
+              class="inflow-back-btn"
+              title="返回上一视图"
+              @click="goBack"
+            >
+              <PlumpIcon name="back" :size="18" />
+            </button>
+            <div class="inflow-greeting-statement" data-tauri-drag-region>
+              <span class="inflow-greeting-dot"></span>
+              <span class="inflow-greeting-text" data-tauri-drag-region>{{ greetingSubtitle }}</span>
+            </div>
+          </div>
+
           <transition name="view-morph" mode="out-in">
             <NowPlayingView
               v-if="store.isNowPlayingOpen"
@@ -160,7 +217,7 @@ onMounted(() => {
         </main>
       </div>
 
-      <!-- 系统级悬浮桌面歌词舱（支持锁定穿透） -->
+      <!-- 系统级悬浮桌面歌词舱 -->
       <transition name="pop-spring">
         <div
           v-if="store.desktopLyricEnabled"
@@ -198,13 +255,12 @@ onMounted(() => {
       </transition>
 
       <PlayerBar />
-    </template>
 
-    <!-- 全局弹窗与上下文菜单 -->
-    <LoginModal />
-    <VipCenterModal />
-    <FocusPodModal />
-    <LyricPosterModal />
-    <SongContextMenu />
+      <!-- 全局模态层（VIP 中心已融合至右上角头像悬浮展开卡） -->
+      <LoginModal />
+      <FocusPodModal />
+      <LyricPosterModal />
+      <SongContextMenu />
+    </template>
   </div>
 </template>

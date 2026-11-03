@@ -1,7 +1,7 @@
 <template>
-  <!-- 我的页：全屏自适应无裁剪渲染，顶部三张卡片悬停与横向展开自由延展，下方左右双栏各自独立滑动浏览 -->
+  <!-- 我的页：全屏无裁剪渲染，仅划分为左右两个内容展示区与各自独立的滚动区域 -->
   <div class="library-page library-fixed-viewport" @contextmenu.prevent>
-    <!-- ==================== 顶部三张增大并重构的 3D 立体核心卡片（支持点击我喜欢/最近播放横向占满，其余按位置自然消失，高度严格不变） ==================== -->
+    <!-- ==================== 顶部三张核心卡片（高度降低 10% 至 154px，极简大气排版，持久 DOM 丝滑横向展开） ==================== -->
     <section
       class="library-hero-trio enlarged-trio"
       :class="{
@@ -9,7 +9,7 @@
         'is-recent-expanded': expandedTopCard === 'recent',
       }"
     >
-      <!-- 1. 我喜欢的音乐（位于左侧：点击后向右横向占满，右侧两张卡片向右自然消失） -->
+      <!-- 1. 我喜欢的音乐（左卡：点击向右平滑占满，右侧两卡自然向右退场） -->
       <div
         class="lib-stereo-card fav-stereo-card"
         :class="{
@@ -26,139 +26,117 @@
         ></div>
         <div class="lib-card-ambient-orb coral-orb"></div>
 
-        <!-- 左侧立体封面叠层：展开态升级为三层扇形叠放 -->
-        <div class="lib-card-visual enlarged" :class="{ 'visual-expanded': expandedTopCard === 'liked' }">
-          <div
-            v-if="expandedTopCard === 'liked' && store.likedSongs[2]?.coverUrl"
-            class="lib-visual-third"
-          >
-            <img :src="store.likedSongs[2].coverUrl" draggable="false" alt="" />
+        <!-- 左侧常驻主体（封面叠层 + 简洁标题与曲目信息，展开时不销毁 DOM，平滑过渡） -->
+        <div class="lib-card-main-left">
+          <div class="lib-card-visual" :class="{ 'visual-expanded': expandedTopCard === 'liked' }">
+            <div v-if="store.likedSongs[2]?.coverUrl" class="lib-visual-third">
+              <img :src="store.likedSongs[2].coverUrl" draggable="false" alt="" />
+            </div>
+            <div v-if="store.likedSongs[1]?.coverUrl" class="lib-visual-back">
+              <img :src="store.likedSongs[1].coverUrl" draggable="false" alt="" />
+            </div>
+            <div class="lib-visual-front">
+              <img
+                v-if="store.likedSongs[0]?.coverUrl"
+                :src="store.likedSongs[0].coverUrl"
+                draggable="false"
+                alt=""
+              />
+              <div v-else class="lib-visual-placeholder coral">
+                <PlumpIcon name="heart-filled" :size="28" color="#fff" />
+              </div>
+              <span class="lib-visual-corner-tag coral">
+                <PlumpIcon name="heart-filled" :size="12" color="#fff" />
+              </span>
+            </div>
           </div>
-          <div v-if="store.likedSongs[1]?.coverUrl" class="lib-visual-back">
-            <img :src="store.likedSongs[1].coverUrl" draggable="false" alt="" />
-          </div>
-          <div class="lib-visual-front">
-            <img
-              v-if="store.likedSongs[0]?.coverUrl"
-              :src="store.likedSongs[0].coverUrl"
-              draggable="false"
-              alt=""
-            />
-            <div class="lib-visual-badge coral">
-              <PlumpIcon name="heart-filled" :size="26" color="#fff" />
+
+          <div class="lib-card-copy">
+            <div class="lib-card-eyebrow">FAVORITES · 红心曲库</div>
+            <div class="lib-card-title-row">
+              <h3 class="lib-card-title">我喜欢的音乐</h3>
+              <span class="lib-card-count-pill">{{ store.likedSongs.length }}</span>
+            </div>
+
+            <!-- 简洁大气的副信息行：常态展示代表曲目，展开态展示纯粹的声学统计 -->
+            <div class="lib-card-meta-stream">
+              <template v-if="expandedTopCard === 'liked'">
+                <span class="lcm-stat">{{ store.likedSongs.length }} 首珍藏曲目</span>
+                <template v-if="likedHiResCount > 0">
+                  <span class="lcm-dot">·</span>
+                  <span class="lcm-stat highlight">{{ likedHiResCount }} 首无损 / Hi-Res</span>
+                </template>
+                <span class="lcm-dot">·</span>
+                <span class="lcm-stat">{{ likedTotalDurationText }}</span>
+              </template>
+              <template v-else>
+                <div v-if="store.likedSongs[0]" class="lib-preview-line">
+                  <span class="lp-song">{{ store.likedSongs[0].title }}</span>
+                  <span class="lp-artist">— {{ store.likedSongs[0].artist }}</span>
+                </div>
+                <div v-if="store.likedSongs[1]" class="lib-preview-line secondary">
+                  <span class="lp-song">{{ store.likedSongs[1].title }}</span>
+                  <span class="lp-artist">— {{ store.likedSongs[1].artist }}</span>
+                </div>
+                <div v-if="!store.likedSongs[0]" class="lib-preview-line secondary">
+                  <span>双端同步红心珍藏</span>
+                </div>
+              </template>
             </div>
           </div>
         </div>
 
-        <!-- 核心文案区 -->
-        <div class="lib-card-copy">
-          <div class="lib-card-eyebrow">
-            <span class="lib-eyebrow-dot coral"></span>
-            <span>MY FAVORITES · 红心珍藏曲库</span>
-            <span v-if="expandedTopCard === 'liked'" class="lib-expanded-live-pill">
-              当前正在浏览
-            </span>
-          </div>
-
-          <div class="lib-card-title-row">
-            <h3 class="lib-card-title">我喜欢的音乐</h3>
-            <span class="lib-card-count-pill">{{ store.likedSongs.length }} 首</span>
-            <span v-if="expandedTopCard === 'liked' && likedHiResCount > 0" class="lib-card-quality-pill">
-              ✦ {{ likedHiResCount }} 首无损/母带
-            </span>
-            <span v-if="expandedTopCard === 'liked'" class="lib-card-duration-pill">
-              总时长 {{ likedTotalDurationText }}
-            </span>
-          </div>
-
-          <!-- 常态三卡并列时显示前两首紧凑预览 -->
-          <div v-if="expandedTopCard !== 'liked'" class="lib-card-tracks-preview">
-            <div v-if="store.likedSongs[0]" class="lib-preview-line">
-              <span class="lp-icon">♪</span>
-              <span class="lp-song">{{ store.likedSongs[0].title }}</span>
-              <span class="lp-artist">- {{ store.likedSongs[0].artist }}</span>
-              <span v-if="store.likedSongs[0].hasHiRes" class="lp-mini-tag">Hi-Res</span>
-              <span v-else-if="store.likedSongs[0].hasSq" class="lp-mini-tag">SQ</span>
-            </div>
-            <div v-if="store.likedSongs[1]" class="lib-preview-line secondary">
-              <span class="lp-icon">♪</span>
-              <span class="lp-song">{{ store.likedSongs[1].title }}</span>
-              <span class="lp-artist">- {{ store.likedSongs[1].artist }}</span>
-            </div>
-            <div v-if="!store.likedSongs[0]" class="lib-preview-line">
-              <span>双端实时同步红心曲库 · 珍藏每一份心动旋律</span>
-            </div>
-          </div>
-
-          <!-- 横向占满展开态时的专属副文案与快捷操作栏 -->
-          <div v-else class="lib-card-expanded-sub">
-            <p class="lib-expanded-desc">
-              已为你展开红心珍藏全量曲库 · 点击右侧曲目微卡可立即单曲点播，或点击左侧任意歌单切换视图
-            </p>
-            <div class="lib-expanded-quick-btns" @click.stop>
-              <button class="lib-exp-action-btn primary" @click.stop="playAllLiked">
-                <PlumpIcon name="play" :size="15" color="#fff" />
-                <span>播放全部红心</span>
-              </button>
-              <button class="lib-exp-action-btn" @click.stop="shufflePlayLiked">
-                <PlumpIcon name="shuffle" :size="15" color="#fff" />
-                <span>随机漫游</span>
-              </button>
-              <button class="lib-exp-action-btn" @click.stop="store.loadUserPlaylists()">
-                <PlumpIcon name="refresh" :size="15" color="#fff" />
-                <span>同步云端</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 横向占满展开态专属：中部精选红心曲目玻璃微卡走廊 -->
+        <!-- 展开态平滑浮现的精选曲目画廊（持久存在于 DOM 中，随卡片展开自然滑入） -->
         <div
-          v-if="expandedTopCard === 'liked' && store.likedSongs.length > 0"
-          class="lib-expanded-showcase-strip"
+          class="lib-card-expanded-gallery"
+          :class="{ 'is-visible': expandedTopCard === 'liked' }"
           @click.stop
         >
           <div
             v-for="song in store.likedSongs.slice(0, 3)"
             :key="song.hash"
-            class="lib-exp-mini-track"
+            class="lib-gallery-track-pill"
             :class="{ playing: store.currentSong?.hash === song.hash }"
             @click.stop="store.playSongFromList(song, store.likedSongs)"
           >
-            <img :src="song.coverUrl" class="lemt-cover" draggable="false" alt="" />
-            <div class="lemt-meta">
-              <div class="lemt-title-row">
-                <span class="lemt-title">{{ song.title }}</span>
-                <span v-if="song.hasHiRes" class="lemt-badge">Hi-Res</span>
-                <span v-else-if="song.hasSq" class="lemt-badge">SQ</span>
-              </div>
-              <div class="lemt-artist">{{ song.artist }}</div>
+            <img :src="song.coverUrl" class="lgtp-cover" draggable="false" alt="" />
+            <div class="lgtp-info">
+              <div class="lgtp-title">{{ song.title }}</div>
+              <div class="lgtp-artist">{{ song.artist }}</div>
             </div>
           </div>
         </div>
 
-        <!-- 右侧主控按钮区 -->
+        <!-- 右侧极简控制区 -->
         <div class="lib-card-right-zone" @click.stop>
           <button
             v-if="expandedTopCard === 'liked'"
-            class="lib-exp-collapse-pill"
-            title="收起展开态，恢复顶部三卡并列视图"
+            class="lib-card-glass-btn"
+            title="随机播放我喜欢的音乐"
+            @click.stop="shufflePlayLiked"
+          >
+            <PlumpIcon name="shuffle" :size="15" color="#fff" />
+            <span>随机漫游</span>
+          </button>
+          <button
+            v-if="expandedTopCard === 'liked'"
+            class="lib-card-icon-orb"
+            title="收起展开态"
             @click.stop="collapseExpandedTopCard"
           >
-            <PlumpIcon name="back" :size="15" color="#fff" />
-            <span>收起卡片</span>
+            <PlumpIcon name="close" :size="14" color="#fff" />
           </button>
           <button
             class="lib-card-play-fab coral"
             title="立即播放我喜欢的音乐"
             @click.stop="playAllLiked"
           >
-            <PlumpIcon name="play" :size="23" color="#fff" />
+            <PlumpIcon name="play" :size="20" color="#fff" />
           </button>
         </div>
       </div>
 
-      <!-- 2. 最近播放（位于中间：点击后向左右横向占满，左卡向左消失、右卡向右消失） -->
+      <!-- 2. 最近播放（中卡：点击向两侧平滑占满，左卡向左退场、右卡向右退场） -->
       <div
         class="lib-stereo-card recent-stereo-card"
         :class="{
@@ -175,111 +153,81 @@
         ></div>
         <div class="lib-card-ambient-orb cyan-orb"></div>
 
-        <div class="lib-card-visual enlarged" :class="{ 'visual-expanded': expandedTopCard === 'recent' }">
-          <div
-            v-if="expandedTopCard === 'recent' && store.recentHistorySongs[2]?.coverUrl"
-            class="lib-visual-third"
-          >
-            <img :src="store.recentHistorySongs[2].coverUrl" draggable="false" alt="" />
+        <div class="lib-card-main-left">
+          <div class="lib-card-visual" :class="{ 'visual-expanded': expandedTopCard === 'recent' }">
+            <div v-if="store.recentHistorySongs[2]?.coverUrl" class="lib-visual-third">
+              <img :src="store.recentHistorySongs[2].coverUrl" draggable="false" alt="" />
+            </div>
+            <div v-if="store.recentHistorySongs[1]?.coverUrl" class="lib-visual-back">
+              <img :src="store.recentHistorySongs[1].coverUrl" draggable="false" alt="" />
+            </div>
+            <div class="lib-visual-front">
+              <img
+                v-if="store.recentHistorySongs[0]?.coverUrl"
+                :src="store.recentHistorySongs[0].coverUrl"
+                draggable="false"
+                alt=""
+              />
+              <div v-else class="lib-visual-placeholder blue">
+                <PlumpIcon name="timer" :size="28" color="#fff" />
+              </div>
+              <span class="lib-visual-corner-tag blue">
+                <PlumpIcon name="timer" :size="12" color="#fff" />
+              </span>
+            </div>
           </div>
-          <div v-if="store.recentHistorySongs[1]?.coverUrl" class="lib-visual-back">
-            <img :src="store.recentHistorySongs[1].coverUrl" draggable="false" alt="" />
-          </div>
-          <div class="lib-visual-front">
-            <img
-              v-if="store.recentHistorySongs[0]?.coverUrl"
-              :src="store.recentHistorySongs[0].coverUrl"
-              draggable="false"
-              alt=""
-            />
-            <div class="lib-visual-badge blue">
-              <PlumpIcon name="timer" :size="26" color="#fff" />
+
+          <div class="lib-card-copy">
+            <div class="lib-card-eyebrow">RECENT PLAYED · 听歌足迹</div>
+            <div class="lib-card-title-row">
+              <h3 class="lib-card-title">最近播放</h3>
+              <span class="lib-card-count-pill">{{ store.recentHistorySongs.length }}</span>
+            </div>
+
+            <div class="lib-card-meta-stream">
+              <template v-if="expandedTopCard === 'recent'">
+                <span class="lcm-stat">{{ store.recentHistorySongs.length }} 首近期记录</span>
+                <template v-if="recentHiResCount > 0">
+                  <span class="lcm-dot">·</span>
+                  <span class="lcm-stat highlight">{{ recentHiResCount }} 首无损 / Hi-Res</span>
+                </template>
+                <span class="lcm-dot">·</span>
+                <span class="lcm-stat">{{ recentTotalDurationText }}</span>
+              </template>
+              <template v-else>
+                <div v-if="store.recentHistorySongs[0]" class="lib-preview-line">
+                  <span class="lp-song">{{ store.recentHistorySongs[0].title }}</span>
+                  <span class="lp-artist">— {{ store.recentHistorySongs[0].artist }}</span>
+                </div>
+                <div v-if="store.recentHistorySongs[1]" class="lib-preview-line secondary">
+                  <span class="lp-song">{{ store.recentHistorySongs[1].title }}</span>
+                  <span class="lp-artist">— {{ store.recentHistorySongs[1].artist }}</span>
+                </div>
+                <div v-if="!store.recentHistorySongs[0]" class="lib-preview-line secondary">
+                  <span>自动同步本机与云端播放轨迹</span>
+                </div>
+              </template>
             </div>
           </div>
         </div>
 
-        <div class="lib-card-copy">
-          <div class="lib-card-eyebrow">
-            <span class="lib-eyebrow-dot cyan"></span>
-            <span>RECENT FOOTPRINTS · 听歌足迹</span>
-            <span v-if="expandedTopCard === 'recent'" class="lib-expanded-live-pill cyan">
-              当前正在浏览
-            </span>
-          </div>
-
-          <div class="lib-card-title-row">
-            <h3 class="lib-card-title">最近播放</h3>
-            <span class="lib-card-count-pill">{{ store.recentHistorySongs.length }} 首</span>
-            <span v-if="expandedTopCard === 'recent' && recentHiResCount > 0" class="lib-card-quality-pill">
-              ✦ {{ recentHiResCount }} 首无损/母带
-            </span>
-            <span v-if="expandedTopCard === 'recent'" class="lib-card-duration-pill">
-              累计 {{ recentTotalDurationText }}
-            </span>
-          </div>
-
-          <!-- 常态三卡并列时显示前两首预览 -->
-          <div v-if="expandedTopCard !== 'recent'" class="lib-card-tracks-preview">
-            <div v-if="store.recentHistorySongs[0]" class="lib-preview-line">
-              <span class="lp-icon">♪</span>
-              <span class="lp-song">{{ store.recentHistorySongs[0].title }}</span>
-              <span class="lp-artist">- {{ store.recentHistorySongs[0].artist }}</span>
-              <span v-if="store.recentHistorySongs[0].hasHiRes" class="lp-mini-tag">Hi-Res</span>
-              <span v-else-if="store.recentHistorySongs[0].hasSq" class="lp-mini-tag">SQ</span>
-            </div>
-            <div v-if="store.recentHistorySongs[1]" class="lib-preview-line secondary">
-              <span class="lp-icon">♪</span>
-              <span class="lp-song">{{ store.recentHistorySongs[1].title }}</span>
-              <span class="lp-artist">- {{ store.recentHistorySongs[1].artist }}</span>
-            </div>
-            <div v-if="!store.recentHistorySongs[0]" class="lib-preview-line">
-              <span>自动记录本机与云端最近播放曲目与听歌轨迹</span>
-            </div>
-          </div>
-
-          <!-- 横向占满展开态时的专属副文案与快捷操作栏 -->
-          <div v-else class="lib-card-expanded-sub">
-            <p class="lib-expanded-desc">
-              实时串联桌面端与移动端概念版听歌历史 · 随时回溯每一段近期聆听足迹
-            </p>
-            <div class="lib-expanded-quick-btns" @click.stop>
-              <button class="lib-exp-action-btn primary" @click.stop="playAllRecent">
-                <PlumpIcon name="play" :size="15" color="#fff" />
-                <span>连播最近足迹</span>
-              </button>
-              <button class="lib-exp-action-btn" @click.stop="shufflePlayRecent">
-                <PlumpIcon name="shuffle" :size="15" color="#fff" />
-                <span>随机漫游</span>
-              </button>
-              <button class="lib-exp-action-btn" @click.stop="store.loadRecentHistory()">
-                <PlumpIcon name="refresh" :size="15" color="#fff" />
-                <span>刷新历史</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 横向占满展开态专属：中部最近播放曲目玻璃微卡走廊 -->
+        <!-- 展开态平滑浮现的最近播放画廊 -->
         <div
-          v-if="expandedTopCard === 'recent' && store.recentHistorySongs.length > 0"
-          class="lib-expanded-showcase-strip"
+          class="lib-card-expanded-gallery"
+          :class="{ 'is-visible': expandedTopCard === 'recent' }"
           @click.stop
         >
           <div
             v-for="song in store.recentHistorySongs.slice(0, 3)"
             :key="song.hash"
-            class="lib-exp-mini-track"
+            class="lib-gallery-track-pill"
             :class="{ playing: store.currentSong?.hash === song.hash }"
             @click.stop="store.playSongFromList(song, store.recentHistorySongs)"
           >
-            <img :src="song.coverUrl" class="lemt-cover" draggable="false" alt="" />
-            <div class="lemt-meta">
-              <div class="lemt-title-row">
-                <span class="lemt-title">{{ song.title }}</span>
-                <span v-if="song.hasHiRes" class="lemt-badge">Hi-Res</span>
-                <span v-else-if="song.hasSq" class="lemt-badge">SQ</span>
-              </div>
-              <div class="lemt-artist">{{ song.artist }}</div>
+            <img :src="song.coverUrl" class="lgtp-cover" draggable="false" alt="" />
+            <div class="lgtp-info">
+              <div class="lgtp-title">{{ song.title }}</div>
+              <div class="lgtp-artist">{{ song.artist }}</div>
             </div>
           </div>
         </div>
@@ -287,24 +235,32 @@
         <div class="lib-card-right-zone" @click.stop>
           <button
             v-if="expandedTopCard === 'recent'"
-            class="lib-exp-collapse-pill"
-            title="收起展开态，恢复顶部三卡并列视图"
+            class="lib-card-glass-btn"
+            title="随机播放最近听过"
+            @click.stop="shufflePlayRecent"
+          >
+            <PlumpIcon name="shuffle" :size="15" color="#fff" />
+            <span>随机漫游</span>
+          </button>
+          <button
+            v-if="expandedTopCard === 'recent'"
+            class="lib-card-icon-orb"
+            title="收起展开态"
             @click.stop="collapseExpandedTopCard"
           >
-            <PlumpIcon name="back" :size="15" color="#fff" />
-            <span>收起卡片</span>
+            <PlumpIcon name="close" :size="14" color="#fff" />
           </button>
           <button
             class="lib-card-play-fab blue"
             title="立即播放最近听过"
             @click.stop="playAllRecent"
           >
-            <PlumpIcon name="play" :size="23" color="#fff" />
+            <PlumpIcon name="play" :size="20" color="#fff" />
           </button>
         </div>
       </div>
 
-      <!-- 3. 心流舱 · Focus Pod（位于右侧：独立模态声学舱表现形式，当左/中卡展开时自然向右滑出消失） -->
+      <!-- 3. 心流舱 · Focus Pod（右卡：独立表现形式，左/中卡展开时自然向右退场） -->
       <div
         class="lib-stereo-card focus-stereo-card"
         :class="{
@@ -314,31 +270,28 @@
       >
         <div class="lib-card-ambient-orb mint-orb"></div>
 
-        <div class="lib-card-visual enlarged">
-          <div class="lib-visual-front focus-orb-visual">
-            <div class="focus-orb-ring"></div>
-            <div class="focus-orb-ring inner"></div>
-            <PlumpIcon name="sparkles" :size="30" color="#fff" />
-          </div>
-        </div>
-
-        <div class="lib-card-copy">
-          <div class="lib-card-eyebrow">
-            <span class="lib-eyebrow-dot mint"></span>
-            <span>FOCUS POD · 概念心流专注舱</span>
-          </div>
-          <div class="lib-card-title-row">
-            <h3 class="lib-card-title">心流舱</h3>
-            <span class="lib-card-count-pill">番茄钟 × 白噪音</span>
-          </div>
-          <div class="lib-card-tracks-preview">
-            <div class="lib-preview-line">
-              <span class="lp-icon">✦</span>
-              <span class="lp-song">雨声 · 潮汐 · 篝火 · 黑胶底噪四轨混音</span>
+        <div class="lib-card-main-left">
+          <div class="lib-card-visual">
+            <div class="lib-visual-front focus-orb-visual">
+              <div class="focus-orb-ring"></div>
+              <div class="focus-orb-ring inner"></div>
+              <PlumpIcon name="sparkles" :size="26" color="#fff" />
             </div>
-            <div class="lib-preview-line secondary">
-              <span class="lp-icon">✦</span>
-              <span class="lp-artist">点击开启沉浸式专注计时器与环境声场伴听</span>
+          </div>
+
+          <div class="lib-card-copy">
+            <div class="lib-card-eyebrow">FOCUS POD · 概念专注舱</div>
+            <div class="lib-card-title-row">
+              <h3 class="lib-card-title">心流舱</h3>
+              <span class="lib-card-count-pill">白噪音 × 番茄钟</span>
+            </div>
+            <div class="lib-card-meta-stream">
+              <div class="lib-preview-line">
+                <span class="lp-song">雨声 · 潮汐 · 篝火 · 黑胶底噪</span>
+              </div>
+              <div class="lib-preview-line secondary">
+                <span>四轨环境声混音与专注计时</span>
+              </div>
             </div>
           </div>
         </div>
@@ -349,40 +302,53 @@
             title="开启概念心流舱"
             @click.stop="store.isFocusPodOpen = true"
           >
-            <PlumpIcon name="compass" :size="23" color="#fff" />
+            <PlumpIcon name="compass" :size="20" color="#fff" />
           </button>
         </div>
       </div>
     </section>
 
-    <!-- ==================== 分类标题与全局工具通栏：四个标题紧凑排布 + 短横条指示器，最右侧为新建/导入/视图切换 ==================== -->
+    <!-- ==================== 分类标题与工具栏：已购右侧新增收起/展开左侧栏按钮，右侧删除多余提示文字 ==================== -->
     <div class="library-category-header-bar">
-      <div class="app-sliding-tabs lib-horizontal-tabs">
+      <div class="lib-category-left-group">
+        <div class="app-sliding-tabs lib-horizontal-tabs">
+          <button
+            v-for="tab in assetTabs"
+            :key="tab.id"
+            class="app-sliding-tab-btn"
+            :class="{ active: store.libraryAssetTab === tab.id }"
+            @click="handleSelectAssetTab(tab.id)"
+          >
+            <span class="tab-label">{{ tab.label }}</span>
+            <span class="tab-count">{{ tab.count }}</span>
+            <span
+              class="tab-bottom-indicator"
+              :style="{
+                backgroundColor: tab.color,
+                opacity: store.libraryAssetTab === tab.id ? 1 : 0,
+                transform: store.libraryAssetTab === tab.id ? 'scaleX(1)' : 'scaleX(0.2)',
+              }"
+            ></span>
+          </button>
+        </div>
+
+        <!-- 在「已购」右边新增收起/展开按钮：收起后左侧仅显示小封面/小头像图标，右侧歌曲列表自然伸展 -->
         <button
-          v-for="tab in assetTabs"
-          :key="tab.id"
-          class="app-sliding-tab-btn"
-          :class="{ active: store.libraryAssetTab === tab.id }"
-          @click="handleSelectAssetTab(tab.id)"
+          class="lib-collapse-sidebar-btn"
+          :class="{ collapsed: isLeftSidebarCollapsed }"
+          :title="isLeftSidebarCollapsed ? '展开左侧歌单与歌手列表' : '收起左侧列表为小图标栏'"
+          @click="toggleLeftSidebarCollapse"
         >
-          <span class="tab-label">{{ tab.label }}</span>
-          <span class="tab-count">{{ tab.count }}</span>
-          <span
-            class="tab-bottom-indicator"
-            :style="{
-              backgroundColor: tab.color,
-              opacity: store.libraryAssetTab === tab.id ? 1 : 0,
-              transform: store.libraryAssetTab === tab.id ? 'scaleX(1)' : 'scaleX(0.2)',
-            }"
-          ></span>
+          <PlumpIcon
+            :name="isLeftSidebarCollapsed ? 'chevron-right' : 'arrow-left'"
+            :size="15"
+          />
+          <span>{{ isLeftSidebarCollapsed ? "展开" : "收起" }}</span>
         </button>
       </div>
 
-      <!-- 最右侧：创建歌单、导入外部歌单、视图切换 纯 UI 图标按钮 -->
+      <!-- 最右侧：创建歌单、导入外部歌单、视图切换 纯 UI 图标按钮（已删除“长按可拖动排序”字样） -->
       <div class="lib-top-right-icon-tools">
-        <span class="lib-drag-tip-hint" title="鼠标左键长按任意歌单、关注歌手或已购项即可上下/左右拖动排序">
-          长按可拖动排序
-        </span>
         <button
           class="frameless-icon-square-btn"
           title="新建自建歌单"
@@ -398,6 +364,7 @@
           <PlumpIcon name="upload" :size="18" />
         </button>
         <button
+          v-if="!isLeftSidebarCollapsed"
           class="frameless-icon-square-btn"
           :title="store.isLibraryGridView ? '切换左侧歌单为列表视图' : '切换左侧歌单为宫格视图'"
           @click="store.isLibraryGridView = !store.isLibraryGridView"
@@ -407,193 +374,194 @@
       </div>
     </div>
 
-    <!-- ==================== 分类标题以下、播放控制栏以上：左/右双独立无框滑动浏览区域 ==================== -->
-    <section class="library-dual-independent-stage">
-      <!-- 左侧独立滚动区（全面屏蔽浏览器图片默认右键菜单，支持点击高光选中与鼠标左键长按拖动排序） -->
+    <!-- ==================== 全屏双区展示舞台（无硬边界截断，左右两区各自独立上下滚动，左侧收起时右侧自然伸展） ==================== -->
+    <section
+      class="library-dual-independent-stage"
+      :class="{ 'is-left-collapsed': isLeftSidebarCollapsed }"
+    >
+      <!-- 左侧独立滑动区域（支持展开态宫格/列表 & 收起态紧凑小封面/小头像图标栏） -->
       <aside
         class="library-left-frameless-region"
+        :class="{ 'is-collapsed-rail': isLeftSidebarCollapsed }"
         @contextmenu.prevent.stop
       >
-        <!-- A. 自建歌单 / 收藏歌单 -->
-        <template v-if="store.libraryAssetTab === 'created' || store.libraryAssetTab === 'collected'">
-          <div v-if="activePlaylistGroup.length === 0" class="lib-left-empty">
-            <PlumpIcon name="folder" :size="28" />
-            <p>{{ store.libraryAssetTab === "created" ? "暂无自建歌单，点击右上角 + 新建" : "暂无收藏歌单，点击右上角图标可导入" }}</p>
-          </div>
-
-          <!-- 宫格模式（支持点击高光选中 + 左键长按拖动排序） -->
-          <TransitionGroup
-            v-else-if="store.isLibraryGridView"
-            name="lib-drag-flip"
-            tag="div"
-            class="lib-playlist-grid"
-          >
-            <div
-              v-for="(pl, idx) in activePlaylistGroup"
-              :key="pl.id || pl.title"
-              :data-lib-drag-idx="idx"
-              class="lib-pl-grid-item"
-              :class="{
-                active: isPlaylistHighlighted(pl),
-                'is-dragging-item': dragState.active && dragState.fromIdx === idx,
-                'is-drag-over-item': dragState.active && dragState.overIdx === idx && dragState.fromIdx !== idx,
-              }"
-              @mousedown="onLeftItemMouseDown($event, idx)"
-              @click="onLeftItemClick(() => selectPlaylistToRight(pl))"
-              @contextmenu.prevent.stop="onLeftPlaylistRightClick(pl)"
+        <!-- ==================== 形态 1：左侧收起态（根据当前分类标题仅显示小封面或歌手小头像） ==================== -->
+        <template v-if="isLeftSidebarCollapsed">
+          <!-- A. 自建 / 收藏歌单小封面图标列 -->
+          <template v-if="store.libraryAssetTab === 'created' || store.libraryAssetTab === 'collected'">
+            <TransitionGroup
+              name="lib-drag-flip"
+              tag="div"
+              class="lib-collapsed-mini-rail"
             >
-              <div class="lib-pl-cover-wrap">
+              <div
+                v-for="(pl, idx) in activePlaylistGroup"
+                :key="pl.id || pl.title"
+                :data-lib-drag-idx="idx"
+                class="lib-mini-rail-item"
+                :class="{
+                  active: isPlaylistHighlighted(pl),
+                  'is-dragging-item': dragState.active && dragState.fromIdx === idx,
+                  'is-drag-over-item': dragState.active && dragState.overIdx === idx && dragState.fromIdx !== idx,
+                }"
+                :title="`${pl.name || pl.title} (${pl.trackCount}首)`"
+                @mousedown="onLeftItemMouseDown($event, idx)"
+                @click="onLeftItemClick(() => selectPlaylistToRight(pl))"
+                @contextmenu.prevent.stop="onLeftPlaylistRightClick(pl)"
+              >
                 <img
                   :src="pl.coverUrl"
-                  class="lib-pl-cover"
+                  class="lib-mini-rail-img"
                   loading="lazy"
                   draggable="false"
                   alt=""
                   @contextmenu.prevent.stop
                 />
-                <span class="lib-pl-count-tag">{{ pl.trackCount }}首</span>
-                <div v-if="isPlaylistHighlighted(pl)" class="lib-pl-selected-glow-badge">
-                  <PlumpIcon name="wave" :size="13" color="#fff" />
-                </div>
               </div>
-              <div class="lib-pl-name">{{ pl.name || pl.title }}</div>
-            </div>
-          </TransitionGroup>
+            </TransitionGroup>
+          </template>
 
-          <!-- 列表模式（支持点击高光选中 + 左键长按拖动排序） -->
-          <TransitionGroup
-            v-else
-            name="lib-drag-flip"
-            tag="div"
-            class="lib-playlist-list"
-          >
-            <div
-              v-for="(pl, idx) in activePlaylistGroup"
-              :key="pl.id || pl.title"
-              :data-lib-drag-idx="idx"
-              class="lib-pl-row-item"
-              :class="{
-                active: isPlaylistHighlighted(pl),
-                'is-dragging-item': dragState.active && dragState.fromIdx === idx,
-                'is-drag-over-item': dragState.active && dragState.overIdx === idx && dragState.fromIdx !== idx,
-              }"
-              @mousedown="onLeftItemMouseDown($event, idx)"
-              @click="onLeftItemClick(() => selectPlaylistToRight(pl))"
-              @contextmenu.prevent.stop="onLeftPlaylistRightClick(pl)"
+          <!-- B. 关注歌手小头像图标列 -->
+          <template v-else-if="store.libraryAssetTab === 'artists'">
+            <TransitionGroup
+              name="lib-drag-flip"
+              tag="div"
+              class="lib-collapsed-mini-rail"
             >
-              <img
-                :src="pl.coverUrl"
-                class="lib-pl-row-cover"
-                loading="lazy"
-                draggable="false"
-                alt=""
+              <div
+                v-for="(art, idx) in store.followedArtists"
+                :key="art.singerId || art.artistId || art.name"
+                :data-lib-drag-idx="idx"
+                class="lib-mini-rail-item round"
+                :class="{
+                  active: isArtistHighlighted(art),
+                  'is-dragging-item': dragState.active && dragState.fromIdx === idx,
+                  'is-drag-over-item': dragState.active && dragState.overIdx === idx && dragState.fromIdx !== idx,
+                }"
+                :title="art.name"
+                @mousedown="onLeftItemMouseDown($event, idx)"
+                @click="onLeftItemClick(() => selectArtistToRight(art))"
                 @contextmenu.prevent.stop
-              />
-              <div class="lib-pl-row-meta">
-                <div class="lib-pl-row-name">{{ pl.name || pl.title }}</div>
-                <div class="lib-pl-row-sub">
-                  {{ pl.trackCount }} 首 · {{ pl.creatorName || "概念版歌单" }}
-                </div>
-              </div>
-              <button
-                v-if="store.libraryAssetTab === 'created' && pl.listId > 0"
-                class="frameless-icon-square-btn danger-hover"
-                title="删除歌单"
-                @mousedown.stop
-                @click.stop="confirmDeletePlaylist(pl)"
               >
-                <PlumpIcon name="trash" :size="14" />
-              </button>
-            </div>
-          </TransitionGroup>
-        </template>
-
-        <!-- B. 关注歌手列表（支持点击高光选中 + 左键长按拖动排序） -->
-        <template v-else-if="store.libraryAssetTab === 'artists'">
-          <div v-if="store.followedArtists.length === 0" class="lib-left-empty">
-            <PlumpIcon name="user" :size="28" />
-            <p>暂无关注的歌手</p>
-          </div>
-          <TransitionGroup
-            v-else
-            name="lib-drag-flip"
-            tag="div"
-            class="lib-playlist-list"
-          >
-            <div
-              v-for="(art, idx) in store.followedArtists"
-              :key="art.singerId || art.artistId || art.name"
-              :data-lib-drag-idx="idx"
-              class="lib-pl-row-item"
-              :class="{
-                active: isArtistHighlighted(art),
-                'is-dragging-item': dragState.active && dragState.fromIdx === idx,
-                'is-drag-over-item': dragState.active && dragState.overIdx === idx && dragState.fromIdx !== idx,
-              }"
-              @mousedown="onLeftItemMouseDown($event, idx)"
-              @click="onLeftItemClick(() => selectArtistToRight(art))"
-              @contextmenu.prevent.stop
-            >
-              <img
-                :src="art.avatarUrl"
-                class="lib-pl-row-cover round"
-                loading="lazy"
-                draggable="false"
-                alt=""
-                @contextmenu.prevent.stop
-              />
-              <div class="lib-pl-row-meta">
-                <div class="lib-pl-row-name">{{ art.name }}</div>
-                <div class="lib-pl-row-sub">
-                  {{ art.albumCount ? `${art.albumCount} 张专辑` : "已关注音乐人" }}
-                </div>
-              </div>
-              <PlumpIcon name="chevron-right" :size="14" />
-            </div>
-          </TransitionGroup>
-        </template>
-
-        <!-- C. 已购数字专辑与单曲（支持点击高光选中 + 左键长按拖动排序） -->
-        <template v-else-if="store.libraryAssetTab === 'purchased'">
-          <div
-            v-if="purchasedCombinedEntries.length === 0"
-            class="lib-left-empty"
-          >
-            <PlumpIcon name="disc" :size="28" />
-            <p>暂无已购数字专辑或单曲</p>
-          </div>
-          <TransitionGroup
-            v-else
-            name="lib-drag-flip"
-            tag="div"
-            class="lib-playlist-list"
-          >
-            <div
-              v-for="(entry, idx) in purchasedCombinedEntries"
-              :key="entry.key"
-              :data-lib-drag-idx="idx"
-              class="lib-pl-row-item"
-              :class="{
-                active: isPurchasedEntryHighlighted(entry),
-                'is-dragging-item': dragState.active && dragState.fromIdx === idx,
-                'is-drag-over-item': dragState.active && dragState.overIdx === idx && dragState.fromIdx !== idx,
-              }"
-              @mousedown="onLeftItemMouseDown($event, idx)"
-              @click="onLeftItemClick(() => selectPurchasedEntryToRight(entry))"
-              @contextmenu.prevent.stop
-            >
-              <template v-if="entry.kind === 'songs'">
-                <div class="lib-purchased-icon-cover">
-                  <PlumpIcon name="sparkles" :size="20" color="#fff" />
-                </div>
-                <div class="lib-pl-row-meta">
-                  <div class="lib-pl-row-name">已购尊享单曲合集</div>
-                  <div class="lib-pl-row-sub">共 {{ store.purchasedSongs.length }} 首已购曲目</div>
-                </div>
-              </template>
-              <template v-else-if="entry.album">
                 <img
+                  :src="art.avatarUrl"
+                  class="lib-mini-rail-img round"
+                  loading="lazy"
+                  draggable="false"
+                  alt=""
+                  @contextmenu.prevent.stop
+                />
+              </div>
+            </TransitionGroup>
+          </template>
+
+          <!-- C. 已购音乐小封面图标列 -->
+          <template v-else-if="store.libraryAssetTab === 'purchased'">
+            <TransitionGroup
+              name="lib-drag-flip"
+              tag="div"
+              class="lib-collapsed-mini-rail"
+            >
+              <div
+                v-for="(entry, idx) in purchasedCombinedEntries"
+                :key="entry.key"
+                :data-lib-drag-idx="idx"
+                class="lib-mini-rail-item"
+                :class="{
+                  active: isPurchasedEntryHighlighted(entry),
+                  'is-dragging-item': dragState.active && dragState.fromIdx === idx,
+                  'is-drag-over-item': dragState.active && dragState.overIdx === idx && dragState.fromIdx !== idx,
+                }"
+                :title="entry.kind === 'songs' ? `已购尊享单曲合集 (${store.purchasedSongs.length}首)` : `${entry.album?.albumName || ''}`"
+                @mousedown="onLeftItemMouseDown($event, idx)"
+                @click="onLeftItemClick(() => selectPurchasedEntryToRight(entry))"
+                @contextmenu.prevent.stop
+              >
+                <div v-if="entry.kind === 'songs'" class="lib-mini-rail-fallback">
+                  <PlumpIcon name="sparkles" :size="17" color="#fff" />
+                </div>
+                <img
+                  v-else-if="entry.album"
                   :src="entry.album.coverUrl"
+                  class="lib-mini-rail-img"
+                  loading="lazy"
+                  draggable="false"
+                  alt=""
+                  @contextmenu.prevent.stop
+                />
+              </div>
+            </TransitionGroup>
+          </template>
+        </template>
+
+        <!-- ==================== 形态 2：左侧常规展开态 ==================== -->
+        <template v-else>
+          <!-- A. 自建歌单 / 收藏歌单 -->
+          <template v-if="store.libraryAssetTab === 'created' || store.libraryAssetTab === 'collected'">
+            <div v-if="activePlaylistGroup.length === 0" class="lib-left-empty">
+              <PlumpIcon name="folder" :size="28" />
+              <p>{{ store.libraryAssetTab === "created" ? "暂无自建歌单，点击右上角 + 新建" : "暂无收藏歌单，点击右上角图标可导入" }}</p>
+            </div>
+
+            <!-- 宫格模式 -->
+            <TransitionGroup
+              v-else-if="store.isLibraryGridView"
+              name="lib-drag-flip"
+              tag="div"
+              class="lib-playlist-grid"
+            >
+              <div
+                v-for="(pl, idx) in activePlaylistGroup"
+                :key="pl.id || pl.title"
+                :data-lib-drag-idx="idx"
+                class="lib-pl-grid-item"
+                :class="{
+                  active: isPlaylistHighlighted(pl),
+                  'is-dragging-item': dragState.active && dragState.fromIdx === idx,
+                  'is-drag-over-item': dragState.active && dragState.overIdx === idx && dragState.fromIdx !== idx,
+                }"
+                @mousedown="onLeftItemMouseDown($event, idx)"
+                @click="onLeftItemClick(() => selectPlaylistToRight(pl))"
+                @contextmenu.prevent.stop="onLeftPlaylistRightClick(pl)"
+              >
+                <div class="lib-pl-cover-wrap">
+                  <img
+                    :src="pl.coverUrl"
+                    class="lib-pl-cover"
+                    loading="lazy"
+                    draggable="false"
+                    alt=""
+                    @contextmenu.prevent.stop
+                  />
+                  <span class="lib-pl-count-tag">{{ pl.trackCount }}首</span>
+                </div>
+                <div class="lib-pl-name">{{ pl.name || pl.title }}</div>
+              </div>
+            </TransitionGroup>
+
+            <!-- 列表模式 -->
+            <TransitionGroup
+              v-else
+              name="lib-drag-flip"
+              tag="div"
+              class="lib-playlist-list"
+            >
+              <div
+                v-for="(pl, idx) in activePlaylistGroup"
+                :key="pl.id || pl.title"
+                :data-lib-drag-idx="idx"
+                class="lib-pl-row-item"
+                :class="{
+                  active: isPlaylistHighlighted(pl),
+                  'is-dragging-item': dragState.active && dragState.fromIdx === idx,
+                  'is-drag-over-item': dragState.active && dragState.overIdx === idx && dragState.fromIdx !== idx,
+                }"
+                @mousedown="onLeftItemMouseDown($event, idx)"
+                @click="onLeftItemClick(() => selectPlaylistToRight(pl))"
+                @contextmenu.prevent.stop="onLeftPlaylistRightClick(pl)"
+              >
+                <img
+                  :src="pl.coverUrl"
                   class="lib-pl-row-cover"
                   loading="lazy"
                   draggable="false"
@@ -601,21 +569,133 @@
                   @contextmenu.prevent.stop
                 />
                 <div class="lib-pl-row-meta">
-                  <div class="lib-pl-row-name">{{ entry.album.albumName }}</div>
-                  <div class="lib-pl-row-sub">{{ entry.album.singerName }} · {{ entry.album.songCount }} 首</div>
+                  <div class="lib-pl-row-name">{{ pl.name || pl.title }}</div>
+                  <div class="lib-pl-row-sub">
+                    {{ pl.trackCount }} 首 · {{ pl.creatorName || "概念版歌单" }}
+                  </div>
                 </div>
-              </template>
+                <button
+                  v-if="store.libraryAssetTab === 'created' && pl.listId > 0"
+                  class="frameless-icon-square-btn danger-hover"
+                  title="删除歌单"
+                  @mousedown.stop
+                  @click.stop="confirmDeletePlaylist(pl)"
+                >
+                  <PlumpIcon name="trash" :size="14" />
+                </button>
+              </div>
+            </TransitionGroup>
+          </template>
+
+          <!-- B. 关注歌手列表 -->
+          <template v-else-if="store.libraryAssetTab === 'artists'">
+            <div v-if="store.followedArtists.length === 0" class="lib-left-empty">
+              <PlumpIcon name="user" :size="28" />
+              <p>暂无关注的歌手</p>
             </div>
-          </TransitionGroup>
+            <TransitionGroup
+              v-else
+              name="lib-drag-flip"
+              tag="div"
+              class="lib-playlist-list"
+            >
+              <div
+                v-for="(art, idx) in store.followedArtists"
+                :key="art.singerId || art.artistId || art.name"
+                :data-lib-drag-idx="idx"
+                class="lib-pl-row-item"
+                :class="{
+                  active: isArtistHighlighted(art),
+                  'is-dragging-item': dragState.active && dragState.fromIdx === idx,
+                  'is-drag-over-item': dragState.active && dragState.overIdx === idx && dragState.fromIdx !== idx,
+                }"
+                @mousedown="onLeftItemMouseDown($event, idx)"
+                @click="onLeftItemClick(() => selectArtistToRight(art))"
+                @contextmenu.prevent.stop
+              >
+                <img
+                  :src="art.avatarUrl"
+                  class="lib-pl-row-cover round"
+                  loading="lazy"
+                  draggable="false"
+                  alt=""
+                  @contextmenu.prevent.stop
+                />
+                <div class="lib-pl-row-meta">
+                  <div class="lib-pl-row-name">{{ art.name }}</div>
+                  <div class="lib-pl-row-sub">
+                    {{ art.albumCount ? `${art.albumCount} 张专辑` : "已关注音乐人" }}
+                  </div>
+                </div>
+                <PlumpIcon name="chevron-right" :size="14" />
+              </div>
+            </TransitionGroup>
+          </template>
+
+          <!-- C. 已购数字专辑与单曲 -->
+          <template v-else-if="store.libraryAssetTab === 'purchased'">
+            <div
+              v-if="purchasedCombinedEntries.length === 0"
+              class="lib-left-empty"
+            >
+              <PlumpIcon name="disc" :size="28" />
+              <p>暂无已购数字专辑或单曲</p>
+            </div>
+            <TransitionGroup
+              v-else
+              name="lib-drag-flip"
+              tag="div"
+              class="lib-playlist-list"
+            >
+              <div
+                v-for="(entry, idx) in purchasedCombinedEntries"
+                :key="entry.key"
+                :data-lib-drag-idx="idx"
+                class="lib-pl-row-item"
+                :class="{
+                  active: isPurchasedEntryHighlighted(entry),
+                  'is-dragging-item': dragState.active && dragState.fromIdx === idx,
+                  'is-drag-over-item': dragState.active && dragState.overIdx === idx && dragState.fromIdx !== idx,
+                }"
+                @mousedown="onLeftItemMouseDown($event, idx)"
+                @click="onLeftItemClick(() => selectPurchasedEntryToRight(entry))"
+                @contextmenu.prevent.stop
+              >
+                <template v-if="entry.kind === 'songs'">
+                  <div class="lib-purchased-icon-cover">
+                    <PlumpIcon name="sparkles" :size="20" color="#fff" />
+                  </div>
+                  <div class="lib-pl-row-meta">
+                    <div class="lib-pl-row-name">已购尊享单曲合集</div>
+                    <div class="lib-pl-row-sub">共 {{ store.purchasedSongs.length }} 首已购曲目</div>
+                  </div>
+                </template>
+                <template v-else-if="entry.album">
+                  <img
+                    :src="entry.album.coverUrl"
+                    class="lib-pl-row-cover"
+                    loading="lazy"
+                    draggable="false"
+                    alt=""
+                    @contextmenu.prevent.stop
+                  />
+                  <div class="lib-pl-row-meta">
+                    <div class="lib-pl-row-name">{{ entry.album.albumName }}</div>
+                    <div class="lib-pl-row-sub">{{ entry.album.singerName }} · {{ entry.album.songCount }} 首</div>
+                  </div>
+                </template>
+              </div>
+            </TransitionGroup>
+          </template>
         </template>
       </aside>
 
-      <!-- 右侧独立歌曲列表区域 -->
+      <!-- 右侧独立歌曲列表区域（全屏无裁剪边界，左侧收起后平滑横向伸展） -->
       <main class="library-right-frameless-region">
-        <!-- 重构后的歌曲列表顶部标题控制栏：左侧为新播放按钮，紧邻右侧为搜索，最右侧为沿用 App 端分类标题设计的排序栏（保留底部小横条） -->
+        <!-- 歌曲列表顶部标题栏：左侧新播放按钮，紧邻右侧搜索，最右侧排序（已移除搜索右侧多余的歌单标识胶囊） -->
         <div class="lib-right-frameless-header">
           <div class="lrf-left-toolbar">
-            <!-- 1. 左侧：全新设计的立体播放全部主按钮 -->
+            <!-- 1. 左侧：播放全部按钮 -->
             <button
               class="lrf-new-play-all-btn"
               :disabled="filteredAndSortedRightStageSongs.length === 0"
@@ -623,26 +703,26 @@
               @click="playAllRightStage"
             >
               <span class="lrf-play-orb">
-                <PlumpIcon name="play" :size="15" color="#ffffff" />
+                <PlumpIcon name="play" :size="14" color="#ffffff" />
               </span>
               <span class="lrf-play-label">播放全部</span>
               <span class="lrf-play-count">{{ filteredAndSortedRightStageSongs.length }}</span>
             </button>
 
-            <!-- 2. 播放按钮右侧紧邻：列表内实时搜索筛选框 -->
+            <!-- 2. 播放按钮右侧紧邻：列表内搜索框 -->
             <div class="frameless-sublist-search lrf-inline-search">
               <PlumpIcon name="search" :size="15" />
               <input
                 v-model="songFilterKw"
                 type="text"
-                :placeholder="`在「${rightStageTitle}」中搜索...`"
+                placeholder="搜索歌名 / 歌手 / 专辑..."
               />
               <button v-if="songFilterKw" class="clear-inline-btn" @click="songFilterKw = ''">
                 ×
               </button>
             </div>
 
-            <!-- 辅助：定位当前播放歌曲按钮 + 当前歌单/视图胶囊标识 -->
+            <!-- 定位当前播放歌曲按钮 -->
             <button
               v-if="isCurrentSongInRightStage"
               class="frameless-hover-btn lrf-locate-btn"
@@ -652,24 +732,9 @@
               <PlumpIcon name="locate" :size="15" />
               <span>定位</span>
             </button>
-
-            <div
-              v-if="rightStageMode !== 'liked' && rightStageMode !== 'recent'"
-              class="lrf-active-source-pill"
-              :title="rightStageTitle"
-            >
-              <img
-                v-if="rightStageCover"
-                :src="rightStageCover"
-                class="lrf-source-mini-cover"
-                draggable="false"
-                alt=""
-              />
-              <span class="lrf-source-name">{{ rightStageTitle }}</span>
-            </div>
           </div>
 
-          <!-- 3. 最右侧：沿用 App 端设计的分类排序标题栏（默认排序、歌名、歌手名、时长最长 + 底部小横条） -->
+          <!-- 3. 最右侧：沿用 App 端分类标题设计的排序栏（默认排序、歌名、歌手名、时长最长 + 小横条） -->
           <div class="app-sliding-tabs lrf-sort-sliding-tabs">
             <button
               v-for="sTab in songSortTabs"
@@ -691,7 +756,7 @@
           </div>
         </div>
 
-        <!-- 右侧独立滚动的歌曲列表容器（切换时新内容从右侧进场、旧内容从左侧退场，伴随平滑移动与高斯虚化动画） -->
+        <!-- 右侧独立滚动的歌曲列表容器（纯水平横向平滑过渡动画，适当延长动画时长） -->
         <div class="lib-right-songs-scroller">
           <transition name="lib-songs-stream">
             <div :key="songListStreamKey" class="lib-songs-stream-stage">
@@ -852,12 +917,22 @@ const expandedTopCard = ref<ExpandedTopCard>("none");
 const songFilterKw = ref("");
 const songSortMode = ref<SongSortMode>("default");
 
+// 左侧歌单/歌手/已购栏收起为小图标栏的状态（持久化记录）
+const isLeftSidebarCollapsed = ref<boolean>(
+  localStorage.getItem("bm_lib_left_collapsed") === "true"
+);
+
+function toggleLeftSidebarCollapse() {
+  isLeftSidebarCollapsed.value = !isLeftSidebarCollapsed.value;
+  localStorage.setItem("bm_lib_left_collapsed", String(isLeftSidebarCollapsed.value));
+}
+
 const showCreateModal = ref(false);
 const newPlaylistName = ref("");
 const showImportModal = ref(false);
 const importInputText = ref("");
 
-// 四个分类标题严格沿用 App 端横向滑动下横条设计：自建、收藏、关注、已购
+// 四个分类标题：自建、收藏、关注、已购
 const assetTabs = computed(() => [
   {
     id: "created" as const,
@@ -885,7 +960,7 @@ const assetTabs = computed(() => [
   },
 ]);
 
-// 歌曲列表右侧排序栏（沿用 App 端分类标题与底部小横条指示器）
+// 歌曲列表最右侧排序栏（沿用 App 端分类标题与底部小横条指示器）
 const songSortTabs: Array<{ id: SongSortMode; label: string; color: string }> = [
   { id: "default", label: "默认排序", color: "#2b8cff" },
   { id: "title", label: "歌名", color: "#00e5ff" },
@@ -903,7 +978,6 @@ const activePlaylistGroup = computed(() => {
     : store.createdPlaylists;
 });
 
-// 已购分类组合列表（统一支持单曲合集与数字专辑的点击高光与长按拖动排序）
 interface PurchasedCombinedEntry {
   key: string;
   kind: "songs" | "album";
@@ -936,7 +1010,6 @@ const purchasedCombinedEntries = computed<PurchasedCombinedEntry[]>(() => {
   });
 });
 
-// 顶部卡片展开态统计数据（无损曲目数与总时长）
 function formatTotalHoursMinutes(songs: Song[]): string {
   const totalSec = songs.reduce((acc, s) => {
     const sec = s.durationSeconds ?? Math.floor((s.durationMs || 0) / 1000);
@@ -944,7 +1017,7 @@ function formatTotalHoursMinutes(songs: Song[]): string {
   }, 0);
   const hours = Math.floor(totalSec / 3600);
   const mins = Math.max(1, Math.floor((totalSec % 3600) / 60));
-  return hours > 0 ? `${hours} 小时 ${mins} 分` : `${mins} 分钟`;
+  return hours > 0 ? `约 ${hours} 小时 ${mins} 分` : `约 ${mins} 分钟`;
 }
 
 const likedHiResCount = computed(
@@ -957,7 +1030,6 @@ const recentHiResCount = computed(
 );
 const recentTotalDurationText = computed(() => formatTotalHoursMinutes(store.recentHistorySongs));
 
-// 左侧列表项选中高光判断（与顶部我喜欢/最近播放横向占满状态严格互斥联动）
 function isPlaylistHighlighted(pl: PlaylistItem): boolean {
   if (expandedTopCard.value !== "none") return false;
   if (rightStageMode.value !== "playlist") return false;
@@ -1054,12 +1126,11 @@ function selectPurchasedEntryToRight(entry: PurchasedCombinedEntry) {
   }
 }
 
-// 屏蔽左侧歌单浏览器默认图片右键菜单（为后续自定义歌单重命名/删除/分享菜单预留干净钩子）
 function onLeftPlaylistRightClick(_pl: PlaylistItem) {
-  // 已通过 @contextmenu.prevent.stop 彻底拦截 WebView 默认图像菜单
+  // 拦截浏览器原生图片菜单，预留后续歌单右键菜单能力
 }
 
-// ==================== 鼠标左键长按拖动排序引擎（支持自建、收藏、关注、已购） ====================
+// ==================== 鼠标左键长按拖动排序引擎（支持展开态与小图标收起态） ====================
 const dragState = reactive<{
   active: boolean;
   fromIdx: number;
@@ -1213,7 +1284,6 @@ const filteredAndSortedRightStageSongs = computed<Song[]>(() => {
   return sorted;
 });
 
-// 用于触发歌曲列表“新内容从右侧进场、旧内容从左侧退场 + 高斯模糊”动画的唯一标识
 const songListStreamKey = computed(() => {
   let entityId = "";
   if (rightStageMode.value === "playlist") {
@@ -1224,40 +1294,6 @@ const songListStreamKey = computed(() => {
     entityId = String(store.activeAlbumDetail?.albumId || "");
   }
   return `${rightStageMode.value}__${entityId}__${songSortMode.value}`;
-});
-
-const rightStageTitle = computed(() => {
-  switch (rightStageMode.value) {
-    case "liked":
-      return "我喜欢的音乐";
-    case "recent":
-      return "最近播放记录";
-    case "playlist":
-      return store.selectedPlaylist?.name || store.selectedPlaylist?.title || "精选歌单";
-    case "artist":
-      return store.activeArtistDetail?.name || "关注歌手代表作";
-    case "album":
-      return store.activeAlbumDetail?.albumName || "已购数字专辑";
-    case "purchased_songs":
-      return "已购尊享单曲";
-  }
-});
-
-const rightStageCover = computed(() => {
-  switch (rightStageMode.value) {
-    case "liked":
-      return store.likedSongs[0]?.coverUrl || store.likedPlaylistMeta?.coverUrl || "";
-    case "recent":
-      return store.recentHistorySongs[0]?.coverUrl || "";
-    case "playlist":
-      return store.selectedPlaylist?.coverUrl || store.playlistSongs[0]?.coverUrl || "";
-    case "artist":
-      return store.activeArtistDetail?.avatarUrl || "";
-    case "album":
-      return store.activeAlbumDetail?.coverUrl || "";
-    case "purchased_songs":
-      return (store.purchasedSongs[0] as any)?.song?.coverUrl || (store.purchasedSongs[0] as any)?.coverUrl || "";
-  }
 });
 
 function playAllLiked() {

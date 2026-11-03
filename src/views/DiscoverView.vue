@@ -480,7 +480,7 @@
               <button
                 class="frameless-hover-btn"
                 title="查看全部新歌速递"
-                @click="store.discoverSubView = 'new_songs'"
+                @click="openNewSongsSubpage"
               >
                 <span>查看全部</span>
                 <PlumpIcon name="chevron-right" :size="15" />
@@ -1148,7 +1148,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useAppStore } from "../stores/appStore";
 import { formatDuration } from "../api/kugou";
 import type { FmChannel, RankItem, Song } from "../types";
@@ -1157,6 +1157,30 @@ import PlumpIcon from "../components/PlumpIcon.vue";
 const store = useAppStore();
 
 const heroSongFilter = ref("");
+function scrollDiscoverStageToTop() {
+  const stage = document.querySelector(".skyline-stage-viewport") as HTMLElement | null;
+  if (stage) {
+    stage.scrollTop = 0;
+  }
+}
+
+watch(
+  () => store.discoverSubView,
+  () => {
+    scrollDiscoverStageToTop();
+    nextTick(() => {
+      scrollDiscoverStageToTop();
+      requestAnimationFrame(scrollDiscoverStageToTop);
+    });
+  }
+);
+
+function openNewSongsSubpage() {
+  store.discoverSubView = "new_songs";
+  scrollDiscoverStageToTop();
+  nextTick(scrollDiscoverStageToTop);
+}
+
 const newSongSearchKw = ref("");
 
 const isDailyExpandedMode = computed(
@@ -1474,6 +1498,8 @@ function playFmChannelFromHome(ch: FmChannel) {
 
 function openRadioPlaza() {
   store.discoverSubView = "radio";
+  scrollDiscoverStageToTop();
+  nextTick(scrollDiscoverStageToTop);
   if (!store.activeFmChannel && store.fmChannels.length > 0) {
     store.activeFmChannel = store.fmChannels[0];
     store.loadFmStationSongs(store.fmChannels[0].id, false, false);

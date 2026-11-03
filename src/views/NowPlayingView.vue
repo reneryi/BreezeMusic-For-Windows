@@ -1330,7 +1330,7 @@ async function handleSendComment() {
                 v-model="newCommentText"
                 type="text"
                 class="plump-text-input"
-                style="padding: 7px 14px; font-size: 12.5px"
+                style="padding: 7px 14px; font-size: 14.5px"
                 :placeholder="
                   replyTargetComment
                     ? `回复 @${replyTargetComment.userName}...`
@@ -1450,14 +1450,14 @@ async function handleSendComment() {
                     store.isLoadingFloorReplies &&
                     !store.floorRepliesMap[cmt.id]?.length
                   "
-                  style="font-size: 12px; color: var(--text-secondary)"
+                  style="font-size: 14px; color: var(--text-secondary)"
                 >
                   正在拉取楼层回复...
                 </div>
                 <div
                   v-for="rep in store.floorRepliesMap[cmt.id] || []"
                   :key="rep.id"
-                  style="font-size: 12.5px; line-height: 1.5"
+                  style="font-size: 14.5px; line-height: 1.5"
                 >
                   <strong style="color: var(--cyan)">{{ rep.userName }}：</strong>
                   <span>{{ rep.content }}</span>

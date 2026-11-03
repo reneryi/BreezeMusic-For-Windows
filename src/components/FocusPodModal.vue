@@ -191,7 +191,7 @@ onUnmounted(() => {
       class="modal-backdrop"
       @click.self="store.isFocusPodOpen = false"
     >
-      <div class="compact-glass-modal" style="width: 520px">
+      <div class="compact-glass-modal" style="width: 560px">
         <div class="modal-header">
           <div class="vip-title-row">
             <div class="vip-icon-orb cyan">
@@ -261,8 +261,8 @@ onUnmounted(() => {
               <div style="display: flex; align-items: center; gap: 8px">
                 <PlumpIcon :name="ch.icon" :size="17" color="var(--cyan)" />
                 <div>
-                  <div style="font-weight: 800; font-size: 13px">{{ ch.label }}</div>
-                  <div style="font-size: 11px; color: var(--text-secondary)">
+                  <div style="font-weight: 800; font-size: 15.5px">{{ ch.label }}</div>
+                  <div style="font-size: 13.5px; color: var(--text-secondary)">
                     {{ ch.sub }}
                   </div>
                 </div>

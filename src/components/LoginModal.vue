@@ -315,14 +315,14 @@ onUnmounted(() => {
             />
             <div
               v-else
-              style="color: #0f1d33; font-weight: 700; font-size: 12.5px"
+              style="color: #0f1d33; font-weight: 700; font-size: 14.5px"
             >
               正在生成二维码...
             </div>
           </div>
           <p
             style="
-              font-size: 12.5px;
+              font-size: 14.5px;
               color: var(--text-secondary);
               text-align: center;
             "

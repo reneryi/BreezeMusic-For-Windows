@@ -1315,6 +1315,19 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
+  function scrollStageToTop() {
+    if (typeof document === "undefined") return;
+    const reset = () => {
+      const stage = document.querySelector(".skyline-stage-viewport") as HTMLElement | null;
+      if (stage) stage.scrollTop = 0;
+    };
+    reset();
+    if (typeof requestAnimationFrame !== "undefined") {
+      requestAnimationFrame(reset);
+    }
+    setTimeout(reset, 24);
+  }
+
   async function openRankDetail(rank: RankItem) {
     activeRank.value = rank;
     rankSearchKeyword.value = "";
@@ -1322,6 +1335,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     activeTab.value = "discover";
     isNowPlayingOpen.value = false;
     isRankGridModalOpen.value = false;
+    scrollStageToTop();
     isLoadingRankSongs.value = true;
     try {
       activeRankSongs.value = await kugouClient.getRankSongs(
@@ -1377,6 +1391,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     if (discoverSubView.value === "daily") return;
     discoverHeroExpanding.value = "none";
     discoverSubView.value = "daily";
+    scrollStageToTop();
   }
 
   function openGuessYouLikePage() {
@@ -1386,6 +1401,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
     discoverHeroExpanding.value = "none";
     discoverSubView.value = "fm_detail";
+    scrollStageToTop();
   }
 
   async function playRankDirectly(rank: RankItem) {
@@ -1845,6 +1861,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     artistDetailSubTab.value = "songs";
     isNowPlayingOpen.value = false;
     isSearchPaletteOpen.value = false;
+    scrollStageToTop();
     isLoadingArtist.value = true;
 
     activeArtistDetail.value = {
@@ -1906,6 +1923,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     libraryDetailMode.value = "album";
     isNowPlayingOpen.value = false;
     isSearchPaletteOpen.value = false;
+    scrollStageToTop();
     isLoadingAlbum.value = true;
 
     activeAlbumDetail.value = {

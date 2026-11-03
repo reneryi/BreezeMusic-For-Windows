@@ -888,7 +888,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useAppStore } from "../stores/appStore";
 import { formatDuration } from "../api/kugou";
 import type { FollowedArtistItem, PlaylistItem, PurchasedAlbumItem, Song } from "../types";
@@ -1316,6 +1316,15 @@ function playAllRightStage() {
     );
   }
 }
+
+watch(songListStreamKey, () => {
+  const scroller = document.querySelector(".lib-right-songs-scroller") as HTMLElement | null;
+  if (scroller) scroller.scrollTop = 0;
+  nextTick(() => {
+    const el = document.querySelector(".lib-right-songs-scroller") as HTMLElement | null;
+    if (el) el.scrollTop = 0;
+  });
+});
 
 const isCurrentSongInRightStage = computed(() => {
   if (!store.currentSong) return false;

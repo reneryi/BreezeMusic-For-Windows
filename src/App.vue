@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, computed } from "vue";
+import { onMounted, computed, ref, watch, nextTick } from "vue";
 import { useAppStore } from "./stores/appStore";
 import TitleBar from "./components/TitleBar.vue";
 import PlayerBar from "./components/PlayerBar.vue";
@@ -16,6 +16,7 @@ import SettingsPlaceholderView from "./views/SettingsPlaceholderView.vue";
 import NowPlayingView from "./views/NowPlayingView.vue";
 
 const store = useAppStore();
+const stageViewportRef = ref<HTMLElement | null>(null);
 
 const currentLyricPair = computed(() => {
   const lines = store.currentLyric.lines;
@@ -52,28 +53,33 @@ const greetingSubtitle = computed(() => {
   return "深夜静谧 · 让温柔乐音陪你入眠";
 });
 
-const canGoBack = computed(
-  () =>
-    store.isNowPlayingOpen ||
-    (store.activeTab === "discover" && store.discoverSubView !== "home") ||
-    (store.activeTab === "library" && store.libraryDetailMode !== "playlists")
-);
-
-function goBack() {
-  if (store.isNowPlayingOpen) {
-    store.isNowPlayingOpen = false;
-    return;
+function resetStageViewportScroll() {
+  if (stageViewportRef.value) {
+    stageViewportRef.value.scrollTop = 0;
   }
-  if (store.activeTab === "discover" && store.discoverSubView !== "home") {
-    store.discoverSubView = "home";
-    return;
+  const el = document.querySelector(".skyline-stage-viewport") as HTMLElement | null;
+  if (el) {
+    el.scrollTop = 0;
   }
-  if (store.activeTab === "library" && store.libraryDetailMode !== "playlists") {
-    store.libraryDetailMode = "playlists";
-    return;
-  }
-  store.activeTab = "discover";
 }
+
+// 切换任何主标签、发现页独立二级页面、我的页详情或全屏舞台时，自动重置滚动条至最顶部
+watch(
+  [
+    () => store.activeTab,
+    () => store.discoverSubView,
+    () => store.libraryDetailMode,
+    () => store.isNowPlayingOpen,
+    () => store.activeRank?.rankId,
+  ],
+  () => {
+    resetStageViewportScroll();
+    nextTick(() => {
+      resetStageViewportScroll();
+      requestAnimationFrame(resetStageViewportScroll);
+    });
+  }
+);
 
 onMounted(() => {
   store.bootstrap();
@@ -95,13 +101,14 @@ onMounted(() => {
     }"
     @click="
       store.isSearchPaletteOpen = false;
+      store.isGlobalQueueOpen = false;
       store.closeSongContextMenu();
     "
   >
     <!-- 全局浮动提示胶囊 -->
     <transition name="pop-spring">
       <div v-if="store.statusBanner" class="toast-banner">
-        <PlumpIcon name="sparkles" :size="15" color="#00e5ff" />
+        <PlumpIcon name="sparkles" :size="16" color="#00e5ff" />
         <span>{{ store.statusBanner }}</span>
       </div>
     </transition>
@@ -165,33 +172,26 @@ onMounted(() => {
 
       <div class="skyline-workspace">
         <main
+          ref="stageViewportRef"
           class="skyline-stage-viewport"
           :class="{
             'viewport-locked-library': store.activeTab === 'library' && !store.isNowPlayingOpen,
             'viewport-locked-nowplaying': store.isNowPlayingOpen,
           }"
         >
-          <!-- 左上角时段语句：置于页面内容流顶部，无标题名称，放大字号，下滑浏览时随页面自然向上消失 -->
+          <!-- 左上角时段语句：置于页面内容流顶部，无多余左上角返回按钮，下滑浏览时随页面自然向上消失 -->
           <div
             v-if="!store.isNowPlayingOpen"
             class="inflow-top-greeting-row"
             data-tauri-drag-region
           >
-            <button
-              v-if="canGoBack"
-              class="inflow-back-btn"
-              title="返回上一视图"
-              @click="goBack"
-            >
-              <PlumpIcon name="back" :size="18" />
-            </button>
             <div class="inflow-greeting-statement" data-tauri-drag-region>
               <span class="inflow-greeting-dot"></span>
               <span class="inflow-greeting-text" data-tauri-drag-region>{{ greetingSubtitle }}</span>
             </div>
           </div>
 
-          <transition name="view-morph" mode="out-in">
+          <transition name="view-morph" mode="out-in" @before-enter="resetStageViewportScroll">
             <NowPlayingView
               v-if="store.isNowPlayingOpen"
               key="now-playing"
@@ -248,7 +248,7 @@ onMounted(() => {
               title="关闭桌面歌词"
               @click="store.desktopLyricEnabled = false"
             >
-              <PlumpIcon name="close" :size="12" />
+              <PlumpIcon name="close" :size="13" />
             </button>
           </div>
         </div>

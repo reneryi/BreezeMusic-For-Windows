@@ -42,7 +42,7 @@
           >
             <PlumpIcon
               :name="store.isSongLiked(store.currentSong.hash) ? 'heart-filled' : 'heart'"
-              :size="16"
+              :size="17"
             />
           </button>
         </div>
@@ -69,7 +69,7 @@
       </div>
     </div>
 
-    <!-- 中间：参考图5双层结构 —— 上层【当前时间 + 进度条 + 总时长】，下层【模式 + 上一首 + 大圆形播放暂停 + 下一首 + 高潮】 -->
+    <!-- 中间：上层【当前时间 + 进度条 + 总时长】，下层【模式 + 上一首 + 大圆形播放暂停 + 下一首 + 高潮】 -->
     <div class="pb-center-zone">
       <!-- 上层：时间与可拖拽进度条 -->
       <div class="pb-progress-timeline-row">
@@ -101,11 +101,11 @@
           :title="playModeTitle"
           @click="store.cyclePlayMode()"
         >
-          <PlumpIcon :name="playModeIcon" :size="17" />
+          <PlumpIcon :name="playModeIcon" :size="18" />
         </button>
 
         <button class="pb-ctrl-btn" title="上一曲 (Ctrl + Left)" @click="store.playPrev()">
-          <PlumpIcon name="prev" :size="19" />
+          <PlumpIcon name="prev" :size="20" />
         </button>
 
         <button
@@ -117,7 +117,7 @@
         </button>
 
         <button class="pb-ctrl-btn" title="下一曲 (Ctrl + Right)" @click="store.playNext()">
-          <PlumpIcon name="next" :size="19" />
+          <PlumpIcon name="next" :size="20" />
         </button>
 
         <button
@@ -126,12 +126,12 @@
           title="30秒副歌高潮精听模式"
           @click="toggleClimaxQuick"
         >
-          <PlumpIcon name="sparkle" :size="17" />
+          <PlumpIcon name="sparkle" :size="18" />
         </button>
       </div>
     </div>
 
-    <!-- 右侧：音质/调音台胶囊 + 自定义无原生丑滑块的音量条 + 桌面歌词 + 播放队列（角标不遮挡图标） -->
+    <!-- 右侧：音质/调音台胶囊 + 自定义无原生丑滑块的音量条 + 桌面歌词 + 播放队列 -->
     <div class="pb-right-zone">
       <button
         class="pb-feature-pill"
@@ -139,7 +139,7 @@
         title="前往概念版调音台"
         @click="openTunerDesk"
       >
-        <PlumpIcon name="tuning" :size="14" />
+        <PlumpIcon name="tuning" :size="15" />
         <span>{{ store.activeViperEffectId !== "off" && store.activeViperEffectId !== "none" ? "蝰蛇母带" : qualityBadgeText }}</span>
       </button>
 
@@ -149,7 +149,7 @@
           :title="`音量 ${Math.round(store.volume * 100)}%`"
           @click="toggleMute"
         >
-          <PlumpIcon :name="store.volume === 0 ? 'volume-mute' : 'volume'" :size="17" />
+          <PlumpIcon :name="store.volume === 0 ? 'volume-mute' : 'volume'" :size="18" />
         </button>
         <div
           class="pb-custom-volume-track"
@@ -172,26 +172,28 @@
         title="桌面悬浮逐字歌词"
         @click="toggleDesktopLyric"
       >
-        <PlumpIcon name="lyric" :size="17" />
+        <PlumpIcon name="lyric" :size="18" />
       </button>
 
       <button
+        ref="queueToggleBtnRef"
         class="pb-tool-icon-btn pb-queue-badge-btn"
         :class="{ active: store.isGlobalQueueOpen }"
         title="当前播放队列"
-        @click="store.isGlobalQueueOpen = !store.isGlobalQueueOpen"
+        @click.stop="store.isGlobalQueueOpen = !store.isGlobalQueueOpen"
       >
-        <PlumpIcon name="queue" :size="17" />
+        <PlumpIcon name="queue" :size="18" />
         <span v-if="store.playQueue.length > 0" class="pb-queue-count-badge">
           {{ store.playQueue.length }}
         </span>
       </button>
     </div>
 
-    <!-- 底部固定栏右上角弹出的播放队列抽屉 -->
+    <!-- 底部固定栏右上角弹出的播放队列抽屉（支持点击窗口外任意区域自动关闭） -->
     <transition name="fade-pop">
       <div
         v-if="store.isGlobalQueueOpen && !store.isNowPlayingOpen"
+        ref="queueDrawerRef"
         class="pb-global-queue-drawer glass-popover"
         @click.stop
       >
@@ -201,7 +203,7 @@
             <div class="pb-queue-sub">支持一键切换曲目或展开全屏舞台</div>
           </div>
           <button class="pb-tool-icon-btn" @click="store.isGlobalQueueOpen = false">
-            <PlumpIcon name="close" :size="15" />
+            <PlumpIcon name="close" :size="16" />
           </button>
         </div>
         <div class="pb-queue-list">
@@ -227,13 +229,32 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useAppStore } from "../stores/appStore";
 import { formatDuration } from "../api/kugou";
 import PlumpIcon from "./PlumpIcon.vue";
 
 const store = useAppStore();
 const lastVolume = ref(0.8);
+const queueToggleBtnRef = ref<HTMLElement | null>(null);
+const queueDrawerRef = ref<HTMLElement | null>(null);
+
+function handleOutsideQueueMouseDown(e: MouseEvent) {
+  if (!store.isGlobalQueueOpen) return;
+  const target = e.target as Node | null;
+  if (!target) return;
+  if (queueDrawerRef.value?.contains(target)) return;
+  if (queueToggleBtnRef.value?.contains(target)) return;
+  store.isGlobalQueueOpen = false;
+}
+
+onMounted(() => {
+  window.addEventListener("mousedown", handleOutsideQueueMouseDown, true);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("mousedown", handleOutsideQueueMouseDown, true);
+});
 
 const progressPercent = computed(() => {
   if (!store.durationMs || store.durationMs <= 0) return 0;

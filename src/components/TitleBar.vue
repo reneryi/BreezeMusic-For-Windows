@@ -27,12 +27,12 @@
           @click="handleNavClick(item.id)"
           @dblclick.stop="handleNavDblClick(item.id)"
         >
-          <PlumpIcon :name="item.icon" :size="16" />
+          <PlumpIcon :name="item.icon" :size="17" />
           <span>{{ item.label }}</span>
         </button>
       </nav>
 
-      <!-- 响应式悬浮搜索组件：大窗为无快捷键胶囊输入条，小窗收缩为悬浮图标按钮 -->
+      <!-- 响应式悬浮搜索组件：大窗为无快捷键胶囊输入条，小窗收缩为圆形悬浮按钮 -->
       <div class="skyline-search-wrap" ref="searchBoxRef">
         <!-- 小窗口且未展开时：显示为精致圆形悬浮按钮 -->
         <button
@@ -41,10 +41,10 @@
           title="展开搜索"
           @click="expandCompactSearch"
         >
-          <PlumpIcon name="search" :size="17" />
+          <PlumpIcon name="search" :size="18" />
         </button>
 
-        <!-- 宽窗口常驻 或 小窗口点击展开后：显示悬浮搜索输入胶囊（已移除 Ctrl K 快捷键） -->
+        <!-- 宽窗口常驻 或 小窗口点击展开后：显示悬浮搜索输入胶囊 -->
         <div
           v-else
           class="skyline-search-pill"
@@ -53,7 +53,7 @@
             'compact-expanded-pill': isCompactWindow && compactSearchExpanded,
           }"
         >
-          <PlumpIcon name="search" :size="16" class="search-pill-icon" />
+          <PlumpIcon name="search" :size="17" class="search-pill-icon" />
           <input
             ref="searchInputRef"
             v-model="store.searchKeyword"
@@ -71,7 +71,7 @@
             title="清空或收起"
             @click.stop="handleClearOrCollapseSearch"
           >
-            <PlumpIcon name="close" :size="13" />
+            <PlumpIcon name="close" :size="14" />
           </button>
         </div>
 
@@ -89,7 +89,7 @@
                 class="suggest-row"
                 @click="triggerSearch(sug)"
               >
-                <PlumpIcon name="search" :size="14" />
+                <PlumpIcon name="search" :size="15" />
                 <span>{{ sug }}</span>
               </button>
             </template>
@@ -116,7 +116,7 @@
 
     <!-- 右上角悬浮区：左侧【头像+等级+VIP 融合可展开动效卡片】 + 右侧【明暗切换 + 三个窗口控制按钮统一长形悬浮胶囊】 -->
     <div class="skyline-floating-right">
-      <!-- 1. 头像 & VIP 权益中心融合动效容器（未展开时为胶囊按钮，点击后原位上浮扩展为右上角大卡片，头像自然放大至卡片左上方） -->
+      <!-- 1. 头像 & VIP 权益中心融合动效容器 -->
       <div
         ref="profileCardRef"
         class="profile-vip-morph-wrapper"
@@ -136,7 +136,7 @@
                 alt="avatar"
               />
               <div v-else class="pvm-avatar-fallback">
-                <PlumpIcon name="user" :size="store.isVipCenterOpen ? 24 : 15" color="#fff" />
+                <PlumpIcon name="user" :size="store.isVipCenterOpen ? 24 : 16" color="#fff" />
               </div>
               <span v-if="store.isLoggedIn" class="pvm-online-dot"></span>
             </div>
@@ -150,7 +150,7 @@
                 class="pvm-vip-badge"
                 :class="{ active: store.vipStatus?.isVip || store.vipStatus?.todayClaimed }"
               >
-                <PlumpIcon name="crown" :size="12" />
+                <PlumpIcon name="crown" :size="13" />
                 <span>VIP</span>
               </span>
             </div>
@@ -182,7 +182,7 @@
                     title="收起卡片"
                     @click.stop="store.isVipCenterOpen = false"
                   >
-                    <PlumpIcon name="close" :size="13" />
+                    <PlumpIcon name="close" :size="14" />
                   </button>
                 </div>
               </div>
@@ -192,14 +192,14 @@
                   Lv.{{ store.profile?.userLevel || 1 }}
                 </span>
                 <span class="pvm-duration-badge">
-                  <PlumpIcon name="clock" :size="12" />
+                  <PlumpIcon name="clock" :size="13" />
                   <span>{{ listenHoursText }}</span>
                 </span>
                 <span
                   class="pvm-vip-badge lg"
                   :class="{ active: store.vipStatus?.isVip || store.vipStatus?.todayClaimed }"
                 >
-                  <PlumpIcon name="crown" :size="12" />
+                  <PlumpIcon name="crown" :size="13" />
                   <span>
                     {{
                       store.vipStatus?.svipActive
@@ -239,7 +239,7 @@
                   :disabled="store.isClaimingVip"
                   @click.stop="store.claimVipDaily(false)"
                 >
-                  <PlumpIcon name="crown" :size="14" color="#1a1200" />
+                  <PlumpIcon name="crown" :size="15" color="#1a1200" />
                   <span>
                     {{
                       store.isClaimingVip
@@ -309,20 +309,20 @@
         >
           <PlumpIcon
             :name="store.colorScheme === 'watercolor_light' || store.colorScheme === 'light' ? 'moon' : 'sun'"
-            :size="15"
+            :size="16"
           />
         </button>
 
         <span class="win-capsule-divider"></span>
 
         <button class="win-capsule-btn" title="最小化" @click="minimizeWin">
-          <PlumpIcon name="minimize" :size="13" />
+          <PlumpIcon name="minimize" :size="14" />
         </button>
         <button class="win-capsule-btn" title="最大化 / 还原" @click="toggleMaximizeWin">
-          <PlumpIcon name="maximize" :size="13" />
+          <PlumpIcon name="maximize" :size="14" />
         </button>
         <button class="win-capsule-btn close" title="关闭窗口" @click="closeWin">
-          <PlumpIcon name="close" :size="13" />
+          <PlumpIcon name="close" :size="14" />
         </button>
       </div>
     </div>
@@ -349,9 +349,9 @@ const navItems: Array<{
   { id: "settings", label: "设置", hint: "外观材质、播放偏好、设备凭证与下载设置", icon: "settings" },
 ];
 
-// 窗口宽度监听：小窗口（<=1220px）时搜索框自动变为圆形按钮
-const windowWidth = ref(typeof window !== "undefined" ? window.innerWidth : 1440);
-const isCompactWindow = computed(() => windowWidth.value <= 1220);
+// 窗口宽度监听：小窗口/非全屏窗口（<=1400px）时搜索框自动收缩为圆形按钮
+const windowWidth = ref(typeof window !== "undefined" ? window.innerWidth : 1240);
+const isCompactWindow = computed(() => windowWidth.value <= 1400);
 const compactSearchExpanded = ref(false);
 
 const searchFocused = ref(false);
@@ -447,7 +447,6 @@ function triggerSearch(kw: string) {
   store.executeSearch(q);
 }
 
-// 点击右上角头像&VIP胶囊：不再跳转我的页，直接原位展开/收起融合大卡片
 function handleProfileCapsuleClick() {
   if (!store.isVipCenterOpen) {
     store.isVipCenterOpen = true;
@@ -472,7 +471,6 @@ function conciseDate(raw?: string) {
   return raw.slice(0, 10);
 }
 
-// 当月签到热力图数据
 const now = new Date();
 const currentYear = now.getFullYear();
 const currentMonth = now.getMonth() + 1;
@@ -570,6 +568,7 @@ function handleOutsideClick(e: MouseEvent) {
 }
 
 onMounted(() => {
+  onWindowResize();
   window.addEventListener("mousedown", handleOutsideClick);
   window.addEventListener("resize", onWindowResize);
 });

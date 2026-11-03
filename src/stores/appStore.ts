@@ -58,6 +58,8 @@ export const useAppStore = defineStore("breezeApp", () => {
     localStorage.getItem("bm_desktop_lyric") === "true"
   );
   const desktopLyricLocked = ref<boolean>(false);
+  const desktopLyricColor = ref<string>(localStorage.getItem("bm_desktop_lyric_color") || "#00e5ff");
+  const desktopLyricFontSize = ref<number>(Number(localStorage.getItem("bm_desktop_lyric_size")) || 24);
 
   // 全局右键上下文菜单与歌曲详情/加歌单弹窗
   const contextMenu = reactive<{
@@ -76,6 +78,8 @@ export const useAppStore = defineStore("breezeApp", () => {
   const isLoadingSongDetail = ref<boolean>(false);
   const addToPlaylistModalSong = ref<Song | null>(null);
   const downloadModalSong = ref<Song | null>(null);
+  const shareModalSong = ref<Song | null>(null);
+  const hdArtworkPreviewUrl = ref<string | null>(null);
 
   // ================= 2. 发现页与调频台全量状态 =================
   const discoverSubView = ref<DiscoverSubView>("home");
@@ -131,7 +135,7 @@ export const useAppStore = defineStore("breezeApp", () => {
   const collectedRemotePlaylists = ref<Playlist[]>([]);
 
   const libraryAssetTab = ref<LibraryAssetTab>("created");
-  const libraryDetailMode = ref<LibraryDetailMode>("playlist");
+  const libraryDetailMode = ref<LibraryDetailMode>("liked");
   const isLibraryGridView = ref<boolean>(
     localStorage.getItem("bm_lib_grid") !== "false"
   );
@@ -217,7 +221,7 @@ export const useAppStore = defineStore("breezeApp", () => {
   // ================= 4. 搜索与天际线指令舱状态 =================
   const searchKeyword = ref<string>("");
   const searchSuggestions = ref<string[]>([]);
-  const searchCategoryTab = ref<SearchCategoryTab>("songs");
+  const searchCategoryTab = ref<SearchCategoryTab>("all");
   const hotSearchKeywords = ref<string[]>([
     "周杰伦",
     "林俊杰",
@@ -536,6 +540,53 @@ export const useAppStore = defineStore("breezeApp", () => {
     "#6c5ce7",
   ]);
 
+  function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+    r /= 255;
+    g /= 255;
+    b /= 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    let h = 0;
+    let s = 0;
+    const l = (max + min) / 2;
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r:
+          h = (g - b) / d + (g < b ? 6 : 0);
+          break;
+        case g:
+          h = (b - r) / d + 2;
+          break;
+        case b:
+          h = (r - g) / d + 4;
+          break;
+      }
+      h /= 6;
+    }
+    return [h * 360, s, l];
+  }
+
+  function hslToRgbCss(h: number, s: number, l: number): string {
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = l - c / 2;
+    let r = 0,
+      g = 0,
+      b = 0;
+    const hue = ((h % 360) + 360) % 360;
+    if (hue < 60) [r, g, b] = [c, x, 0];
+    else if (hue < 120) [r, g, b] = [x, c, 0];
+    else if (hue < 180) [r, g, b] = [0, c, x];
+    else if (hue < 240) [r, g, b] = [0, x, c];
+    else if (hue < 300) [r, g, b] = [x, 0, c];
+    else [r, g, b] = [c, 0, x];
+    return `rgb(${Math.round((r + m) * 255)}, ${Math.round(
+      (g + m) * 255
+    )}, ${Math.round((b + m) * 255)})`;
+  }
+
   function extractCoverColors(imgUrl: string) {
     if (!imgUrl) {
       coverPalette.value = ["#2b8cff", "#00c4a7", "#6c5ce7"];
@@ -546,34 +597,76 @@ export const useAppStore = defineStore("breezeApp", () => {
     img.onload = () => {
       try {
         const canvas = document.createElement("canvas");
-        canvas.width = 24;
-        canvas.height = 24;
+        canvas.width = 32;
+        canvas.height = 32;
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
-        ctx.drawImage(img, 0, 0, 24, 24);
-        const data = ctx.getImageData(0, 0, 24, 24).data;
-        const samples: [number, number, number][] = [];
-        for (let i = 0; i < data.length; i += 16) {
+        ctx.drawImage(img, 0, 0, 32, 32);
+        const data = ctx.getImageData(0, 0, 32, 32).data;
+        // 24-bin 色相直方图特征提取 + CIE L* 明度/饱和度标准化 (对齐 Android NowPlayingTurntableAndCover.kt & CoverTonalPalette)
+        const bins = Array.from({ length: 24 }, () => ({
+          weight: 0,
+          hSum: 0,
+          sSum: 0,
+          lSum: 0,
+        }));
+        for (let i = 0; i < data.length; i += 8) {
           const r = data[i];
           const g = data[i + 1];
           const b = data[i + 2];
-          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-          if (lum > 28 && lum < 230) {
-            samples.push([r, g, b]);
+          const [h, s, l] = rgbToHsl(r, g, b);
+          if (l > 0.08 && l < 0.92 && s > 0.12) {
+            const binIdx = Math.floor(h / 15) % 24;
+            const w = (0.35 + s * 0.65) * (1 - Math.abs(l - 0.5) * 1.1);
+            bins[binIdx].weight += w;
+            bins[binIdx].hSum += h * w;
+            bins[binIdx].sSum += s * w;
+            bins[binIdx].lSum += l * w;
           }
         }
-        if (samples.length >= 3) {
-          const c1 = samples[Math.floor(samples.length * 0.15)];
-          const c2 = samples[Math.floor(samples.length * 0.5)];
-          const c3 = samples[Math.floor(samples.length * 0.85)];
+        const ranked = bins
+          .map((b, idx) => ({
+            idx,
+            weight: b.weight,
+            h: b.weight > 0 ? b.hSum / b.weight : idx * 15,
+            s: b.weight > 0 ? Math.min(0.88, Math.max(0.55, b.sSum / b.weight)) : 0.72,
+            l: b.weight > 0 ? Math.min(0.66, Math.max(0.46, b.lSum / b.weight)) : 0.56,
+          }))
+          .filter((b) => b.weight > 0)
+          .sort((a, b) => b.weight - a.weight);
+
+        if (ranked.length >= 1) {
+          const primary = ranked[0];
+          const secondary =
+            ranked.find((b) => Math.abs(b.h - primary.h) > 35 && Math.abs(b.h - primary.h) < 325) ||
+            { h: (primary.h + 48) % 360, s: primary.s * 0.92, l: primary.l };
+          const tertiary =
+            ranked.find(
+              (b) =>
+                Math.abs(b.h - primary.h) > 65 &&
+                Math.abs(b.h - secondary.h) > 35
+            ) || { h: (primary.h + 135) % 360, s: primary.s * 0.88, l: primary.l * 0.95 };
+
           coverPalette.value = [
-            `rgb(${c1[0]}, ${c1[1]}, ${c1[2]})`,
-            `rgb(${c2[0]}, ${c2[1]}, ${c2[2]})`,
-            `rgb(${c3[0]}, ${c3[1]}, ${c3[2]})`,
+            hslToRgbCss(primary.h, primary.s, primary.l),
+            hslToRgbCss(secondary.h, secondary.s, secondary.l),
+            hslToRgbCss(tertiary.h, tertiary.s, tertiary.l),
           ];
         }
       } catch {
-        // 跨域未携带 CORS 时保留默认流体极光色板
+        // 跨域未携带 CORS 时根据 URL 哈希生成稳定的高颜值三色流光色板
+        let hash = 0;
+        for (let i = 0; i < imgUrl.length; i++) {
+          hash = (hash * 31 + imgUrl.charCodeAt(i)) | 0;
+        }
+        const h1 = Math.abs(hash) % 360;
+        const h2 = (h1 + 52) % 360;
+        const h3 = (h1 + 140) % 360;
+        coverPalette.value = [
+          hslToRgbCss(h1, 0.78, 0.56),
+          hslToRgbCss(h2, 0.74, 0.52),
+          hslToRgbCss(h3, 0.7, 0.54),
+        ];
       }
     };
     img.src = imgUrl;
@@ -585,7 +678,7 @@ export const useAppStore = defineStore("breezeApp", () => {
   audio.crossOrigin = "anonymous";
 
   const playQueue = ref<Song[]>([]);
-  const recentPlayQueues = ref<{ title: string; songs: Song[] }[]>([]);
+  const recentPlayQueues = ref<{ id: string; title: string; songs: Song[] }[]>([]);
   const currentIndex = ref<number>(-1);
   const playMode = ref<PlayMode>("repeat_all");
   const currentSong = computed<Song | null>(() =>
@@ -663,6 +756,7 @@ export const useAppStore = defineStore("breezeApp", () => {
   const eqQFactor = ref<number>(1.41);
   const eqHighPassHz = ref<number>(20);
   const eqLowPassHz = ref<number>(20000);
+  const masterPreampDb = ref<number>(0);
   const activeEqPreset = ref<string>("flat");
   const peqBypass = ref<boolean>(false);
 
@@ -705,9 +799,11 @@ export const useAppStore = defineStore("breezeApp", () => {
     transientPunch: 30,
     surroundWidth: 42,
     stageDepth: 28,
+    stageDistance: 28,
     bauerCrossfeed: true,
     reverbPreset: "none",
     reverbPreDelayMs: 24,
+    reverbWetPercent: 25,
     vocalClarity: 40,
     airHarmonics: 32,
     vinylTubeWarmth: 20,
@@ -718,15 +814,31 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   const spectrumBars = ref<number[]>(new Array(32).fill(6));
 
+  // 实时音频三频律动能量遥测（驱动律动光晕 RHYTHM_HALO 背景与频谱）
+  const rhythmTelemetry = reactive({
+    lowEnergy: 0,
+    midEnergy: 0,
+    highEnergy: 0,
+    bassEnergy: 0,
+    midVocalEnergy: 0,
+    highAirEnergy: 0,
+    beatPulse: 0,
+  });
+
   let audioCtx: AudioContext | null = null;
   let analyser: AnalyserNode | null = null;
   let highPassFilter: BiquadFilterNode | null = null;
   let lowPassFilter: BiquadFilterNode | null = null;
   let eqFilters: BiquadFilterNode[] = [];
   let subBassFilter: BiquadFilterNode | null = null;
+  let transientPunchFilter: BiquadFilterNode | null = null;
   let airShelfFilter: BiquadFilterNode | null = null;
   let vocalPeakFilter: BiquadFilterNode | null = null;
   let deEsserNotchFilter: BiquadFilterNode | null = null;
+  let stagePreDelayNode: DelayNode | null = null;
+  let reverbWetGain: GainNode | null = null;
+  let masterPreampGain: GainNode | null = null;
+  let dynamicsCompressor: DynamicsCompressorNode | null = null;
   let rafId: number | null = null;
 
   function ensureWebAudioGraph() {
@@ -752,6 +864,12 @@ export const useAppStore = defineStore("breezeApp", () => {
       subBassFilter.frequency.value = acousticField.bassCrossoverHz;
       subBassFilter.gain.value = 0;
 
+      transientPunchFilter = audioCtx.createBiquadFilter();
+      transientPunchFilter.type = "peaking";
+      transientPunchFilter.frequency.value = 95;
+      transientPunchFilter.Q.value = 1.8;
+      transientPunchFilter.gain.value = 0;
+
       vocalPeakFilter = audioCtx.createBiquadFilter();
       vocalPeakFilter.type = "peaking";
       vocalPeakFilter.frequency.value = 2800;
@@ -768,6 +886,21 @@ export const useAppStore = defineStore("breezeApp", () => {
       airShelfFilter.type = "highshelf";
       airShelfFilter.frequency.value = 12000;
       airShelfFilter.gain.value = 0;
+
+      stagePreDelayNode = audioCtx.createDelay(0.2);
+      stagePreDelayNode.delayTime.value = 0.024;
+      reverbWetGain = audioCtx.createGain();
+      reverbWetGain.gain.value = 0;
+
+      masterPreampGain = audioCtx.createGain();
+      masterPreampGain.gain.value = 1.0;
+
+      dynamicsCompressor = audioCtx.createDynamicsCompressor();
+      dynamicsCompressor.threshold.value = -14;
+      dynamicsCompressor.knee.value = 18;
+      dynamicsCompressor.ratio.value = 2.5;
+      dynamicsCompressor.attack.value = 0.008;
+      dynamicsCompressor.release.value = 0.18;
 
       eqFilters = eqFrequencies.map((freq, idx) => {
         const filter = audioCtx!.createBiquadFilter();
@@ -787,10 +920,19 @@ export const useAppStore = defineStore("breezeApp", () => {
       }
       prevNode.connect(lowPassFilter);
       lowPassFilter.connect(subBassFilter);
-      subBassFilter.connect(vocalPeakFilter);
+      subBassFilter.connect(transientPunchFilter);
+      transientPunchFilter.connect(vocalPeakFilter);
       vocalPeakFilter.connect(deEsserNotchFilter);
       deEsserNotchFilter.connect(airShelfFilter);
-      airShelfFilter.connect(analyser);
+
+      // 主干信号 + 空间混响预延迟并发支路
+      airShelfFilter.connect(masterPreampGain);
+      airShelfFilter.connect(stagePreDelayNode);
+      stagePreDelayNode.connect(reverbWetGain);
+      reverbWetGain.connect(masterPreampGain);
+
+      masterPreampGain.connect(dynamicsCompressor);
+      dynamicsCompressor.connect(analyser);
       analyser.connect(audioCtx.destination);
       syncDspChain();
       startSpectrumLoop();
@@ -801,7 +943,10 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   function syncDspChain() {
     const bypass = peqBypass.value;
-    const scale = acousticField.enabled ? 0.82 : 1.0;
+    // 防重叠增益协同 (Overlap Scaling): 当同时开启 EQ 与声场调音时自动按峰值校准防削波余量
+    const maxEqBoost = Math.max(0, ...eqGains.value);
+    const scale = !bypass && acousticField.enabled ? 0.84 : 1.0;
+
     if (highPassFilter && lowPassFilter) {
       highPassFilter.frequency.value = bypass ? 10 : Math.max(15, eqHighPassHz.value);
       lowPassFilter.frequency.value = bypass ? 22000 : Math.min(20000, eqLowPassHz.value);
@@ -813,29 +958,78 @@ export const useAppStore = defineStore("breezeApp", () => {
     });
     if (
       subBassFilter &&
+      transientPunchFilter &&
       vocalPeakFilter &&
       deEsserNotchFilter &&
-      airShelfFilter
+      airShelfFilter &&
+      stagePreDelayNode &&
+      reverbWetGain &&
+      masterPreampGain &&
+      dynamicsCompressor
     ) {
       subBassFilter.frequency.value = acousticField.bassCrossoverHz;
+      const effectiveBassBoost =
+        (acousticField.subBassDepth / 100) * 5.8 + (acousticField.bassBoostDb || 0) * 0.65;
       subBassFilter.gain.value =
+        !bypass && acousticField.enabled ? Math.min(9.0, effectiveBassBoost) : 0;
+
+      transientPunchFilter.gain.value =
         !bypass && acousticField.enabled
-          ? (acousticField.subBassDepth / 100) * 6.5
+          ? (acousticField.transientPunch / 100) * 3.2
           : 0;
+
       vocalPeakFilter.gain.value =
         !bypass && acousticField.enabled
-          ? (acousticField.vocalClarity / 100) * 4.2
+          ? (acousticField.vocalClarity / 100) * 4.2 +
+            ((acousticField.surroundWidth - 40) / 100) * 1.2
           : 0;
+
       deEsserNotchFilter.gain.value =
         !bypass && acousticField.enabled
           ? -(acousticField.vocalClarity / 100) * 2.4
           : 0;
+
       airShelfFilter.gain.value =
         !bypass && acousticField.enabled
           ? ((acousticField.airHarmonics - acousticField.vinylTubeWarmth * 0.35) /
               100) *
             5.0
           : 0;
+
+      const preDelaySec = Math.max(
+        0.005,
+        Math.min(0.12, (acousticField.reverbPreDelayMs || 24) / 1000 + (acousticField.stageDepth / 100) * 0.025)
+      );
+      stagePreDelayNode.delayTime.value = preDelaySec;
+
+      const presetWetMap: Record<string, number> = {
+        none: 0,
+        small_room: 0.12,
+        medium_room: 0.18,
+        large_room: 0.24,
+        medium_hall: 0.28,
+        large_hall: 0.34,
+        plate: 0.22,
+      };
+      const baseWet =
+        presetWetMap[acousticField.reverbPreset] ||
+        (acousticField.reverbMix || 0) / 250;
+      reverbWetGain.gain.value =
+        !bypass && acousticField.enabled ? Math.min(0.42, baseWet) : 0;
+
+      // Headroom 自动补偿 + ReplayGain / 夜间响度柔化
+      const headroomDb = maxEqBoost > 3 ? -(maxEqBoost - 3) * 0.35 : 0;
+      const rgDb = replayGainEnabled.value ? -1.2 : 0;
+      const totalGainLinear = Math.pow(10, (headroomDb + rgDb + (masterPreampDb.value || 0)) / 20);
+      masterPreampGain.gain.value = bypass ? 1.0 : totalGainLinear;
+
+      if (nightLoudnessEnabled.value) {
+        dynamicsCompressor.threshold.value = -24;
+        dynamicsCompressor.ratio.value = 4.5;
+      } else {
+        dynamicsCompressor.threshold.value = -12;
+        dynamicsCompressor.ratio.value = 2.0;
+      }
     }
   }
 
@@ -873,15 +1067,37 @@ export const useAppStore = defineStore("breezeApp", () => {
       if (isPlaying.value && analyser) {
         analyser.getByteFrequencyData(freqData);
         const bars: number[] = [];
+        let lowSum = 0,
+          midSum = 0,
+          highSum = 0;
         for (let i = 0; i < 32; i++) {
           const val = freqData[i] || 0;
           bars.push(Math.max(6, Math.round((val / 255) * 100)));
+          if (i < 6) lowSum += val;
+          else if (i < 18) midSum += val;
+          else highSum += val;
         }
         spectrumBars.value = bars;
+        rhythmTelemetry.lowEnergy = Number((lowSum / (6 * 255)).toFixed(3));
+        rhythmTelemetry.midEnergy = Number((midSum / (12 * 255)).toFixed(3));
+        rhythmTelemetry.highEnergy = Number((highSum / (14 * 255)).toFixed(3));
+        rhythmTelemetry.bassEnergy = rhythmTelemetry.lowEnergy;
+        rhythmTelemetry.midVocalEnergy = rhythmTelemetry.midEnergy;
+        rhythmTelemetry.highAirEnergy = rhythmTelemetry.highEnergy;
+        rhythmTelemetry.beatPulse = Number(
+          Math.min(1, rhythmTelemetry.lowEnergy * 1.25).toFixed(3)
+        );
       } else if (playMomentum.value > 0.02) {
         spectrumBars.value = spectrumBars.value.map((v) =>
           Math.max(6, Math.round(v * 0.88))
         );
+        rhythmTelemetry.lowEnergy *= 0.9;
+        rhythmTelemetry.midEnergy *= 0.9;
+        rhythmTelemetry.highEnergy *= 0.9;
+        rhythmTelemetry.bassEnergy = rhythmTelemetry.lowEnergy;
+        rhythmTelemetry.midVocalEnergy = rhythmTelemetry.midEnergy;
+        rhythmTelemetry.highAirEnergy = rhythmTelemetry.highEnergy;
+        rhythmTelemetry.beatPulse *= 0.88;
       }
       rafId = requestAnimationFrame(tick);
     };
@@ -900,6 +1116,13 @@ export const useAppStore = defineStore("breezeApp", () => {
       vocal_velvet: [-1.4, -0.6, 0.8, 2.2, 3.4, 4.4, 3.8, -1.8, 1.6, 2.4],
       hifi_sub: [6.2, 5.4, 2.6, -1.6, -0.6, 0.6, 1.8, 2.4, 2.8, 3.2],
       acg_bright: [2.5, 1.8, 0.0, 1.0, 2.4, 3.5, 4.5, 4.8, 3.8, 2.5],
+      // 兼容传统音乐风格预设名称
+      pop: [2.4, 3.2, 1.6, -0.6, -1.0, 1.2, 2.8, 3.4, 2.6, 2.0],
+      rock: [4.8, 3.8, 1.4, -1.2, -1.8, 0.8, 2.8, 4.2, 4.6, 3.8],
+      classical: [0.8, 0.6, 0.2, 0.0, 0.4, 1.2, 2.4, 3.2, 3.6, 4.0],
+      jazz: [3.2, 2.4, 1.2, 1.8, -1.2, -1.0, 0.8, 2.2, 3.0, 3.2],
+      vocal: [-1.4, -0.6, 0.8, 2.2, 3.4, 4.4, 3.8, -1.8, 1.6, 2.4],
+      bass: [6.2, 5.4, 2.6, -1.6, -0.6, 0.6, 1.8, 2.4, 2.8, 3.2],
     };
     const gains = presets[presetName] || presets.flat;
     eqGains.value = [...gains];
@@ -961,6 +1184,41 @@ export const useAppStore = defineStore("breezeApp", () => {
     notify("已重置全部记忆槽与均衡器参数");
   }
 
+  // 真实播放秒数累加器（仅在 isPlaying=true 时每秒累加，杜绝暂停挂机虚增时长，对齐 Android ListeningGradeManager）
+  let currentTrackPlayedAccumMs = 0;
+  let unReportedDiffSec = 0;
+  window.setInterval(() => {
+    if (isPlaying.value && currentSong.value) {
+      currentTrackPlayedAccumMs += 1000;
+      unReportedDiffSec += 1;
+      if (profile.value) {
+        profile.value.listenDurationSec = (profile.value.listenDurationSec || 0) + 1;
+        profile.value.listenDurationMin = Math.floor(profile.value.listenDurationSec / 60);
+        const h = Math.floor(profile.value.listenDurationMin / 60);
+        const m = profile.value.listenDurationMin % 60;
+        profile.value.listenDurationFormatted =
+          h > 0 ? `${h} 小时 ${m} 分` : `${m} 分钟`;
+      }
+      // 每满 60 秒真实播放自动触发一次 CSCC 心跳与云端等级时长同步
+      if (unReportedDiffSec >= 60 && isLoggedIn.value) {
+        const diffToReport = unReportedDiffSec;
+        unReportedDiffSec = 0;
+        kugouClient
+          .reportPlaybackTelemetry(currentSong.value, false, diffToReport * 1000)
+          .then(() => {
+            const totalSec = profile.value?.listenDurationSec || undefined;
+            kugouClient
+              .getAccountProfile(totalSec, diffToReport)
+              .then((p) => {
+                if (p) profile.value = p;
+              })
+              .catch(() => {});
+          })
+          .catch(() => {});
+      }
+    }
+  }, 1000);
+
   // HTML5 Audio 事件绑定
   audio.addEventListener("timeupdate", () => {
     const posMs = Math.floor(audio.currentTime * 1000);
@@ -994,24 +1252,28 @@ export const useAppStore = defineStore("breezeApp", () => {
     isBuffering.value = false;
   });
   audio.addEventListener("ended", () => {
-    // 上报本首完整播放 CSCC 事件
+    // 上报本首完整播放 CSCC 事件与真实累计时长 d_sec
     if (currentSong.value) {
-      const played =
-        currentSongPlayStartWallMs > 0
-          ? Math.max(durationMs.value, Date.now() - currentSongPlayStartWallMs)
-          : durationMs.value || 180000;
+      const played = Math.max(
+        durationMs.value || 180000,
+        currentTrackPlayedAccumMs
+      );
+      currentTrackPlayedAccumMs = 0;
       kugouClient
         .reportPlaybackTelemetry(currentSong.value, false, played)
         .then((settled) => {
           if (settled && isLoggedIn.value) {
+            const totalDSec = profile.value?.listenDurationSec
+              ? profile.value.listenDurationSec + Math.round(played / 1000)
+              : undefined;
             setTimeout(() => {
               kugouClient
-                .getAccountProfile()
+                .getAccountProfile(totalDSec, Math.round(played / 1000))
                 .then((p) => {
                   if (p) profile.value = p;
                 })
                 .catch(() => {});
-            }, 3500);
+            }, 2500);
           }
         })
         .catch(() => {});
@@ -1587,32 +1849,68 @@ export const useAppStore = defineStore("breezeApp", () => {
       isLoginModalOpen.value = true;
       return 0;
     }
-    const name = rawTextArg !== undefined ? nameOrRawText : `导入歌单 ${new Date().toLocaleDateString()}`;
-    const rawText = rawTextArg !== undefined ? rawTextArg : nameOrRawText;
-    const lines = rawText
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter((l) => l.length > 1);
-    if (lines.length === 0) return 0;
+    const customName = rawTextArg !== undefined ? nameOrRawText.trim() : "";
+    const rawText = (rawTextArg !== undefined ? rawTextArg : nameOrRawText).trim();
+    if (!rawText) return 0;
 
-    await kugouClient.createUserPlaylist(name);
+    notify("正在解析分享链接 / 口令 / 歌单曲目...");
+    let songsToImport: Song[] = [];
+    let resolvedTitle = customName || `导入歌单 ${new Date().toLocaleDateString()}`;
+
+    try {
+      const parsed = await kugouClient.parseSharedMusic(rawText);
+      if (parsed.songs && parsed.songs.length > 0) {
+        songsToImport = parsed.songs;
+        if (!customName && parsed.playlist?.title) {
+          resolvedTitle = parsed.playlist.title;
+        }
+      }
+    } catch {
+      // 回退至逐行搜索匹配
+    }
+
+    if (songsToImport.length === 0) {
+      const lines = rawText
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l.length > 1);
+      for (const line of lines.slice(0, 35)) {
+        try {
+          const res = await kugouClient.searchSongs(line, 1, 2);
+          if (res.length > 0) {
+            songsToImport.push(res[0]);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (songsToImport.length === 0) {
+      notify("未能从输入内容中解析到可导入的歌曲");
+      return 0;
+    }
+
+    await kugouClient.createUserPlaylist(resolvedTitle);
     await loadUserPlaylists();
-    const target = userPlaylists.value.find((p) => p.title === name);
+    const target = userPlaylists.value.find((p) => p.title === resolvedTitle);
     let matchedCount = 0;
 
-    for (const line of lines.slice(0, 30)) {
-      try {
-        const res = await kugouClient.searchSongs(line, 1, 3);
-        if (res.length > 0 && target?.listId) {
-          await kugouClient.addSongToPlaylist(target.listId, res[0]);
+    if (target?.listId) {
+      for (const song of songsToImport.slice(0, 60)) {
+        try {
+          await kugouClient.addSongToPlaylist(target.listId, song);
           matchedCount += 1;
+        } catch {
+          // ignore single failure
         }
-      } catch {
-        // 忽略单首匹配异常
       }
     }
     await loadUserPlaylists();
-    notify(`歌单「${name}」导入完成，成功匹配 ${matchedCount} 首曲目`);
+    if (target) {
+      await selectPlaylist(target);
+    }
+    notify(`歌单「${resolvedTitle}」导入完成，成功同步 ${matchedCount} 首曲目`);
     return matchedCount;
   }
 
@@ -2040,6 +2338,7 @@ export const useAppStore = defineStore("breezeApp", () => {
       playQueue.value = [...list];
       if (!recentPlayQueues.value.some((q) => q.title === queueTitle)) {
         recentPlayQueues.value.unshift({
+          id: `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           title: queueTitle,
           songs: list.slice(0, 30),
         });
@@ -2079,8 +2378,10 @@ export const useAppStore = defineStore("breezeApp", () => {
 
     isBuffering.value = true;
     currentPlaybackInfo.value = null;
+    currentTrackPlayedAccumMs = 0;
     durationMs.value = song.durationMs || 0;
     extractCoverColors(song.coverUrl);
+    syncWindowsMediaSession(song);
 
     loadLyricForSong(song);
     loadCommentsForSong(song, commentSortType.value);
@@ -2291,6 +2592,132 @@ export const useAppStore = defineStore("breezeApp", () => {
     await loadAndPlayCurrentSong(0);
   }
 
+  function insertPlayNext(song: Song) {
+    if (playQueue.value.length === 0) {
+      playSongFromList(song, [song], "当前播放队列");
+      return;
+    }
+    const existingIdx = playQueue.value.findIndex(
+      (s) => (s.hash && s.hash === song.hash) || (s.id && s.id === song.id)
+    );
+    if (existingIdx >= 0 && existingIdx !== currentIndex.value) {
+      playQueue.value.splice(existingIdx, 1);
+      if (existingIdx < currentIndex.value) {
+        currentIndex.value -= 1;
+      }
+    }
+    const insertIdx = Math.min(playQueue.value.length, currentIndex.value + 1);
+    playQueue.value.splice(insertIdx, 0, song);
+    notify(`已安排下一首播放：「${song.title}」`);
+  }
+
+  function removeSongFromQueue(index: number) {
+    if (index < 0 || index >= playQueue.value.length) return;
+    const removed = playQueue.value[index];
+    playQueue.value.splice(index, 1);
+    if (playQueue.value.length === 0) {
+      audio.pause();
+      currentIndex.value = -1;
+      return;
+    }
+    if (index < currentIndex.value) {
+      currentIndex.value -= 1;
+    } else if (index === currentIndex.value) {
+      currentIndex.value = currentIndex.value % playQueue.value.length;
+      loadAndPlayCurrentSong(0);
+    }
+    if (removed) {
+      notify(`已从播放队列移除「${removed.title}」`);
+    }
+  }
+
+  function clearPlayQueue() {
+    audio.pause();
+    playQueue.value = [];
+    currentIndex.value = -1;
+    notify("已清空当前播放队列");
+  }
+
+  function moveQueueItem(fromIndex: number, toIndex: number) {
+    if (
+      fromIndex === toIndex ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= playQueue.value.length ||
+      toIndex >= playQueue.value.length
+    ) {
+      return;
+    }
+    const currentHash = currentSong.value?.hash;
+    const list = [...playQueue.value];
+    const [moved] = list.splice(fromIndex, 1);
+    list.splice(toIndex, 0, moved);
+    playQueue.value = list;
+    if (currentHash) {
+      const newIdx = list.findIndex((s) => s.hash === currentHash);
+      if (newIdx >= 0) currentIndex.value = newIdx;
+    }
+  }
+
+  function reorderQueueByMood(mood: "energetic" | "chill" | "vocal") {
+    if (playQueue.value.length <= 2) return;
+    const current = currentSong.value;
+    const rest = playQueue.value.filter((_, idx) => idx !== currentIndex.value);
+    rest.sort((a, b) => {
+      if (mood === "energetic") {
+        return (a.durationMs || 200000) - (b.durationMs || 200000);
+      } else if (mood === "chill") {
+        return (b.durationMs || 200000) - (a.durationMs || 200000);
+      } else {
+        return a.artist.localeCompare(b.artist, "zh-CN");
+      }
+    });
+    playQueue.value = current ? [current, ...rest] : rest;
+    currentIndex.value = 0;
+    const moodLabels = {
+      energetic: "律动高能",
+      chill: "舒缓松弛",
+      vocal: "人声叙事",
+    };
+    notify(`AI 智能编排已按「${moodLabels[mood]}」重塑队列顺序`);
+  }
+
+  function switchToRecentQueue(idOrIdx: string | number) {
+    const target =
+      typeof idOrIdx === "number"
+        ? recentPlayQueues.value[idOrIdx]
+        : recentPlayQueues.value.find((q) => q.id === idOrIdx);
+    if (!target || target.songs.length === 0) return;
+    playSongFromList(target.songs[0], target.songs, target.title);
+    notify(`已切换至队列「${target.title}」`);
+  }
+
+  function removeRecentQueue(idx: number) {
+    if (idx >= 0 && idx < recentPlayQueues.value.length) {
+      recentPlayQueues.value.splice(idx, 1);
+    }
+  }
+
+  function syncWindowsMediaSession(song: Song) {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: song.title,
+        artist: song.artist,
+        album: song.album || "微风音乐 · 酷狗概念版",
+        artwork: song.coverUrl
+          ? [{ src: song.coverUrl, sizes: "400x400", type: "image/jpeg" }]
+          : [],
+      });
+      navigator.mediaSession.setActionHandler("play", () => togglePlayPause());
+      navigator.mediaSession.setActionHandler("pause", () => togglePlayPause());
+      navigator.mediaSession.setActionHandler("previoustrack", () => playPrev());
+      navigator.mediaSession.setActionHandler("nexttrack", () => playNext(false));
+    } catch {
+      // ignore unsupported mediaSession environment
+    }
+  }
+
   function seekToMs(ms: number) {
     if (!audio.src) return;
     const clamped = Math.max(0, Math.min(ms, durationMs.value || ms));
@@ -2368,7 +2795,8 @@ export const useAppStore = defineStore("breezeApp", () => {
         exportStandaloneLrc.value,
         embedCoverAndTags.value,
         embedLyricsInAudio.value,
-        bilingualLrcExport.value
+        bilingualLrcExport.value,
+        skipExistingFiles.value
       );
       const sizeMb = (res.fileSizeBytes / (1024 * 1024)).toFixed(1) + " MB";
       const record: DownloadHistoryRecord = {
@@ -2433,7 +2861,33 @@ export const useAppStore = defineStore("breezeApp", () => {
     notify("已退出酷狗概念版账号");
   }
 
+  function setBandFilterTopology(index: number, topology: any) {
+    if (index < 0 || index >= 10) return;
+    eqBandTypes.value[index] = topology;
+    syncDspChain();
+  }
+
+  async function switchArtistSongSort(sort: "hot" | "new") {
+    artistSongsSort.value = sort;
+    const aid = activeArtistDetail.value?.artistId || activeArtistDetail.value?.singerId;
+    if (aid && aid !== "0") {
+      try {
+        activeArtistSongs.value = await kugouClient.getArtistSongs(String(aid), sort, 1);
+        notify(sort === "new" ? "已切换为最新发行单曲排序" : "已切换为最热代表作排序");
+      } catch {}
+    }
+  }
+
   return {
+    desktopLyricColor,
+    desktopLyricFontSize,
+    skipExistingDownloaded: skipExistingFiles,
+    hotKeywords: hotSearchKeywords,
+    artistSongSort: artistSongsSort,
+    switchArtistSongSort,
+    eqBandTopologies: eqBandTypes,
+    masterPreampDb,
+    setBandFilterTopology,
     activeTab,
     isSearchPaletteOpen,
     isNowPlayingOpen,
@@ -2449,6 +2903,8 @@ export const useAppStore = defineStore("breezeApp", () => {
     isLoadingSongDetail,
     addToPlaylistModalSong,
     downloadModalSong,
+    shareModalSong,
+    hdArtworkPreviewUrl,
     statusBanner,
     discoverSubView,
     discoverHeroExpanding,
@@ -2603,6 +3059,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     viperEffects,
     activeViperEffectId,
     acousticField,
+    rhythmTelemetry,
     spectrumBars,
     notify,
     bootstrap,
@@ -2651,6 +3108,13 @@ export const useAppStore = defineStore("breezeApp", () => {
     openSongDetailModal,
     playNext,
     playPrev,
+    insertPlayNext,
+    removeSongFromQueue,
+    clearPlayQueue,
+    moveQueueItem,
+    reorderQueueByMood,
+    switchToRecentQueue,
+    removeRecentQueue,
     seekToMs,
     setVolume,
     setPlaybackSpeed,

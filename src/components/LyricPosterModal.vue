@@ -6,15 +6,47 @@ import PlumpIcon from "./PlumpIcon.vue";
 const store = useAppStore();
 
 const selectedLineIndices = ref<number[]>([0, 1, 2]);
-const activeTemplate = ref<"aurora" | "vinyl" | "daylight" | "obsidian">(
-  "aurora"
-);
+const activeTemplate = ref<
+  "vinyl" | "vanguard" | "oriental" | "polaroid" | "cyber"
+>("vinyl");
 
+// 严格对齐 Android 端五大高定 2K 海报艺术模板
 const templates = [
-  { id: "aurora", name: "极光流彩", bg: "linear-gradient(145deg, #0d1b3a, #103c52, #1b1438)" },
-  { id: "vinyl", name: "黑胶留声", bg: "linear-gradient(145deg, #18141c, #2d1f2d, #12131a)" },
-  { id: "daylight", name: "水彩白昼", bg: "linear-gradient(145deg, #eef5ff, #dcebfa, #f5f0ff)" },
-  { id: "obsidian", name: "深空曜石", bg: "linear-gradient(145deg, #05070b, #0f1522, #070a10)" },
+  {
+    id: "vinyl",
+    name: "黑胶典藏",
+    bg: "linear-gradient(145deg, #16121e, #24192b, #0e1017)",
+    accent: "#ffd54f",
+    isLight: false,
+  },
+  {
+    id: "vanguard",
+    name: "先锋画报",
+    bg: "linear-gradient(145deg, #0b1b36, #0d3b4e, #161233)",
+    accent: "#00e5ff",
+    isLight: false,
+  },
+  {
+    id: "oriental",
+    name: "东方雅韵",
+    bg: "linear-gradient(145deg, #f6f3eb, #ebe4d5, #e2d9c5)",
+    accent: "#9e2a2b",
+    isLight: true,
+  },
+  {
+    id: "polaroid",
+    name: "复古拍立得",
+    bg: "linear-gradient(145deg, #eef5ff, #dcebfa, #f5f0ff)",
+    accent: "#155eef",
+    isLight: true,
+  },
+  {
+    id: "cyber",
+    name: "赛博流光",
+    bg: "linear-gradient(145deg, #05070b, #140d2b, #071928)",
+    accent: "#ff4d6d",
+    isLight: false,
+  },
 ] as const;
 
 watch(
@@ -59,6 +91,35 @@ const selectedLyrics = computed(() => {
     .filter(Boolean);
 });
 
+function wrapCanvasText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  startY: number,
+  maxWidth: number,
+  lineHeight: number
+): number {
+  const chars = Array.from(text || "");
+  let line = "";
+  let y = startY;
+  for (let i = 0; i < chars.length; i++) {
+    const testLine = line + chars[i];
+    const metrics = ctx.measureText(testLine);
+    if (metrics.width > maxWidth && line.length > 0) {
+      ctx.fillText(line, x, y);
+      line = chars[i];
+      y += lineHeight;
+    } else {
+      line = testLine;
+    }
+  }
+  if (line) {
+    ctx.fillText(line, x, y);
+    y += lineHeight;
+  }
+  return y;
+}
+
 function export2KPosterPng() {
   const canvas = document.createElement("canvas");
   canvas.width = 1440;
@@ -66,67 +127,123 @@ function export2KPosterPng() {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
-  const isLight = activeTemplate.value === "daylight";
+  const tpl =
+    templates.find((t) => t.id === activeTemplate.value) || templates[0];
+  const isLight = tpl.isLight;
   const grad = ctx.createLinearGradient(0, 0, 1440, 2160);
-  if (activeTemplate.value === "aurora") {
-    grad.addColorStop(0, "#0d1b3a");
-    grad.addColorStop(0.5, "#0f384c");
+
+  if (tpl.id === "vinyl") {
+    grad.addColorStop(0, "#181322");
+    grad.addColorStop(0.5, "#231829");
+    grad.addColorStop(1, "#0b0d14");
+  } else if (tpl.id === "vanguard") {
+    grad.addColorStop(0, "#0b1b36");
+    grad.addColorStop(0.5, "#0d3b4e");
     grad.addColorStop(1, "#161233");
-  } else if (activeTemplate.value === "vinyl") {
-    grad.addColorStop(0, "#1c1524");
-    grad.addColorStop(1, "#0d0f17");
-  } else if (isLight) {
+  } else if (tpl.id === "oriental") {
+    grad.addColorStop(0, "#f7f4ec");
+    grad.addColorStop(1, "#e5dcc8");
+  } else if (tpl.id === "polaroid") {
     grad.addColorStop(0, "#f0f6ff");
     grad.addColorStop(1, "#e2edfc");
   } else {
     grad.addColorStop(0, "#05070c");
-    grad.addColorStop(1, "#101726");
+    grad.addColorStop(0.5, "#150d2a");
+    grad.addColorStop(1, "#071a29");
   }
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 1440, 2160);
 
-  // 装饰柔光圆
-  ctx.fillStyle = isLight ? "rgba(43,140,255,0.12)" : "rgba(0,229,255,0.12)";
-  ctx.beginPath();
-  ctx.arc(1180, 360, 420, 0, Math.PI * 2);
-  ctx.fill();
+  // 装饰图形：根据模板绘制黑胶唱片纹、东方朱印或赛博网格光环
+  if (tpl.id === "vinyl") {
+    ctx.strokeStyle = "rgba(255, 213, 79, 0.14)";
+    ctx.lineWidth = 4;
+    for (let r = 180; r <= 420; r += 40) {
+      ctx.beginPath();
+      ctx.arc(1160, 340, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  } else if (tpl.id === "oriental") {
+    // 东方朱砂印章
+    ctx.fillStyle = "#9e2a2b";
+    ctx.fillRect(1180, 1840, 110, 110);
+    ctx.fillStyle = "#f7f4ec";
+    ctx.font = "bold 36px 'PingFang SC', serif";
+    ctx.fillText("微风", 1198, 1890);
+    ctx.fillText("雅韵", 1198, 1934);
+  } else {
+    ctx.fillStyle = isLight
+      ? "rgba(21, 94, 239, 0.1)"
+      : "rgba(0, 229, 255, 0.12)";
+    ctx.beginPath();
+    ctx.arc(1180, 360, 420, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
-  // 标题与歌手
+  // 顶部横眉
+  ctx.fillStyle = tpl.accent;
+  ctx.font = "bold 28px 'Segoe UI', 'PingFang SC', sans-serif";
+  ctx.fillText(`BREEZEMUSIC · ${tpl.name.toUpperCase()} EDITION`, 140, 175);
+
+  // 标题与歌手（支持超长自动换行）
   ctx.fillStyle = isLight ? "#0f1d33" : "#f8fafc";
   ctx.font = "bold 64px 'Segoe UI', 'PingFang SC', sans-serif";
-  ctx.fillText(store.currentSong?.title || "微风音乐", 140, 260);
+  const afterTitleY = wrapCanvasText(
+    ctx,
+    store.currentSong?.title || "微风音乐",
+    140,
+    265,
+    1140,
+    80
+  );
 
   ctx.fillStyle = isLight ? "#4b5e78" : "#94a3b8";
-  ctx.font = "500 38px 'Segoe UI', 'PingFang SC', sans-serif";
-  ctx.fillText(store.currentSong?.artist || "BreezeMusic", 140, 335);
+  ctx.font = "600 38px 'Segoe UI', 'PingFang SC', sans-serif";
+  ctx.fillText(
+    `${store.currentSong?.artist || "BreezeMusic"}${
+      store.currentSong?.album ? ` · 《${store.currentSong.album}》` : ""
+    }`,
+    140,
+    afterTitleY + 10
+  );
 
-  // 歌词正文
-  let y = 560;
+  // 分隔装饰线
+  ctx.fillStyle = tpl.accent;
+  ctx.fillRect(140, afterTitleY + 55, 96, 6);
+
+  // 歌词正文（支持多行自动折行，绝不超出画布右侧）
+  let y = afterTitleY + 150;
   for (const line of selectedLyrics.value) {
     ctx.fillStyle = isLight ? "#0f1d33" : "#ffffff";
-    ctx.font = "bold 56px 'Segoe UI', 'PingFang SC', sans-serif";
-    ctx.fillText(line.text, 140, y);
-    y += 78;
+    ctx.font =
+      tpl.id === "oriental"
+        ? "bold 54px 'Songti SC', 'SimSun', 'PingFang SC', serif"
+        : "bold 54px 'Segoe UI', 'PingFang SC', sans-serif";
+    y = wrapCanvasText(ctx, line.text, 140, y, 1140, 74);
+
     if (line.translation) {
       ctx.fillStyle = isLight ? "#5a6e8c" : "rgba(255,255,255,0.68)";
-      ctx.font = "500 36px 'Segoe UI', 'PingFang SC', sans-serif";
-      ctx.fillText(line.translation, 140, y);
-      y += 66;
+      ctx.font = "500 35px 'Segoe UI', 'PingFang SC', sans-serif";
+      y = wrapCanvasText(ctx, line.translation, 140, y + 4, 1140, 52);
     }
-    y += 42;
+    y += 44;
   }
 
   // 底部品牌印记
-  ctx.fillStyle = isLight ? "#64748b" : "rgba(255,255,255,0.5)";
+  ctx.fillStyle = isLight ? "#64748b" : "rgba(255,255,255,0.52)";
   ctx.font = "600 30px 'Segoe UI', 'PingFang SC', sans-serif";
-  ctx.fillText("BreezeMusic · 微风音乐 (酷狗概念版 2K 歌词海报)", 140, 1980);
+  ctx.fillText(
+    `BreezeMusic · 微风音乐 (${tpl.name} · 2K 超清歌词海报)`,
+    140,
+    1980
+  );
 
   const dataUrl = canvas.toDataURL("image/png");
   const a = document.createElement("a");
   a.href = dataUrl;
-  a.download = `BreezeMusic_${store.currentSong?.title || "Poster"}_2K.png`;
+  a.download = `BreezeMusic_${store.currentSong?.title || "Poster"}_${tpl.name}_2K.png`;
   a.click();
-  store.notify("已生成并导出 2K (1440×2160) 超清歌词海报 PNG！");
+  store.notify(`已生成并导出「${tpl.name}」2K (1440×2160) 超清歌词海报 PNG！`);
 }
 </script>
 
@@ -146,7 +263,7 @@ function export2KPosterPng() {
             <div>
               <h3>2K 超清歌词海报工坊</h3>
               <p class="vip-sub-caption">
-                勾选心仪歌词段落 · 切换高定视觉模板并一键导出 2K 分辨率 PNG
+                五大高定艺术模板（黑胶典藏 / 先锋画报 / 东方雅韵 / 复古拍立得 / 赛博流光）· 智能多行折行排版
               </p>
             </div>
           </div>
@@ -163,9 +280,19 @@ function export2KPosterPng() {
           <div class="poster-preview-col">
             <div
               class="poster-canvas-card"
-              :class="[`tpl-${activeTemplate}`]"
+              :class="[
+                `tpl-${activeTemplate}`,
+                {
+                  'tpl-daylight':
+                    activeTemplate === 'oriental' ||
+                    activeTemplate === 'polaroid',
+                },
+              ]"
               :style="{
                 background: templates.find((t) => t.id === activeTemplate)?.bg,
+                color: templates.find((t) => t.id === activeTemplate)?.isLight
+                  ? '#0f1d33'
+                  : '#ffffff',
               }"
             >
               <div class="pcc-header">
@@ -173,12 +300,24 @@ function export2KPosterPng() {
                   v-if="store.currentSong?.coverUrl"
                   :src="store.currentSong.coverUrl"
                   class="pcc-cover"
+                  :style="{
+                    borderRadius:
+                      activeTemplate === 'vinyl' ? '50%' : '14px',
+                  }"
                 />
                 <div class="pcc-meta">
                   <div class="pcc-title">
                     {{ store.currentSong?.title || "微风音乐" }}
                   </div>
-                  <div class="pcc-artist">
+                  <div
+                    class="pcc-artist"
+                    :style="{
+                      color: templates.find((t) => t.id === activeTemplate)
+                        ?.isLight
+                        ? '#475569'
+                        : 'rgba(255,255,255,0.72)',
+                    }"
+                  >
                     {{ store.currentSong?.artist || "BreezeMusic" }}
                   </div>
                 </div>
@@ -191,14 +330,26 @@ function export2KPosterPng() {
                   class="pcc-lyric-block"
                 >
                   <div class="pcc-line-main">{{ line.text }}</div>
-                  <div v-if="line.translation" class="pcc-line-trans">
+                  <div
+                    v-if="line.translation"
+                    class="pcc-line-trans"
+                    :style="{
+                      color: templates.find((t) => t.id === activeTemplate)
+                        ?.isLight
+                        ? '#64748b'
+                        : 'rgba(255,255,255,0.68)',
+                    }"
+                  >
                     {{ line.translation }}
                   </div>
                 </div>
               </div>
 
               <div class="pcc-footer">
-                <span>BreezeMusic · 帧享真无损</span>
+                <span>
+                  BreezeMusic ·
+                  {{ templates.find((t) => t.id === activeTemplate)?.name }}
+                </span>
                 <span class="pcc-badge">2K UHD POSTER</span>
               </div>
             </div>
@@ -207,7 +358,7 @@ function export2KPosterPng() {
           <!-- 右栏：模板切换 + 歌词多选列表 -->
           <div class="poster-controls-col">
             <div class="p-ctrl-block">
-              <div class="p-ctrl-label">高定视觉排版模板</div>
+              <div class="p-ctrl-label">五大高定视觉排版模板</div>
               <div class="p-tpl-pills">
                 <button
                   v-for="t in templates"

@@ -101,6 +101,29 @@ const channels = ref<AmbientChannel[]>([
   },
 ]);
 
+const sceneMixPresets = [
+  {
+    id: "rainy_study",
+    name: "🌧️ 雨夜书房",
+    weights: { rain: 0.45, ocean: 0, fire: 0.25, vinyl: 0.18 } as Record<string, number>,
+  },
+  {
+    id: "coastal_breeze",
+    name: "🌊 海岸微风",
+    weights: { rain: 0.15, ocean: 0.48, fire: 0, vinyl: 0 } as Record<string, number>,
+  },
+  {
+    id: "campfire_vinyl",
+    name: "🔥 篝火黑胶",
+    weights: { rain: 0, ocean: 0, fire: 0.42, vinyl: 0.28 } as Record<string, number>,
+  },
+  {
+    id: "mute_all",
+    name: "🔇 关闭环境音",
+    weights: { rain: 0, ocean: 0, fire: 0, vinyl: 0 } as Record<string, number>,
+  },
+];
+
 let audioCtx: AudioContext | null = null;
 const activeNodes = new Map<
   string,
@@ -115,6 +138,27 @@ function ensureAudioContext(): AudioContext {
     audioCtx.resume();
   }
   return audioCtx;
+}
+
+function setChannelState(ch: AmbientChannel, shouldActive: boolean, targetVol?: number) {
+  if (targetVol !== undefined && targetVol > 0) {
+    ch.volume = targetVol;
+  }
+  if (shouldActive && !ch.active) {
+    toggleAmbientChannel(ch);
+  } else if (!shouldActive && ch.active) {
+    toggleAmbientChannel(ch);
+  } else if (shouldActive && ch.active) {
+    updateChannelVolume(ch, ch.volume);
+  }
+}
+
+function applySceneMix(scene: { name: string; weights: Record<string, number> }) {
+  for (const ch of channels.value) {
+    const w = scene.weights[ch.id] || 0;
+    setChannelState(ch, w > 0, w > 0 ? w : ch.volume);
+  }
+  store.notify(`已切换心流环境声景：${scene.name}`);
 }
 
 function toggleAmbientChannel(ch: AmbientChannel) {
@@ -132,7 +176,14 @@ function toggleAmbientChannel(ch: AmbientChannel) {
       b0 = 0.997 * b0 + white * 0.029;
       b1 = 0.985 * b1 + white * 0.032;
       b2 = 0.95 * b2 + white * 0.048;
-      output[i] = (b0 + b1 + b2 + white * 0.015) * 0.35;
+      // 针对不同通道塑造独特声学纹理（海浪呼吸包络 / 篝火微爆裂 / 雨声粉噪）
+      let env = 1.0;
+      if (ch.id === "ocean") {
+        env = 0.55 + 0.45 * Math.sin((i / ctx.sampleRate) * Math.PI * 0.66);
+      } else if (ch.id === "fire" && Math.random() < 0.0015) {
+        env = 2.4;
+      }
+      output[i] = (b0 + b1 + b2 + white * 0.015) * 0.35 * env;
     }
 
     const noise = ctx.createBufferSource();
@@ -191,7 +242,7 @@ onUnmounted(() => {
       class="modal-backdrop"
       @click.self="store.isFocusPodOpen = false"
     >
-      <div class="compact-glass-modal" style="width: 560px">
+      <div class="compact-glass-modal" style="width: 580px">
         <div class="modal-header">
           <div class="vip-title-row">
             <div class="vip-icon-orb cyan">
@@ -247,8 +298,23 @@ onUnmounted(() => {
           </div>
         </div>
 
+        <!-- 一键场景混音预设 -->
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex-wrap: wrap; gap: 8px">
+          <span class="cfg-label" style="margin-bottom: 0">环境伴音混音台（可与当前播放音乐叠加共鸣）</span>
+          <div class="bg-choice-pills">
+            <button
+              v-for="sc in sceneMixPresets"
+              :key="sc.id"
+              class="bg-pill-btn"
+              style="padding: 4px 10px; font-size: 12.5px"
+              @click="applySceneMix(sc)"
+            >
+              {{ sc.name }}
+            </button>
+          </div>
+        </div>
+
         <!-- 4 路环境白噪音混音矩阵 -->
-        <div class="cfg-label">环境伴音混音台（可与当前播放音乐叠加共鸣）</div>
         <div class="cache-grid">
           <div
             v-for="ch in channels"

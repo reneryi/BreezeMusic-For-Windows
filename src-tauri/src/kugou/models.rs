@@ -1,4 +1,24 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+fn deserialize_i64_flexible<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum IntOrStr {
+        Int(i64),
+        Float(f64),
+        Str(String),
+        Null,
+    }
+    match IntOrStr::deserialize(deserializer)? {
+        IntOrStr::Int(v) => Ok(v),
+        IntOrStr::Float(v) => Ok(v as i64),
+        IntOrStr::Str(s) => Ok(s.trim().parse::<i64>().unwrap_or(0)),
+        IntOrStr::Null => Ok(0),
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -43,7 +63,9 @@ impl AudioQuality {
 
     pub fn from_str(val: &str) -> Self {
         match val.trim().to_lowercase().as_str() {
-            "high" | "hires" | "hi-res" | "res" | "super" => AudioQuality::HiRes,
+            "high" | "hires" | "hi-res" | "res" | "super" | "master" | "atmos" => {
+                AudioQuality::HiRes
+            }
             "flac" | "lossless" | "sq" => AudioQuality::Lossless,
             "320" | "hq" | "high_quality" => AudioQuality::High,
             _ => AudioQuality::Standard,
@@ -151,7 +173,7 @@ pub struct VipStatusInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Song {
     pub id: String,
     pub hash: String,
@@ -159,9 +181,14 @@ pub struct Song {
     pub hash320: String,
     pub hash_flac: String,
     pub hash_hi_res: String,
+    pub accompany_hash: String,
+    #[serde(deserialize_with = "deserialize_i64_flexible")]
     pub size128: i64,
+    #[serde(deserialize_with = "deserialize_i64_flexible")]
     pub size320: i64,
+    #[serde(deserialize_with = "deserialize_i64_flexible")]
     pub size_flac: i64,
+    #[serde(deserialize_with = "deserialize_i64_flexible")]
     pub size_hi_res: i64,
     pub title: String,
     pub artist: String,
@@ -169,10 +196,15 @@ pub struct Song {
     pub album: String,
     pub album_id: String,
     pub cover_url: String,
+    #[serde(deserialize_with = "deserialize_i64_flexible")]
     pub duration_ms: i64,
+    #[serde(deserialize_with = "deserialize_i64_flexible")]
     pub album_audio_id: i64,
+    #[serde(deserialize_with = "deserialize_i64_flexible")]
     pub audio_id: i64,
     pub mix_song_id: String,
+    #[serde(deserialize_with = "deserialize_i64_flexible")]
+    pub file_id: i64,
     pub is_vip: bool,
     pub is_lossless: bool,
     pub is_hi_res: bool,
@@ -237,8 +269,8 @@ pub struct PlaybackResult {
     pub ext_name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Playlist {
     pub id: String,
     pub title: String,
@@ -249,6 +281,7 @@ pub struct Playlist {
     pub is_created_by_me: bool,
     pub is_favorite: bool,
     pub is_liked: bool,
+    #[serde(deserialize_with = "deserialize_i64_flexible")]
     pub list_id: i64,
     pub global_collection_id: String,
 }
@@ -307,8 +340,8 @@ pub struct FmChannel {
     pub freq_label: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct FollowedArtist {
     pub artist_id: String,
     pub target_user_id: String,
@@ -321,8 +354,8 @@ pub struct FollowedArtist {
     pub intro: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct AlbumItem {
     pub album_id: String,
     pub album_name: String,
@@ -354,8 +387,8 @@ pub struct PurchasedSongItem {
     pub buy_time: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct SongComment {
     pub id: String,
     pub user_name: String,
@@ -368,6 +401,10 @@ pub struct SongComment {
     pub reply_count: i32,
     pub special_child_id: String,
     pub replies: Vec<SongComment>,
+    pub images: Vec<String>,
+    pub reply_user_name: Option<String>,
+    pub reply_quoted_content: Option<String>,
+    pub parent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -426,4 +463,14 @@ pub struct SongDetailInfo {
     pub file_hash: String,
     pub has_accompaniment: bool,
     pub accompany_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SharedMusicResolved {
+    pub target_type: String, // "song" | "playlist" | "unknown"
+    pub song: Option<Song>,
+    pub playlist: Option<Playlist>,
+    pub songs: Vec<Song>,
+    pub message: String,
 }

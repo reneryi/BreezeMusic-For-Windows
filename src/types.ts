@@ -12,9 +12,18 @@ export type LibraryAssetTab =
   | "liked"
   | "recent";
 
-export type LibraryDetailMode = "playlist" | "playlists" | "artist" | "album";
+export type LibraryDetailMode =
+  | "liked"
+  | "recent"
+  | "playlist"
+  | "playlists"
+  | "artist"
+  | "artist_detail"
+  | "album"
+  | "album_detail"
+  | "purchased_songs";
 
-export type SearchCategoryTab = "songs" | "playlists" | "albums" | "artists";
+export type SearchCategoryTab = "all" | "complex" | "songs" | "playlists" | "albums" | "artists";
 
 export type AudioQualityValue = "128" | "320" | "flac" | "high" | "hires" | "master";
 export type AudioQuality = AudioQualityValue;
@@ -95,6 +104,8 @@ export type PeqFilterType =
   | "highshelf"
   | "notch"
   | "bandpass";
+
+export type PeqFilterTopology = PeqFilterType;
 
 /** 空间混响房间模型（对齐 Android ReverbMode） */
 export type ReverbPresetId =
@@ -186,6 +197,7 @@ export interface Song {
   hash320: string;
   hashFlac: string;
   hashHiRes: string;
+  accompanyHash?: string;
   size128: number;
   size320: number;
   sizeFlac: number;
@@ -201,6 +213,7 @@ export interface Song {
   albumAudioId: number | string;
   audioId: number;
   mixSongId: string;
+  fileId?: number;
   isVip: boolean;
   isLossless: boolean;
   isHiRes: boolean;
@@ -295,6 +308,7 @@ export interface FollowedArtist {
   fansCount: number;
   isFollowed: boolean;
   intro: string;
+  longIntro?: string;
 }
 
 export type FollowedArtistItem = FollowedArtist;
@@ -318,6 +332,7 @@ export interface AlbumItem {
   coverUrl: string;
   publishDate: string;
   publishCompany: string;
+  company?: string;
   songCount: number;
   intro: string;
 }
@@ -351,6 +366,11 @@ export interface SongComment {
   replyCount: number;
   specialChildId: string;
   replies: SongComment[];
+  images?: string[];
+  replyUserName?: string | null;
+  replyQuotedContent?: string | null;
+  parentId?: string | null;
+  vipLevel?: number;
 }
 
 export interface GatewayDiagResult {
@@ -415,6 +435,14 @@ export interface SongDetailInfo {
   accompanyHash: string;
 }
 
+export interface SharedMusicResolved {
+  targetType: "song" | "playlist" | "unknown";
+  song?: Song | null;
+  playlist?: Playlist | null;
+  songs: Song[];
+  message: string;
+}
+
 /** 母带级声场调音工作台参数（对齐 Android AcousticFieldTuningTab） */
 export interface AcousticFieldSettings {
   enabled: boolean;
@@ -423,9 +451,11 @@ export interface AcousticFieldSettings {
   transientPunch: number; // 0 ~ 100 瞬态微动态与鼓点冲击
   surroundWidth: number; // 0 ~ 100 3D 环绕声场宽度
   stageDepth: number; // 0 ~ 100 舞台纵深距离感
+  stageDistance: number; // 0 ~ 100 舞台纵深距离感（兼容别名）
   bauerCrossfeed: boolean; // Bauer 耳机交叉馈送（消除头中效应）
   reverbPreset: ReverbPresetId; // Schroeder 空间声学混响模型
   reverbPreDelayMs: number; // 0 ~ 80 ms 空间混响预延迟
+  reverbWetPercent: number; // 0 ~ 100 空间混响湿度百分比
   vocalClarity: number; // 0 ~ 100 人声通透与 6.2kHz 齿音柔化
   airHarmonics: number; // 0 ~ 100 12kHz+ 极高频空气泛音
   vinylTubeWarmth: number; // 0 ~ 100 黑胶胆机温暖度

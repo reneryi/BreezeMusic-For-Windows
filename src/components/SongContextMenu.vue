@@ -33,6 +33,13 @@ function handlePlayNow() {
   store.closeSongContextMenu();
 }
 
+function handlePlayNext() {
+  if (store.contextMenu.song) {
+    store.insertPlayNext(store.contextMenu.song);
+  }
+  store.closeSongContextMenu();
+}
+
 function handleToggleLike() {
   if (store.contextMenu.song) {
     store.toggleFavoriteSong(store.contextMenu.song);
@@ -66,6 +73,22 @@ function handleViewAlbum() {
   const s = store.contextMenu.song;
   if (s) {
     store.openAlbumDetail(s.albumId, s.album || s.title, s.artist, s.coverUrl);
+  }
+  store.closeSongContextMenu();
+}
+
+function handlePreviewHdCover() {
+  const s = store.contextMenu.song;
+  if (s?.coverUrl) {
+    store.hdArtworkPreviewUrl = s.coverUrl.replace("/400/", "/1000/");
+  }
+  store.closeSongContextMenu();
+}
+
+function handleShareSong() {
+  const s = store.contextMenu.song;
+  if (s) {
+    store.shareModalSong = s;
   }
   store.closeSongContextMenu();
 }
@@ -128,7 +151,7 @@ const downloadTierChoices = computed(() => {
 </script>
 
 <template>
-  <!-- 1. 全局鼠标右键上下文菜单（替代手机端 ⋮ 底部抽屉） -->
+  <!-- 1. 全局鼠标右键上下文菜单（对齐 Android SongActionBottomSheet 全量动作） -->
   <transition name="pop-spring">
     <div
       v-if="store.contextMenu.visible && store.contextMenu.song"
@@ -154,6 +177,11 @@ const downloadTierChoices = computed(() => {
       <button class="scm-item" @click="handlePlayNow">
         <PlumpIcon name="play" :size="15" color="var(--cyan)" />
         <span>立即播放</span>
+      </button>
+
+      <button class="scm-item" @click="handlePlayNext">
+        <PlumpIcon name="top" :size="15" accent="var(--cyan)" />
+        <span>下一首播放 (队列置顶)</span>
       </button>
 
       <button class="scm-item" @click="handleToggleLike">
@@ -191,7 +219,7 @@ const downloadTierChoices = computed(() => {
       </button>
 
       <button class="scm-item" @click="handleViewArtist">
-        <PlumpIcon name="compass" :size="15" />
+        <PlumpIcon name="user" :size="15" />
         <span>查看歌手：{{ store.contextMenu.song.artist }}</span>
       </button>
 
@@ -202,6 +230,20 @@ const downloadTierChoices = computed(() => {
       >
         <PlumpIcon name="disc" :size="15" />
         <span>查看专辑：{{ store.contextMenu.song.album }}</span>
+      </button>
+
+      <button
+        v-if="store.contextMenu.song.coverUrl"
+        class="scm-item"
+        @click="handlePreviewHdCover"
+      >
+        <PlumpIcon name="image" :size="15" />
+        <span>查看 / 保存 1000P 超清封面</span>
+      </button>
+
+      <button class="scm-item" @click="handleShareSong">
+        <PlumpIcon name="share" :size="15" />
+        <span>分享歌曲口令 / 2K 歌词海报...</span>
       </button>
 
       <button class="scm-item" @click="handleOpenDetail">
@@ -406,10 +448,10 @@ const downloadTierChoices = computed(() => {
       class="modal-backdrop"
       @click.self="store.downloadModalSong = null"
     >
-      <div class="compact-glass-modal" style="width: 460px">
+      <div class="compact-glass-modal" style="width: 480px">
         <div class="modal-header">
           <div>
-            <h3>选择下载音质档位</h3>
+            <h3>选择下载音质档位与标签配置</h3>
             <p class="vip-sub-caption">
               默认二进制内嵌 1000×1000 高清封面、完整歌手专辑标签与双语时间轴歌词
             </p>
@@ -437,6 +479,22 @@ const downloadTierChoices = computed(() => {
               {{ store.downloadModalSong.album || "单曲" }}
             </div>
           </div>
+        </div>
+
+        <!-- 行内快捷内嵌与防重复下载开关 -->
+        <div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0">
+          <label class="bg-pill-btn" style="cursor: pointer; display: inline-flex; align-items: center; gap: 6px">
+            <input v-model="store.embedCoverAndTags" type="checkbox" />
+            <span>内嵌 1000P 封面与元数据</span>
+          </label>
+          <label class="bg-pill-btn" style="cursor: pointer; display: inline-flex; align-items: center; gap: 6px">
+            <input v-model="store.exportStandaloneLrc" type="checkbox" />
+            <span>导出同名 .lrc 歌词</span>
+          </label>
+          <label class="bg-pill-btn" style="cursor: pointer; display: inline-flex; align-items: center; gap: 6px">
+            <input v-model="store.skipExistingDownloaded" type="checkbox" />
+            <span>跳过同名已下载文件</span>
+          </label>
         </div>
 
         <div class="playlist-pick-list">

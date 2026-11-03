@@ -48,7 +48,19 @@
         </div>
 
         <div class="pb-artist-line">
-          <span class="pb-song-artist">
+          <span
+            class="pb-song-artist"
+            style="cursor: pointer"
+            title="点击查看歌手详情"
+            @click="
+              store.currentSong &&
+                store.openArtistDetail(
+                  store.currentSong.artistId,
+                  store.currentSong.artist,
+                  store.currentSong.coverUrl
+                )
+            "
+          >
             {{ store.currentSong?.artist || "双击顶部「发现」开启概念版畅听之旅" }}
           </span>
           <span
@@ -179,7 +191,7 @@
         ref="queueToggleBtnRef"
         class="pb-tool-icon-btn pb-queue-badge-btn"
         :class="{ active: store.isGlobalQueueOpen }"
-        title="当前播放队列"
+        title="当前播放队列与最近歌单栈"
         @click.stop="store.isGlobalQueueOpen = !store.isGlobalQueueOpen"
       >
         <PlumpIcon name="queue" :size="18" />
@@ -189,7 +201,7 @@
       </button>
     </div>
 
-    <!-- 底部固定栏右上角弹出的播放队列抽屉（支持点击窗口外任意区域自动关闭） -->
+    <!-- 底部固定栏右上角弹出的播放队列抽屉（对齐 Android PlayQueueBottomSheet：当前队列 / 最近队列栈 + 情绪重排 + 拖拽置顶） -->
     <transition name="fade-pop">
       <div
         v-if="store.isGlobalQueueOpen && !store.isNowPlayingOpen"
@@ -198,21 +210,96 @@
         @click.stop
       >
         <div class="pb-queue-header">
-          <div>
-            <div class="pb-queue-title">当前播放队列 ({{ store.playQueue.length }})</div>
-            <div class="pb-queue-sub">支持一键切换曲目或展开全屏舞台</div>
+          <div class="pill-tabs" style="padding: 3px">
+            <button
+              class="pill-tab-btn"
+              :class="{ active: queueTab === 'current' }"
+              style="padding: 5px 12px !important; font-size: 13.5px !important"
+              @click="queueTab = 'current'"
+            >
+              当前队列 ({{ store.playQueue.length }})
+            </button>
+            <button
+              class="pill-tab-btn"
+              :class="{ active: queueTab === 'recent' }"
+              style="padding: 5px 12px !important; font-size: 13.5px !important"
+              @click="queueTab = 'recent'"
+            >
+              最近队列栈 ({{ store.recentPlayQueues.length }})
+            </button>
           </div>
-          <button class="pb-tool-icon-btn" @click="store.isGlobalQueueOpen = false">
-            <PlumpIcon name="close" :size="16" />
+          <div style="display: flex; align-items: center; gap: 6px">
+            <button
+              v-if="queueTab === 'current' && store.playQueue.length > 0"
+              class="pb-tool-icon-btn"
+              title="清空播放队列"
+              @click="store.clearPlayQueue()"
+            >
+              <PlumpIcon name="trash" :size="15" />
+            </button>
+            <button class="pb-tool-icon-btn" @click="store.isGlobalQueueOpen = false">
+              <PlumpIcon name="close" :size="16" />
+            </button>
+          </div>
+        </div>
+
+        <!-- AI 情绪智能重排与 30s 副歌速刷工具条 -->
+        <div v-if="queueTab === 'current' && store.playQueue.length > 1" class="pb-queue-mood-bar">
+          <button
+            class="pb-mood-pill"
+            title="按节奏感与高能曲目优先重排队列"
+            @click="store.reorderQueueByMood('energetic')"
+          >
+            ⚡ 律动高能
+          </button>
+          <button
+            class="pb-mood-pill"
+            title="按舒缓松弛曲目优先重排队列"
+            @click="store.reorderQueueByMood('chill')"
+          >
+            🌙 舒缓松弛
+          </button>
+          <button
+            class="pb-mood-pill"
+            title="按抒情人声叙事重排队列"
+            @click="store.reorderQueueByMood('vocal')"
+          >
+            🎙️ 人声叙事
+          </button>
+          <button
+            class="pb-mood-pill"
+            :class="{ active: store.climaxModeEnabled }"
+            title="30秒副歌高潮速刷"
+            @click="toggleClimaxQuick"
+          >
+            ✨ 副歌30s
           </button>
         </div>
-        <div class="pb-queue-list">
+
+        <!-- 当前播放队列列表（支持拖拽排序、置顶下一首与单曲移除） -->
+        <div v-if="queueTab === 'current'" class="pb-queue-list">
+          <div
+            v-if="store.playQueue.length === 0"
+            class="lib-right-empty"
+            style="padding: 36px 16px"
+          >
+            队列为空，去发现页挑选喜欢的音乐吧
+          </div>
           <div
             v-for="(s, idx) in store.playQueue"
             :key="s.hash + '_' + idx"
             class="pb-queue-item"
-            :class="{ active: store.currentSong?.hash === s.hash }"
+            :class="{
+              active: store.currentSong?.hash === s.hash,
+              'drag-over': dragOverIndex === idx,
+            }"
+            draggable="true"
+            @dragstart="onDragStart(idx)"
+            @dragover.prevent="onDragOver(idx)"
+            @dragleave="onDragLeave"
+            @drop="onDrop(idx)"
             @click="store.playSongFromList(s, store.playQueue)"
+            @contextmenu.prevent="store.openSongContextMenu($event, s, store.playQueue)"
           >
             <span class="pb-queue-idx">{{ idx + 1 }}</span>
             <img :src="s.coverUrl" class="pb-queue-cover" alt="" />
@@ -220,7 +307,61 @@
               <div class="pb-queue-song-name">{{ s.title }}</div>
               <div class="pb-queue-song-artist">{{ s.artist }}</div>
             </div>
-            <span class="pb-queue-dur">{{ formatDuration(s.durationSeconds) }}</span>
+            <span class="pb-queue-dur">{{ formatDuration(s) }}</span>
+            <div class="pb-queue-row-actions" @click.stop>
+              <button
+                v-if="store.currentSong?.hash !== s.hash"
+                class="pb-q-act-btn"
+                title="移至下一首播放"
+                @click="store.insertPlayNext(s)"
+              >
+                <PlumpIcon name="top" :size="13" />
+              </button>
+              <button
+                class="pb-q-act-btn danger"
+                title="从队列中移除"
+                @click="store.removeSongFromQueue(idx)"
+              >
+                <PlumpIcon name="close" :size="13" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 最近播放过的 5 个历史歌单栈 -->
+        <div v-else class="pb-queue-list">
+          <div
+            v-if="store.recentPlayQueues.length === 0"
+            class="lib-right-empty"
+            style="padding: 36px 16px"
+          >
+            暂无历史歌单栈记录
+          </div>
+          <div
+            v-for="(rq, rIdx) in store.recentPlayQueues"
+            :key="rq.id || rIdx"
+            class="pb-recent-queue-card"
+            @click="
+              store.switchToRecentQueue(rq.id);
+              queueTab = 'current';
+            "
+          >
+            <div class="prq-covers">
+              <img
+                v-for="(sc, cIdx) in rq.songs.slice(0, 3)"
+                :key="cIdx"
+                :src="sc.coverUrl"
+                class="prq-cover-img"
+                :class="`layer-${cIdx}`"
+              />
+            </div>
+            <div class="pb-queue-meta">
+              <div class="pb-queue-song-name">{{ rq.title }}</div>
+              <div class="pb-queue-song-artist">
+                共 {{ rq.songs.length }} 首 · 点击一键恢复此队列
+              </div>
+            </div>
+            <PlumpIcon name="play" :size="16" color="var(--cyan)" />
           </div>
         </div>
       </div>
@@ -238,6 +379,29 @@ const store = useAppStore();
 const lastVolume = ref(0.8);
 const queueToggleBtnRef = ref<HTMLElement | null>(null);
 const queueDrawerRef = ref<HTMLElement | null>(null);
+const queueTab = ref<"current" | "recent">("current");
+const dragSourceIndex = ref<number | null>(null);
+const dragOverIndex = ref<number | null>(null);
+
+function onDragStart(idx: number) {
+  dragSourceIndex.value = idx;
+}
+
+function onDragOver(idx: number) {
+  dragOverIndex.value = idx;
+}
+
+function onDragLeave() {
+  dragOverIndex.value = null;
+}
+
+function onDrop(targetIdx: number) {
+  if (dragSourceIndex.value !== null && dragSourceIndex.value !== targetIdx) {
+    store.moveQueueItem(dragSourceIndex.value, targetIdx);
+  }
+  dragSourceIndex.value = null;
+  dragOverIndex.value = null;
+}
 
 function handleOutsideQueueMouseDown(e: MouseEvent) {
   if (!store.isGlobalQueueOpen) return;
@@ -301,6 +465,8 @@ const playModeIcon = computed(() => {
     case "loop_one":
     case "repeat_one":
       return "repeat-one";
+    case "sequence":
+      return "sequence";
     default:
       return "repeat";
   }

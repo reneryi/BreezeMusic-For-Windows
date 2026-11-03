@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from "vue";
+import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
 import { useAppStore } from "../stores/appStore";
 import { formatDuration } from "../api/kugou";
 import type {
   LyricAlignment,
   LyricThemeId,
+  PeqFilterTopology,
   PlayerBackgroundStyle,
   PlayerStageStyle,
   ReverbPresetId,
@@ -22,6 +23,7 @@ const activeOverlayPanel = ref<
 // 母带 DSP 面板内子 Tab：'viper' = 酷狗蝰蛇音效库, 'peq' = 10段参量均衡器, 'field' = 声场调音工作台
 const dspSubTab = ref<"viper" | "peq" | "field">("viper");
 const selectedViperCategory = ref<string>("全部");
+const selectedPeqBandIndex = ref<number>(0);
 
 // 评论发送框与回复状态
 const newCommentText = ref<string>("");
@@ -33,6 +35,31 @@ const queueSubTab = ref<"current" | "recent">("current");
 
 // 高清 1000P 封面大图预览弹窗
 const showHdCoverPreview = ref(false);
+
+// 物理连续积分黑胶角位移（杜绝暂停瞬间回弹 0deg）
+const vinylAngleDeg = ref(0);
+let vinylRafId = 0;
+let lastVinylTs = 0;
+
+function tickVinylRotation(ts: number) {
+  if (!lastVinylTs) lastVinylTs = ts;
+  const dt = Math.min(64, Math.max(0, ts - lastVinylTs));
+  lastVinylTs = ts;
+  const momentum = store.playMomentum || (store.isPlaying ? 1 : 0);
+  if (momentum > 0.002) {
+    // 33.3 RPM 柔和角速度，暂停时随 playMomentum 指数衰减平滑停稳
+    vinylAngleDeg.value = (vinylAngleDeg.value + dt * 0.02 * momentum) % 360;
+  }
+  vinylRafId = requestAnimationFrame(tickVinylRotation);
+}
+
+onMounted(() => {
+  vinylRafId = requestAnimationFrame(tickVinylRotation);
+});
+
+onBeforeUnmount(() => {
+  if (vinylRafId) cancelAnimationFrame(vinylRafId);
+});
 
 const stageStyles: { id: PlayerStageStyle; label: string; desc: string }[] = [
   {
@@ -80,6 +107,14 @@ const lyricThemes: {
   { id: "dynamic_cover", label: "封面随动", c1: "#3898ff", c2: "#00c4a7" },
 ];
 
+const filterTopologyOptions: Array<{ id: PeqFilterTopology; label: string }> = [
+  { id: "peaking", label: "峰值 Peaking" },
+  { id: "lowshelf", label: "低架 Low-Shelf" },
+  { id: "highshelf", label: "高架 High-Shelf" },
+  { id: "notch", label: "陷波 Notch" },
+  { id: "bandpass", label: "带通 Band-Pass" },
+];
+
 const activeLyricColors = computed(() => {
   if (store.lyricTheme === "dynamic_cover") {
     return {
@@ -92,6 +127,83 @@ const activeLyricColors = computed(() => {
     ? { c1: found.c1, c2: found.c2 }
     : { c1: "#00e5ff", c2: "#2b8cff" };
 });
+
+// 96 点对数频率响应曲线计算 (20Hz ~ 20kHz, SVG 560x100)
+const peqResponseCurveSvg = computed(() => {
+  const width = 560;
+  const height = 100;
+  const midY = height / 2;
+  const numPoints = 96;
+  const minF = 20;
+  const maxF = 20000;
+  const logMin = Math.log10(minF);
+  const logMax = Math.log10(maxF);
+
+  const freqs = store.eqFrequencies;
+  const gains = store.eqGains;
+  const qBase = Math.max(0.4, store.eqQFactor || 1.41);
+  const hpf = store.eqHighPassHz || 20;
+  const lpf = store.eqLowPassHz || 20000;
+  const bypass = store.peqBypass;
+
+  const pts: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < numPoints; i++) {
+    const ratio = i / (numPoints - 1);
+    const f = Math.pow(10, logMin + ratio * (logMax - logMin));
+    let totalDb = 0;
+
+    if (!bypass) {
+      for (let b = 0; b < freqs.length; b++) {
+        const fc = freqs[b];
+        const g = gains[b] || 0;
+        if (Math.abs(g) < 0.01) continue;
+        const octDist = Math.log2(f / fc);
+        const bw = 1.0 / qBase;
+        const topo = store.eqBandTopologies?.[b] || (b === 0 ? "lowshelf" : b === 9 ? "highshelf" : "peaking");
+        if (topo === "lowshelf") {
+          const s = 1 / (1 + Math.exp(octDist * 2.6));
+          totalDb += g * s;
+        } else if (topo === "highshelf") {
+          const s = 1 / (1 + Math.exp(-octDist * 2.6));
+          totalDb += g * s;
+        } else if (topo === "notch") {
+          const att = Math.exp(-(octDist * octDist) / (2 * bw * bw * 0.25));
+          totalDb -= Math.abs(g) * att;
+        } else {
+          const bell = Math.exp(-(octDist * octDist) / (2 * bw * bw));
+          totalDb += g * bell;
+        }
+      }
+      // HPF & LPF 滚降衰减包络
+      if (f < hpf) {
+        const octBelow = Math.log2(hpf / f);
+        totalDb -= Math.min(14, octBelow * 9);
+      }
+      if (f > lpf) {
+        const octAbove = Math.log2(f / lpf);
+        totalDb -= Math.min(14, octAbove * 9);
+      }
+    }
+
+    const clampedDb = Math.max(-13, Math.min(13, totalDb));
+    const x = Number((ratio * width).toFixed(1));
+    const y = Number((midY - (clampedDb / 13) * (midY - 8)).toFixed(1));
+    pts.push({ x, y });
+  }
+
+  const linePath = pts
+    .map((p, idx) => `${idx === 0 ? "M" : "L"}${p.x},${p.y}`)
+    .join(" ");
+  const areaPath = `${linePath} L${width},${midY} L0,${midY} Z`;
+  return { linePath, areaPath };
+});
+
+function formatCommentCount(count: number): string {
+  if (!count || count <= 0) return "0";
+  if (count >= 10000) return `${(count / 10000).toFixed(1)}w`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
+  return String(count);
+}
 
 // 校准后的歌词毫秒位置
 const npProgressPercent = computed(() => {
@@ -258,6 +370,13 @@ function togglePanel(
     activeOverlayPanel.value === panel ? "none" : panel;
 }
 
+function stepSelectedBandGain(delta: number) {
+  const idx = selectedPeqBandIndex.value;
+  const cur = store.eqGains[idx] || 0;
+  const next = Number(Math.max(-12, Math.min(12, cur + delta)).toFixed(1));
+  store.updateSingleEqBand(idx, next);
+}
+
 async function handleSendComment() {
   if (!newCommentText.value.trim()) return;
   isSubmittingComment.value = true;
@@ -284,10 +403,13 @@ async function handleSendComment() {
       '--lyric-c1': activeLyricColors.c1,
       '--lyric-c2': activeLyricColors.c2,
       '--halo-scale': 1 + (avgEnergy / 100) * 0.24,
+      '--bass-scale': 1 + (store.rhythmTelemetry?.bassEnergy || 0) * 0.32,
+      '--mid-scale': 1 + (store.rhythmTelemetry?.midVocalEnergy || 0) * 0.24,
+      '--high-scale': 1 + (store.rhythmTelemetry?.highAirEnergy || 0) * 0.28,
       '--momentum': store.playMomentum,
     }"
   >
-    <!-- ==================== 1. 五款高定动态光学背景层（含 playMomentum 连续相位过渡） ==================== -->
+    <!-- ==================== 1. 五款高定动态光学背景层（含 playMomentum 连续相位过渡 & 3频段声波遥测） ==================== -->
     <div
       v-if="store.playerBgStyle === 'cover_blur' && store.currentSong?.coverUrl"
       class="np-bg-cover-blur"
@@ -316,9 +438,18 @@ async function handleSendComment() {
       v-else-if="store.playerBgStyle === 'rhythm_halo'"
       class="np-bg-rhythm-halo"
     >
-      <div class="halo-ring r1"></div>
-      <div class="halo-ring r2"></div>
-      <div class="halo-ring r3"></div>
+      <div
+        class="halo-ring r1"
+        :style="{ transform: `translate(-50%, -50%) scale(var(--bass-scale, 1))` }"
+      ></div>
+      <div
+        class="halo-ring r2"
+        :style="{ transform: `translate(-50%, -50%) scale(var(--mid-scale, 1))` }"
+      ></div>
+      <div
+        class="halo-ring r3"
+        :style="{ transform: `translate(-50%, -50%) scale(var(--high-scale, 1))` }"
+      ></div>
     </div>
 
     <div
@@ -339,7 +470,7 @@ async function handleSendComment() {
           @dblclick="store.toggleFavoriteSong(store.currentSong)"
           @contextmenu.prevent="showHdCoverPreview = true"
         >
-          <!-- 形态 1：流光黑胶唱盘 (MasterVinylTurntableView) -->
+          <!-- 形态 1：流光黑胶唱盘 (MasterVinylTurntableView — 物理连续积分角位移，暂停丝滑减速不回弹) -->
           <div
             v-if="store.playerStageStyle === 'vinyl_turntable'"
             class="stage-vinyl-box"
@@ -347,14 +478,16 @@ async function handleSendComment() {
             <div class="vinyl-outer-halo"></div>
             <div
               class="tonearm-assembly"
-              :class="{ engaged: store.isPlaying }"
+              :style="{
+                transform: `rotate(${-26 + (store.playMomentum || (store.isPlaying ? 1 : 0)) * 28}deg)`,
+              }"
             >
               <div class="tonearm-pivot"></div>
               <div class="tonearm-rod"></div>
             </div>
             <div
               class="vinyl-platter"
-              :class="{ spinning: store.isPlaying }"
+              :style="{ transform: `rotate(${vinylAngleDeg.toFixed(2)}deg)` }"
             >
               <div class="vinyl-grooves"></div>
               <img
@@ -369,7 +502,7 @@ async function handleSendComment() {
             </div>
           </div>
 
-          <!-- 形态 2：3D 呼吸微倾棱镜方封 -->
+          <!-- 形态 2：3D 呼吸微倾棱镜方封（三通道色散光晕） -->
           <div
             v-else-if="store.playerStageStyle === 'gallery_poster'"
             class="stage-gallery-box"
@@ -377,6 +510,9 @@ async function handleSendComment() {
             <div
               class="gallery-art-frame"
               :class="{ breathing: store.isPlaying }"
+              :style="{
+                boxShadow: `0 24px 56px rgba(0, 0, 0, 0.52), -8px -6px 28px color-mix(in srgb, ${store.coverPalette[0]} 35%, transparent), 8px 8px 28px color-mix(in srgb, ${store.coverPalette[1]} 32%, transparent)`,
+              }"
             >
               <img
                 v-if="store.currentSong?.coverUrl"
@@ -404,7 +540,7 @@ async function handleSendComment() {
               <div class="cassette-window">
                 <div
                   class="cassette-reel"
-                  :class="{ spinning: store.isPlaying }"
+                  :style="{ transform: `rotate(${(vinylAngleDeg * 2.4).toFixed(1)}deg)` }"
                 ></div>
                 <div class="cassette-tape-bridge">
                   <img
@@ -415,7 +551,7 @@ async function handleSendComment() {
                 </div>
                 <div
                   class="cassette-reel"
-                  :class="{ spinning: store.isPlaying }"
+                  :style="{ transform: `rotate(${(vinylAngleDeg * 2.4).toFixed(1)}deg)` }"
                 ></div>
               </div>
               <div class="vu-meters-row">
@@ -613,13 +749,24 @@ async function handleSendComment() {
                 title="切换播放模式"
                 @click="store.cyclePlayMode()"
               >
-                <PlumpIcon :name="store.playMode === 'shuffle' ? 'shuffle' : store.playMode === 'loop_one' ? 'repeat-one' : 'repeat'" :size="18" />
+                <PlumpIcon
+                  :name="
+                    store.playMode === 'shuffle'
+                      ? 'shuffle'
+                      : store.playMode === 'repeat_one' || store.playMode === 'loop_one'
+                      ? 'repeat-one'
+                      : store.playMode === 'sequence'
+                      ? 'sequence'
+                      : 'repeat'
+                  "
+                  :size="18"
+                />
               </button>
               <button class="pb-ctrl-btn" title="上一曲" @click="store.playPrev()">
                 <PlumpIcon name="prev" :size="20" />
               </button>
               <button class="pb-play-hero-circle" title="播放 / 暂停" @click="store.togglePlayPause()">
-                <PlumpIcon :name="store.isPlaying ? 'pause' : 'play'" :size="22" />
+                <PlumpIcon :name="store.isPlaying ? 'pause' : 'play'" :size="22" color="#ffffff" />
               </button>
               <button class="pb-ctrl-btn" title="下一曲" @click="store.playNext()">
                 <PlumpIcon name="next" :size="20" />
@@ -676,7 +823,7 @@ async function handleSendComment() {
               @click="togglePanel('comments')"
             >
               <PlumpIcon name="comment" :size="15" />
-              <span>评论 ({{ store.activeSongComments.length }})</span>
+              <span>评论 ({{ formatCommentCount(store.activeSongComments.length) }})</span>
             </button>
 
             <button
@@ -849,7 +996,7 @@ async function handleSendComment() {
                 : activeOverlayPanel === "dsp_eq"
                 ? "酷狗蝰蛇声学矩阵 · 64-bit 纯线性母带 DSP & 10段参量均衡器"
                 : activeOverlayPanel === "comments"
-                ? `歌曲热评与多级楼中楼评论区 (${store.activeSongComments.length})`
+                ? `歌曲热评与多级楼中楼评论区 (${formatCommentCount(store.activeSongComments.length)})`
                 : activeOverlayPanel === "queue"
                 ? `播放队列与最近歌单栈 (${store.playQueue.length})`
                 : "进阶声学与播放控制工具"
@@ -960,7 +1107,7 @@ async function handleSendComment() {
           </div>
         </div>
 
-        <!-- 面板 C：母带级 DSP 调音台（酷狗蝰蛇音效库 + 10段PEQ + 声场调音工作台） -->
+        <!-- 面板 C：母带级 DSP 调音台（酷狗蝰蛇音效库 + 10段PEQ含实时96点Biquad频响曲线 + 声场调音工作台） -->
         <div v-else-if="activeOverlayPanel === 'dsp_eq'" class="drawer-body">
           <div class="dsp-top-bar">
             <div class="pill-tabs">
@@ -1065,7 +1212,7 @@ async function handleSendComment() {
             </div>
           </template>
 
-          <!-- 子 Tab 2：10 段参量均衡器 (PEQ) -->
+          <!-- 子 Tab 2：10 段参量均衡器 (PEQ + 96点实时对数频响曲线 + 单频段滤波器拓扑与 ±0.1dB 微调) -->
           <template v-else-if="dspSubTab === 'peq'">
             <div class="bg-choice-pills mb-10">
               <button
@@ -1077,6 +1224,29 @@ async function handleSendComment() {
               >
                 {{ p.name }}
               </button>
+            </div>
+
+            <!-- 实时 96 点对数频率响应包络画布 (对齐 EqualizerCurveCanvas) -->
+            <div class="peq-biquad-curve-box mb-10">
+              <svg viewBox="0 0 560 100" preserveAspectRatio="none" class="peq-curve-svg">
+                <defs>
+                  <linearGradient id="npPeqAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#00e5ff" stop-opacity="0.38" />
+                    <stop offset="50%" stop-color="#2b8cff" stop-opacity="0.08" />
+                    <stop offset="100%" stop-color="#6c5ce7" stop-opacity="0.32" />
+                  </linearGradient>
+                </defs>
+                <line x1="0" y1="20" x2="560" y2="20" stroke="rgba(148,163,184,0.14)" stroke-dasharray="3 3" />
+                <line x1="0" y1="50" x2="560" y2="50" stroke="rgba(0,229,255,0.32)" stroke-width="1" />
+                <line x1="0" y1="80" x2="560" y2="80" stroke="rgba(148,163,184,0.14)" stroke-dasharray="3 3" />
+                <path :d="peqResponseCurveSvg.areaPath" fill="url(#npPeqAreaGrad)" />
+                <path :d="peqResponseCurveSvg.linePath" fill="none" stroke="var(--cyan)" stroke-width="2.4" stroke-linecap="round" />
+              </svg>
+              <div class="peq-curve-overlay-tags">
+                <span>+12dB</span>
+                <span>0dB · 96-Pt Biquad Magnitude</span>
+                <span>-12dB</span>
+              </div>
             </div>
 
             <div class="peq-slots-row mb-10">
@@ -1118,6 +1288,8 @@ async function handleSendComment() {
                 v-for="(freq, idx) in store.eqFrequencies"
                 :key="freq"
                 class="eq-band-col"
+                :class="{ selected: selectedPeqBandIndex === idx }"
+                @click="selectedPeqBandIndex = idx"
               >
                 <span class="eq-gain-val">
                   {{
@@ -1128,16 +1300,17 @@ async function handleSendComment() {
                 </span>
                 <input
                   type="range"
-                  min="-10"
-                  max="10"
-                  step="0.5"
+                  min="-12"
+                  max="12"
+                  step="0.1"
                   :value="store.eqGains[idx]"
                   class="eq-vertical-slider"
                   @input="
+                    selectedPeqBandIndex = idx;
                     store.updateSingleEqBand(
                       idx,
                       Number(($event.target as HTMLInputElement).value)
-                    )
+                    );
                   "
                 />
                 <span class="eq-freq-label">
@@ -1146,20 +1319,65 @@ async function handleSendComment() {
               </div>
             </div>
 
-            <!-- 品质因数 Q 值与 HPF / LPF 边界滤波控制 (对齐 ProfessionalEqualizerPage) -->
+            <!-- 选中频段滤波器拓扑选择器与 ±0.1dB 精密微调步进器 -->
+            <div class="peq-band-detail-bar mt-10">
+              <div class="peq-bd-left">
+                <span class="mini-badge sq">
+                  Band {{ selectedPeqBandIndex + 1 }} ·
+                  {{
+                    store.eqFrequencies[selectedPeqBandIndex] >= 1000
+                      ? `${store.eqFrequencies[selectedPeqBandIndex] / 1000}kHz`
+                      : `${store.eqFrequencies[selectedPeqBandIndex]}Hz`
+                  }}
+                </span>
+                <div class="bg-choice-pills">
+                  <button
+                    v-for="tp in filterTopologyOptions"
+                    :key="tp.id"
+                    class="bg-pill-btn"
+                    style="padding: 4px 10px; font-size: 12.5px"
+                    :class="{
+                      active:
+                        store.eqBandTopologies[selectedPeqBandIndex] === tp.id,
+                    }"
+                    @click="store.setBandFilterTopology(selectedPeqBandIndex, tp.id)"
+                  >
+                    {{ tp.label }}
+                  </button>
+                </div>
+              </div>
+              <div class="peq-bd-right">
+                <button class="slot-mini-act" @click="stepSelectedBandGain(-0.1)">-0.1dB</button>
+                <button class="slot-mini-act" @click="store.updateSingleEqBand(selectedPeqBandIndex, 0)">归零</button>
+                <button class="slot-mini-act" @click="stepSelectedBandGain(0.1)">+0.1dB</button>
+              </div>
+            </div>
+
+            <!-- 品质因数 Q 值、母带前级增益与 HPF / LPF 边界滤波控制 -->
             <div class="lyric-sliders-row mt-14">
               <div class="cfg-col">
                 <div class="cfg-label">
-                  品质因数 Q 值：{{ store.eqQFactor.toFixed(2) }}
+                  品质因数 Q 值：{{ store.eqQFactor.toFixed(2) }} · 前级：{{ store.masterPreampDb > 0 ? `+${store.masterPreampDb}` : store.masterPreampDb }}dB
                 </div>
-                <input
-                  v-model.number="store.eqQFactor"
-                  type="range"
-                  min="0.4"
-                  max="6.0"
-                  step="0.1"
-                  @input="store.syncDspChain()"
-                />
+                <div style="display: flex; gap: 8px">
+                  <input
+                    v-model.number="store.eqQFactor"
+                    type="range"
+                    min="0.4"
+                    max="6.0"
+                    step="0.1"
+                    @input="store.syncDspChain()"
+                  />
+                  <input
+                    v-model.number="store.masterPreampDb"
+                    type="range"
+                    min="-9"
+                    max="6"
+                    step="0.5"
+                    title="母带前级增益 Preamp"
+                    @input="store.syncDspChain()"
+                  />
+                </div>
               </div>
               <div class="cfg-col">
                 <div class="cfg-label">
@@ -1231,7 +1449,10 @@ async function handleSendComment() {
                   :class="{
                     active: store.acousticField.reverbPreset === rv.id,
                   }"
-                  @click="store.acousticField.reverbPreset = rv.id"
+                  @click="
+                    store.acousticField.reverbPreset = rv.id;
+                    store.syncDspChain();
+                  "
                 >
                   {{ rv.label }}
                 </button>
@@ -1240,50 +1461,73 @@ async function handleSendComment() {
               <div class="lyric-sliders-row">
                 <div class="cfg-col">
                   <div class="cfg-label">
-                    超重低音下潜：{{ store.acousticField.subBassDepth }}%
+                    超重低音下潜：{{ store.acousticField.subBassDepth }}% · 瞬态鼓点：{{ store.acousticField.transientPunch }}%
                   </div>
-                  <input
-                    v-model.number="store.acousticField.subBassDepth"
-                    type="range"
-                    min="0"
-                    max="100"
-                    @input="store.syncDspChain()"
-                  />
+                  <div style="display: flex; gap: 8px">
+                    <input
+                      v-model.number="store.acousticField.subBassDepth"
+                      type="range"
+                      min="0"
+                      max="100"
+                      @input="store.syncDspChain()"
+                    />
+                    <input
+                      v-model.number="store.acousticField.transientPunch"
+                      type="range"
+                      min="0"
+                      max="100"
+                      @input="store.syncDspChain()"
+                    />
+                  </div>
                 </div>
                 <div class="cfg-col">
                   <div class="cfg-label">
-                    人声通透与 6.2kHz 齿音抑制：{{
-                      store.acousticField.vocalClarity
-                    }}%
+                    人声通透与齿音抑制：{{ store.acousticField.vocalClarity }}% · 声场纵深：{{ store.acousticField.stageDistance }}%
                   </div>
-                  <input
-                    v-model.number="store.acousticField.vocalClarity"
-                    type="range"
-                    min="0"
-                    max="100"
-                    @input="store.syncDspChain()"
-                  />
+                  <div style="display: flex; gap: 8px">
+                    <input
+                      v-model.number="store.acousticField.vocalClarity"
+                      type="range"
+                      min="0"
+                      max="100"
+                      @input="store.syncDspChain()"
+                    />
+                    <input
+                      v-model.number="store.acousticField.stageDistance"
+                      type="range"
+                      min="0"
+                      max="100"
+                      @input="store.syncDspChain()"
+                    />
+                  </div>
                 </div>
                 <div class="cfg-col">
                   <div class="cfg-label">
-                    12kHz+ 空气泛音 / 胆机温暖度：{{
-                      store.acousticField.airHarmonics
-                    }}%
+                    空气泛音：{{ store.acousticField.airHarmonics }}% · 混响湿度：{{ store.acousticField.reverbWetPercent }}%
                   </div>
-                  <input
-                    v-model.number="store.acousticField.airHarmonics"
-                    type="range"
-                    min="0"
-                    max="100"
-                    @input="store.syncDspChain()"
-                  />
+                  <div style="display: flex; gap: 8px">
+                    <input
+                      v-model.number="store.acousticField.airHarmonics"
+                      type="range"
+                      min="0"
+                      max="100"
+                      @input="store.syncDspChain()"
+                    />
+                    <input
+                      v-model.number="store.acousticField.reverbWetPercent"
+                      type="range"
+                      min="0"
+                      max="100"
+                      @input="store.syncDspChain()"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           </template>
         </div>
 
-        <!-- 面板 D：歌曲评论区（最热/最新切换 + 多级楼中楼展开 + 点赞 + 发表评论） -->
+        <!-- 面板 D：歌曲评论区（最热/最新切换 + 引用卡片 + 评论配图 + 多级楼中楼展开 + 点赞 + 发表评论） -->
         <div
           v-else-if="activeOverlayPanel === 'comments'"
           class="drawer-body comments-drawer-body"
@@ -1378,11 +1622,38 @@ async function handleSendComment() {
                 <div class="cmt-main">
                   <div class="cmt-top">
                     <span class="cmt-user">{{ cmt.userName }}</span>
+                    <span v-if="(cmt.vipLevel || 0) > 0" class="mini-badge hires">
+                      VIP {{ cmt.vipLevel }}
+                    </span>
                     <span class="cmt-time">
                       {{ cmt.createdTime }} {{ cmt.location }}
                     </span>
                   </div>
+
+                  <!-- 若存在引用回复内容，渲染软润引用色块 -->
+                  <div
+                    v-if="cmt.replyQuotedContent"
+                    class="cmt-quoted-box"
+                  >
+                    <strong v-if="cmt.replyUserName">@{{ cmt.replyUserName }}：</strong>
+                    <span>{{ cmt.replyQuotedContent }}</span>
+                  </div>
+
                   <div class="cmt-text">{{ cmt.content }}</div>
+
+                  <!-- 评论配图缩略图网格 -->
+                  <div
+                    v-if="cmt.images && cmt.images.length > 0"
+                    class="cmt-images-grid"
+                  >
+                    <img
+                      v-for="(imgUrl, iIdx) in cmt.images"
+                      :key="iIdx"
+                      :src="imgUrl"
+                      class="cmt-inline-img"
+                      @click.stop="store.hdArtworkPreviewUrl = imgUrl"
+                    />
+                  </div>
 
                   <div
                     style="
@@ -1390,7 +1661,7 @@ async function handleSendComment() {
                       align-items: center;
                       gap: 12px;
                       margin-top: 6px;
-                      font-size: 11.5px;
+                      font-size: 12.5px;
                     "
                   >
                     <button
@@ -1428,22 +1699,14 @@ async function handleSendComment() {
                     :filled="cmt.isLiked"
                     :color="cmt.isLiked ? '#ff4d6d' : 'currentColor'"
                   />
-                  <span>{{ cmt.likeCount }}</span>
+                  <span>{{ formatCommentCount(cmt.likeCount) }}</span>
                 </button>
               </div>
 
               <!-- 二层楼中楼回复折叠区 -->
               <div
                 v-if="store.expandedFloorCommentId === cmt.id"
-                style="
-                  margin-left: 48px;
-                  padding: 10px 14px;
-                  border-radius: 14px;
-                  background: var(--bg-surface);
-                  display: flex;
-                  flex-direction: column;
-                  gap: 8px;
-                "
+                class="cmt-floor-replies-box"
               >
                 <div
                   v-if="
@@ -1457,10 +1720,13 @@ async function handleSendComment() {
                 <div
                   v-for="rep in store.floorRepliesMap[cmt.id] || []"
                   :key="rep.id"
-                  style="font-size: 14.5px; line-height: 1.5"
+                  class="cmt-floor-reply-row"
                 >
-                  <strong style="color: var(--cyan)">{{ rep.userName }}：</strong>
-                  <span>{{ rep.content }}</span>
+                  <strong style="color: var(--cyan)">{{ rep.userName }}</strong>
+                  <span v-if="rep.replyUserName" style="color: var(--text-muted)">
+                    回复 @{{ rep.replyUserName }}
+                  </span>
+                  <span>：{{ rep.content }}</span>
                 </div>
               </div>
             </div>
@@ -1472,21 +1738,29 @@ async function handleSendComment() {
           v-else-if="activeOverlayPanel === 'queue'"
           class="drawer-body comments-drawer-body"
         >
-          <div class="pill-tabs mb-10">
-            <button
-              class="pill-tab-btn"
-              :class="{ active: queueSubTab === 'current' }"
-              @click="queueSubTab = 'current'"
-            >
-              当前队列 ({{ store.playQueue.length }})
-            </button>
-            <button
-              class="pill-tab-btn"
-              :class="{ active: queueSubTab === 'recent' }"
-              @click="queueSubTab = 'recent'"
-            >
-              最近播放过的歌单栈 ({{ store.recentPlayQueues.length }})
-            </button>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px">
+            <div class="pill-tabs">
+              <button
+                class="pill-tab-btn"
+                :class="{ active: queueSubTab === 'current' }"
+                @click="queueSubTab = 'current'"
+              >
+                当前队列 ({{ store.playQueue.length }})
+              </button>
+              <button
+                class="pill-tab-btn"
+                :class="{ active: queueSubTab === 'recent' }"
+                @click="queueSubTab = 'recent'"
+              >
+                最近播放过的歌单栈 ({{ store.recentPlayQueues.length }})
+              </button>
+            </div>
+            <div v-if="queueSubTab === 'current'" class="bg-choice-pills">
+              <button class="bg-pill-btn" @click="store.reorderQueueByMood('energetic')">⚡ 律动高能</button>
+              <button class="bg-pill-btn" @click="store.reorderQueueByMood('chill')">🌙 舒缓松弛</button>
+              <button class="bg-pill-btn" @click="store.reorderQueueByMood('vocal')">🎙️ 人声叙事</button>
+              <button class="bg-pill-btn" style="color: var(--coral)" @click="store.clearPlayQueue()">清空队列</button>
+            </div>
           </div>
 
           <div v-if="queueSubTab === 'current'" class="comments-scroll-list">
@@ -1508,10 +1782,19 @@ async function handleSendComment() {
                   <span>{{ s.artist }}</span>
                 </div>
               </div>
+              <span class="psc-dur">{{ formatDuration(s) }}</span>
+              <button
+                v-if="store.currentSong?.hash !== s.hash"
+                class="psc-act-btn"
+                title="移至下一首播放"
+                @click.stop="store.insertPlayNext(s)"
+              >
+                <PlumpIcon name="top" :size="13" />
+              </button>
               <button
                 class="psc-act-btn"
                 title="从播放队列中移除"
-                @click.stop="store.playQueue.splice(idx, 1)"
+                @click.stop="store.removeSongFromQueue(idx)"
               >
                 <PlumpIcon name="close" :size="13" />
               </button>
@@ -1521,11 +1804,10 @@ async function handleSendComment() {
           <div v-else class="comments-scroll-list">
             <div
               v-for="(rq, rIdx) in store.recentPlayQueues"
-              :key="rIdx"
+              :key="rq.id || rIdx"
               class="plump-song-card compact"
               @click="
-                rq.songs.length > 0 &&
-                  store.playSongFromList(rq.songs[0], rq.songs, rq.title);
+                store.switchToRecentQueue(rq.id);
                 queueSubTab = 'current';
               "
             >
@@ -1617,6 +1899,13 @@ async function handleSendComment() {
                   1000P 高清封面
                 </button>
                 <button
+                  v-if="store.currentSong"
+                  class="bg-pill-btn"
+                  @click="store.shareModalSong = store.currentSong"
+                >
+                  分享歌曲口令
+                </button>
+                <button
                   v-if="store.downloadFeatureUnlocked && store.currentSong"
                   class="bg-pill-btn active"
                   @click="store.downloadModalSong = store.currentSong"
@@ -1637,7 +1926,7 @@ async function handleSendComment() {
         class="modal-backdrop"
         @click.self="showHdCoverPreview = false"
       >
-        <div class="hd-cover-modal" @click.stop>
+        <div class="hd-cover-modal glass-popover" @click.stop>
           <img :src="hdCoverUrl" class="hd-cover-large" />
           <div class="hd-cover-actions">
             <a

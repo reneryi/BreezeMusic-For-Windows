@@ -170,7 +170,7 @@
         >
           <div class="hero-card-inner">
             <div class="hero-card-main-left">
-              <!-- 双层漫游封面叠放（移除生硬突出的黑胶圈，改为通透层叠封面 + 动态律动徽章） -->
+              <!-- 双层漫游封面叠放 -->
               <div class="fm-stereo-visual" :class="{ enlarged: isFmExpandedMode }">
                 <div v-if="store.personalFmSongs[2]?.coverUrl" class="fm-third-cover">
                   <img :src="store.personalFmSongs[2].coverUrl" draggable="false" alt="" />
@@ -197,7 +197,7 @@
                 </div>
               </div>
 
-              <!-- 猜你喜欢重构文案区：主标题固定为简洁大气的“猜你喜欢”，下方展示当前与下一首漫游曲目 -->
+              <!-- 猜你喜欢重构文案区 -->
               <div class="hero-card-copy">
                 <div class="hero-eyebrow-line fm-eyebrow">
                   <span>PERSONAL FM · 私人声学漫游</span>
@@ -259,7 +259,7 @@
               </div>
             </div>
 
-            <!-- 右侧横向一体化播控簇（告别原本上下堆叠的拥挤感） -->
+            <!-- 右侧横向一体化播控簇 -->
             <div class="hero-card-actions" @click.stop>
               <div
                 class="hero-expanded-extra-btns"
@@ -333,16 +333,27 @@
                 共 {{ activeHeroSongs.length }} 首精选曲目 · 点击顶部卡片即可收起返回发现页
               </span>
             </div>
-            <div class="frameless-sublist-search">
-              <PlumpIcon name="search" :size="15" />
-              <input
-                v-model="heroSongFilter"
-                type="text"
-                placeholder="在当前列表中筛选歌名 / 歌手 / 专辑..."
-              />
-              <button v-if="heroSongFilter" class="clear-inline-btn" @click="heroSongFilter = ''">
-                ×
+            <div style="display: flex; align-items: center; gap: 10px">
+              <button
+                v-if="isCurrentSongInList(activeHeroSongs)"
+                class="frameless-hover-btn"
+                title="定位当前播放歌曲"
+                @click="scrollToCurrentPlayingSong"
+              >
+                <PlumpIcon name="locate" :size="15" />
+                <span>定位在播</span>
               </button>
+              <div class="frameless-sublist-search">
+                <PlumpIcon name="search" :size="15" />
+                <input
+                  v-model="heroSongFilter"
+                  type="text"
+                  placeholder="在当前列表中筛选歌名 / 歌手 / 专辑..."
+                />
+                <button v-if="heroSongFilter" class="clear-inline-btn" @click="heroSongFilter = ''">
+                  ×
+                </button>
+              </div>
             </div>
           </div>
 
@@ -379,8 +390,8 @@
               <div class="fs-meta">
                 <div class="fs-title-line">
                   <span class="fs-title">{{ song.title }}</span>
-                  <span v-if="song.hasHiRes" class="fs-badge hires">Hi-Res</span>
-                  <span v-else-if="song.hasSq" class="fs-badge sq">SQ</span>
+                  <span v-if="song.hasHiRes || song.isHiRes" class="fs-badge hires">Hi-Res</span>
+                  <span v-else-if="song.hasSq || song.isLossless" class="fs-badge sq">SQ</span>
                   <span v-if="song.isVip" class="fs-badge vip">VIP</span>
                 </div>
                 <div class="fs-sub-line">
@@ -417,7 +428,7 @@
                 </button>
               </div>
 
-              <span class="fs-duration">{{ formatDuration(song.durationSeconds) }}</span>
+              <span class="fs-duration">{{ formatDuration(song) }}</span>
             </div>
           </div>
         </div>
@@ -431,7 +442,7 @@
           'lower-blur-exit': store.discoverHeroExpanding !== 'none',
         }"
       >
-        <!-- 1. 新歌速递：刷新按钮改为纯大图标（20px，无文字） -->
+        <!-- 1. 新歌速递 -->
         <section class="discover-block">
           <div class="block-header newsong-header">
             <div class="block-title-with-tabs">
@@ -459,7 +470,6 @@
               </div>
             </div>
 
-            <!-- 右侧：刷新改为纯大图标（无文字），保留全播与查看全部 -->
             <div class="block-right-frameless-actions">
               <button
                 class="frameless-icon-square-btn discover-refresh-icon-btn"
@@ -520,8 +530,8 @@
               <div class="ns-meta-col">
                 <div class="ns-song-title-row">
                   <span class="ns-song-title">{{ song.title }}</span>
-                  <span v-if="song.hasHiRes" class="fs-badge hires">Hi-Res</span>
-                  <span v-else-if="song.hasSq" class="fs-badge sq">SQ</span>
+                  <span v-if="song.hasHiRes || song.isHiRes" class="fs-badge hires">Hi-Res</span>
+                  <span v-else-if="song.hasSq || song.isLossless" class="fs-badge sq">SQ</span>
                 </div>
                 <div class="ns-song-sub-row">
                   <span class="ns-song-artist">{{ song.artist }}</span>
@@ -546,7 +556,7 @@
           </div>
         </section>
 
-        <!-- 2. 巅峰排行榜：刷新改为纯大图标（无文字），全部榜单不显示数量，榜单卡片全新重构设计 -->
+        <!-- 2. 巅峰排行榜 -->
         <section class="discover-block">
           <div class="block-header">
             <div class="block-title-with-tabs">
@@ -572,7 +582,7 @@
             </div>
           </div>
 
-          <!-- 全新重构的巅峰榜单 Bento 卡片矩阵（2行 × 4列 = 8张卡片） -->
+          <!-- 巅峰榜单 Bento 卡片矩阵（2行 × 4列 = 8张卡片） -->
           <div class="rank-double-row-grid">
             <div
               v-for="(rk, rIdx) in homeDoubleRowRanks"
@@ -581,7 +591,6 @@
               :class="`rank-accent-${(rIdx % 4) + 1}`"
               @click="store.openRankDetail(rk)"
             >
-              <!-- 左侧高清立体封面 + 悬浮快播按钮 -->
               <div class="rbc-cover-stage">
                 <img :src="rk.coverUrl" class="rbc-cover-img" loading="lazy" draggable="false" alt="" />
                 <button
@@ -593,7 +602,6 @@
                 </button>
               </div>
 
-              <!-- 右侧重构排版：标题 + 更新胶囊 + 歌名/歌手分离的 Top 3 曲目列 -->
               <div class="rbc-body">
                 <div class="rbc-head-row">
                   <h4 class="rbc-title">{{ rk.name }}</h4>
@@ -782,8 +790,8 @@
               <div class="fs-meta">
                 <div class="fs-title-line">
                   <span class="fs-title">{{ song.title }}</span>
-                  <span v-if="song.hasHiRes" class="fs-badge hires">Hi-Res</span>
-                  <span v-else-if="song.hasSq" class="fs-badge sq">SQ</span>
+                  <span v-if="song.hasHiRes || song.isHiRes" class="fs-badge hires">Hi-Res</span>
+                  <span v-else-if="song.hasSq || song.isLossless" class="fs-badge sq">SQ</span>
                   <span v-if="song.isVip" class="fs-badge vip">VIP</span>
                 </div>
                 <div class="fs-sub-line">
@@ -809,14 +817,14 @@
                   <PlumpIcon name="plus" :size="16" />
                 </button>
               </div>
-              <span class="fs-duration">{{ formatDuration(song.durationSeconds) }}</span>
+              <span class="fs-duration">{{ formatDuration(song) }}</span>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- ==================== 二级页面 B：榜单详情页 ==================== -->
+    <!-- ==================== 二级页面 B：双栏巅峰排行榜详情工作台 (左栏快速切榜 + 右栏榜单曲库) ==================== -->
     <div v-else-if="store.discoverSubView === 'rank'" class="discover-subpage frameless-subpage">
       <div class="subpage-frameless-header">
         <div class="sfh-left">
@@ -848,11 +856,20 @@
             />
           </div>
           <button
+            v-if="isCurrentSongInList(store.activeRankSongs)"
+            class="frameless-hover-btn"
+            title="定位当前播放歌曲"
+            @click="scrollToCurrentPlayingRankSong"
+          >
+            <PlumpIcon name="locate" :size="15" />
+            <span>定位在播</span>
+          </button>
+          <button
             class="frameless-hover-btn"
             @click="store.isRankGridModalOpen = true"
           >
             <PlumpIcon name="grid" :size="16" />
-            <span>切换榜单</span>
+            <span>榜单总览</span>
           </button>
           <button
             class="frameless-hover-btn primary-tint"
@@ -864,56 +881,105 @@
         </div>
       </div>
 
-      <div class="frameless-songs-grid-2col">
-        <div
-          v-for="(song, idx) in filteredRankSongs"
-          :key="song.hash + '_' + idx"
-          class="frameless-song-row"
-          :class="{ active: store.currentSong?.hash === song.hash }"
-          @click="store.playSongFromList(song, store.activeRankSongs)"
-          @contextmenu.prevent="store.openSongContextMenu($event, song, store.activeRankSongs)"
-        >
-          <span class="fs-index" :class="idx < 3 ? 'rank-top-' + (idx + 1) : ''">
-            {{ idx + 1 }}
-          </span>
-          <div class="fs-cover-wrap">
-            <img :src="song.coverUrl" class="fs-cover" loading="lazy" alt="" />
-            <div class="fs-cover-play">
-              <PlumpIcon
-                :name="store.currentSong?.hash === song.hash && store.isPlaying ? 'pause' : 'play'"
-                :size="15"
-                color="#fff"
-              />
+      <!-- 双栏榜单工作台：左侧榜单快速切换抽屉 + 右侧双列无框榜单曲库 -->
+      <div class="rank-detail-workspace">
+        <aside class="rank-left-sidebar">
+          <div class="rank-hero-box">
+            <img
+              v-if="store.activeRank?.coverUrl"
+              :src="store.activeRank.coverUrl"
+              class="rank-big-cover"
+              alt=""
+            />
+            <div v-else class="rank-big-cover-fallback">
+              <PlumpIcon name="trophy" :size="36" color="var(--gold)" />
             </div>
-          </div>
-          <div class="fs-meta">
-            <div class="fs-title-line">
-              <span class="fs-title">{{ song.title }}</span>
-              <span v-if="song.hasHiRes" class="fs-badge hires">Hi-Res</span>
-              <span v-else-if="song.hasSq" class="fs-badge sq">SQ</span>
-              <span v-if="song.isVip" class="fs-badge vip">VIP</span>
+            <div class="rank-side-title">{{ store.activeRank?.name || "巅峰排行榜" }}</div>
+            <div class="rank-side-sub">
+              {{ store.activeRank?.updateFrequency || "每日实时更新" }} ·
+              {{ store.activeRankSongs.length }} 首
             </div>
-            <div class="fs-sub-line">
-              <span>{{ song.artist }}</span>
-              <span v-if="song.album" class="fs-album">· {{ song.album }}</span>
-            </div>
-          </div>
-          <div class="fs-actions" @click.stop>
             <button
-              class="fs-icon-btn"
-              :class="{ liked: store.isSongLiked(song.hash) }"
-              @click="store.toggleFavoriteSong(song)"
+              class="coral-play-all-pill sm"
+              style="width: 100%; margin-top: 4px"
+              @click="playAllActiveRank"
             >
-              <PlumpIcon
-                :name="store.isSongLiked(song.hash) ? 'heart-filled' : 'heart'"
-                :size="16"
-              />
-            </button>
-            <button class="fs-icon-btn" @click="store.addToPlaylistModalSong = song">
-              <PlumpIcon name="plus" :size="16" />
+              <PlumpIcon name="play" :size="15" color="#fff" />
+              <span>播放全榜</span>
             </button>
           </div>
-          <span class="fs-duration">{{ formatDuration(song.durationSeconds) }}</span>
+
+          <div class="rank-quick-switcher">
+            <div class="rqs-label">快速切换官方榜单 ({{ store.rankList.length }})</div>
+            <button
+              v-for="rk in store.rankList"
+              :key="rk.rankId"
+              class="rqs-item"
+              :class="{ active: store.activeRank?.rankId === rk.rankId }"
+              @click="store.openRankDetail(rk)"
+            >
+              <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+                {{ rk.name }}
+              </span>
+              <span class="rqs-cat">{{ rk.category || "官方" }}</span>
+            </button>
+          </div>
+        </aside>
+
+        <div class="rank-right-tracks">
+          <div class="frameless-songs-grid-2col">
+            <div
+              v-for="(song, idx) in filteredRankSongs"
+              :key="song.hash + '_' + idx"
+              :data-rank-song-hash="song.hash"
+              class="frameless-song-row"
+              :class="{ active: store.currentSong?.hash === song.hash }"
+              @click="store.playSongFromList(song, store.activeRankSongs)"
+              @contextmenu.prevent="store.openSongContextMenu($event, song, store.activeRankSongs)"
+            >
+              <span class="fs-index" :class="idx < 3 ? 'rank-top-' + (idx + 1) : ''">
+                {{ idx + 1 }}
+              </span>
+              <div class="fs-cover-wrap">
+                <img :src="song.coverUrl" class="fs-cover" loading="lazy" alt="" />
+                <div class="fs-cover-play">
+                  <PlumpIcon
+                    :name="store.currentSong?.hash === song.hash && store.isPlaying ? 'pause' : 'play'"
+                    :size="15"
+                    color="#fff"
+                  />
+                </div>
+              </div>
+              <div class="fs-meta">
+                <div class="fs-title-line">
+                  <span class="fs-title">{{ song.title }}</span>
+                  <span v-if="song.hasHiRes || song.isHiRes" class="fs-badge hires">Hi-Res</span>
+                  <span v-else-if="song.hasSq || song.isLossless" class="fs-badge sq">SQ</span>
+                  <span v-if="song.isVip" class="fs-badge vip">VIP</span>
+                </div>
+                <div class="fs-sub-line">
+                  <span>{{ song.artist }}</span>
+                  <span v-if="song.album" class="fs-album">· {{ song.album }}</span>
+                </div>
+              </div>
+              <div class="fs-actions" @click.stop>
+                <button
+                  class="fs-icon-btn"
+                  :class="{ liked: store.isSongLiked(song.hash) }"
+                  @click="store.toggleFavoriteSong(song)"
+                >
+                  <PlumpIcon
+                    :name="store.isSongLiked(song.hash) ? 'heart-filled' : 'heart'"
+                    :size="16"
+                  />
+                </button>
+                <button class="fs-icon-btn" @click="store.addToPlaylistModalSong = song">
+                  <PlumpIcon name="plus" :size="16" />
+                </button>
+              </div>
+              <span class="fs-duration">{{ formatDuration(song) }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1071,8 +1137,8 @@
             <div class="fs-meta">
               <div class="fs-title-line">
                 <span class="fs-title">{{ song.title }}</span>
-                <span v-if="song.hasHiRes" class="fs-badge hires">Hi-Res</span>
-                <span v-else-if="song.hasSq" class="fs-badge sq">SQ</span>
+                <span v-if="song.hasHiRes || song.isHiRes" class="fs-badge hires">Hi-Res</span>
+                <span v-else-if="song.hasSq || song.isLossless" class="fs-badge sq">SQ</span>
               </div>
               <div class="fs-sub-line">
                 <span>{{ song.artist }}</span>
@@ -1094,13 +1160,13 @@
                 <PlumpIcon name="plus" :size="16" />
               </button>
             </div>
-            <span class="fs-duration">{{ formatDuration(song.durationSeconds) }}</span>
+            <span class="fs-duration">{{ formatDuration(song) }}</span>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 全部榜单网格选择弹窗（不显示榜单数量，采用重构后的榜单卡片） -->
+    <!-- 全部榜单网格选择弹窗 -->
     <transition name="fade-pop">
       <div
         v-if="store.isRankGridModalOpen"
@@ -1230,7 +1296,6 @@ const isFmPlaying = computed(
     )
 );
 
-// 点击日推卡片：未展开则展开，已展开则直接收起返回发现页
 function handleDailyCardClick() {
   if (isDailyExpandedMode.value) {
     collapseToDiscoverHome();
@@ -1240,7 +1305,6 @@ function handleDailyCardClick() {
   store.openDailyRecommendPage();
 }
 
-// 点击猜你喜欢卡片：未展开则展开，已展开则直接收起返回发现页
 function handleFmCardClick() {
   if (isFmExpandedMode.value) {
     collapseToDiscoverHome();
@@ -1299,6 +1363,14 @@ function isCurrentSongInList(list: Song[]) {
 function scrollToCurrentPlayingSong() {
   if (!store.currentSong) return;
   const el = document.querySelector(`[data-song-hash="${store.currentSong.hash}"]`);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
+function scrollToCurrentPlayingRankSong() {
+  if (!store.currentSong) return;
+  const el = document.querySelector(`[data-rank-song-hash="${store.currentSong.hash}"]`);
   if (el) {
     el.scrollIntoView({ behavior: "smooth", block: "center" });
   }

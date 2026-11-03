@@ -8,7 +8,7 @@
     <button
       v-if="store.isNowPlayingOpen"
       class="skyline-np-floating-back"
-      title="收起播放页"
+      title="收起播放页 (Esc)"
       @click="store.isNowPlayingOpen = false"
     >
       <PlumpIcon name="chevron-down" :size="18" />
@@ -38,7 +38,7 @@
         <button
           v-if="isCompactWindow && !compactSearchExpanded"
           class="skyline-search-orb-btn"
-          title="展开搜索"
+          title="展开搜索 (Ctrl + K)"
           @click="expandCompactSearch"
         >
           <PlumpIcon name="search" :size="18" />
@@ -75,10 +75,10 @@
           </button>
         </div>
 
-        <!-- 实时联想词与历史搜索下拉面板 -->
+        <!-- 实时联想词、历史搜索与热搜榜下拉面板 -->
         <transition name="fade-pop">
           <div
-            v-if="searchFocused && (store.searchSuggestions.length > 0 || store.searchHistory.length > 0)"
+            v-if="searchFocused && (store.searchSuggestions.length > 0 || store.searchHistory.length > 0 || store.hotKeywords.length > 0)"
             class="search-suggest-dropdown glass-popover"
           >
             <template v-if="store.searchKeyword.trim() && store.searchSuggestions.length > 0">
@@ -93,21 +93,40 @@
                 <span>{{ sug }}</span>
               </button>
             </template>
-            <template v-else-if="store.searchHistory.length > 0">
-              <div class="suggest-group-title">
-                <span>最近搜索</span>
-                <button class="text-link-btn" @click.stop="store.clearSearchHistory()">清空</button>
-              </div>
-              <div class="suggest-chips">
-                <button
-                  v-for="(h, idx) in store.searchHistory.slice(0, 8)"
-                  :key="idx"
-                  class="suggest-chip"
-                  @click="triggerSearch(h)"
-                >
-                  {{ h }}
-                </button>
-              </div>
+            <template v-else>
+              <template v-if="store.searchHistory.length > 0">
+                <div class="suggest-group-title">
+                  <span>最近搜索</span>
+                  <button class="text-link-btn" @click.stop="store.clearSearchHistory()">清空</button>
+                </div>
+                <div class="suggest-chips">
+                  <button
+                    v-for="(h, idx) in store.searchHistory.slice(0, 8)"
+                    :key="idx"
+                    class="suggest-chip"
+                    @click="triggerSearch(h)"
+                  >
+                    {{ h }}
+                  </button>
+                </div>
+              </template>
+
+              <template v-if="store.hotKeywords.length > 0">
+                <div class="suggest-group-title" style="margin-top: 4px">
+                  <span>全网热搜</span>
+                </div>
+                <div class="sd-hot-grid">
+                  <button
+                    v-for="(hk, hIdx) in store.hotKeywords.slice(0, 8)"
+                    :key="hIdx"
+                    class="sd-hot-item"
+                    @click="triggerSearch(hk)"
+                  >
+                    <span class="sd-hot-rank" :class="{ top: hIdx < 3 }">{{ hIdx + 1 }}</span>
+                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ hk }}</span>
+                  </button>
+                </div>
+              </template>
             </template>
           </div>
         </transition>
@@ -191,7 +210,7 @@
                 <span class="pvm-lv-badge lg">
                   Lv.{{ store.profile?.userLevel || 1 }}
                 </span>
-                <span class="pvm-duration-badge">
+                <span class="pvm-duration-badge" title="累计听歌时长（每 60 秒实时上报概念版云端）">
                   <PlumpIcon name="clock" :size="13" />
                   <span>{{ listenHoursText }}</span>
                 </span>
@@ -214,7 +233,7 @@
             </div>
           </div>
 
-          <!-- 展开态下方内容：精简版 VIP 有效期 + 一键签到 + 当月签到热力图 + 打开应用自动领取开关 -->
+          <!-- 展开态下方内容：精简版 VIP 有效期 + 一键签到 + 当月签到热力图 + 打开应用自动领取开关 + 设备鉴权诊断折叠台 -->
           <transition name="pvm-body-fade">
             <div v-if="store.isVipCenterOpen" class="pvm-expanded-body" @click.stop>
               <!-- 1. 精简版 VIP 有效期与每日签到领取 -->
@@ -295,6 +314,53 @@
                   <span class="plump-slider"></span>
                 </label>
               </div>
+
+              <!-- 4. 设备标识与音源鉴权诊断折叠栏 -->
+              <div class="pvm-diag-footer">
+                <button
+                  class="pvm-diag-toggle-btn"
+                  @click.stop="showDeviceDiag = !showDeviceDiag"
+                >
+                  <PlumpIcon name="shield" :size="14" color="var(--cyan)" />
+                  <span>设备凭证与音源网关诊断</span>
+                  <span style="margin-left: auto; opacity: 0.7">{{ showDeviceDiag ? "收起" : "展开" }}</span>
+                </button>
+
+                <div v-if="showDeviceDiag" class="pvm-diag-panel">
+                  <div class="pvm-diag-kv">
+                    <span>DFID 指纹</span>
+                    <code>{{ formatShortCred(store.vipStatus?.dfid || store.gatewayDiag?.dfid) }}</code>
+                  </div>
+                  <div class="pvm-diag-kv">
+                    <span>GUID 标识</span>
+                    <code>{{ formatShortCred(store.vipStatus?.guid || store.gatewayDiag?.guid) }}</code>
+                  </div>
+                  <div class="pvm-diag-actions">
+                    <button
+                      class="tonal-pill-btn sm"
+                      :disabled="store.isDiagnosingGateway"
+                      @click.stop="store.resignDeviceAndRefresh()"
+                    >
+                      <PlumpIcon name="refresh" :size="13" />
+                      <span>刷新设备指纹</span>
+                    </button>
+                    <button
+                      class="tonal-pill-btn sm primary"
+                      :disabled="store.isDiagnosingGateway"
+                      @click.stop="store.runGatewayDiagnostic()"
+                    >
+                      <PlumpIcon name="wave" :size="13" />
+                      <span>
+                        {{
+                          store.gatewayDiag
+                            ? `网关正常 (${store.gatewayDiag.latencyMs}ms)`
+                            : "网关测速诊断"
+                        }}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </transition>
         </div>
@@ -353,12 +419,19 @@ const navItems: Array<{
 const windowWidth = ref(typeof window !== "undefined" ? window.innerWidth : 1240);
 const isCompactWindow = computed(() => windowWidth.value <= 1400);
 const compactSearchExpanded = ref(false);
+const showDeviceDiag = ref(false);
 
 const searchFocused = ref(false);
 const searchBoxRef = ref<HTMLElement | null>(null);
 const searchInputRef = ref<HTMLInputElement | null>(null);
 const profileCardRef = ref<HTMLElement | null>(null);
 let suggestTimer: number | null = null;
+
+function formatShortCred(val?: string) {
+  if (!val) return "已就绪";
+  if (val.length <= 12) return val;
+  return `${val.slice(0, 6)}••••${val.slice(-4)}`;
+}
 
 function onWindowResize() {
   windowWidth.value = window.innerWidth;

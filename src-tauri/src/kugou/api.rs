@@ -5,9 +5,9 @@ use crate::kugou::models::{
     AccountProfile, AlbumItem, AudioQuality, DownloadTaskResult, FmChannel, FollowedArtist,
     GatewayDiagResult, KugouSession, LoginCandidate, LyricData, PhoneLoginOutcome, PlaybackResult,
     Playlist, PurchasedAlbumItem, PurchasedSongItem, QrCodeSession, QrPollResult, RankItem, Song,
-    SongComment, SongDetailInfo, VipDayRecord, VipStatusInfo, ViperEffectItem,
+    SharedMusicResolved, SongComment, SongDetailInfo, VipDayRecord, VipStatusInfo, ViperEffectItem,
 };
-use crate::kugou::signer::{self, ANDROID_SALT, APP_ID, CLIENT_VERSION, STANDARD_SALT};
+use crate::kugou::signer::{self, ANDROID_SALT, APP_ID, CLIENT_VERSION};
 use crate::kugou::store::AppStore;
 use crate::kugou::transport::KugouTransport;
 use chrono::{FixedOffset, Utc};
@@ -635,6 +635,14 @@ impl KugouApiService {
     /// 严格对齐 Android 端 MusicRepository.userGradeInfo:
     /// 聚合 /v3/get_my_info + /v1/get_my_userinfo + /v4/get_grade_info + /v2/get_grade_info
     pub async fn fetch_full_profile(&self) -> Result<AccountProfile, String> {
+        self.fetch_full_profile_with_report(None, None).await
+    }
+
+    pub async fn fetch_full_profile_with_report(
+        &self,
+        reported_d_sec: Option<i64>,
+        reported_diff_sec: Option<i64>,
+    ) -> Result<AccountProfile, String> {
         let Some(mut session) = self.store.session() else {
             return Err("当前未登录".to_string());
         };
@@ -709,8 +717,61 @@ impl KugouApiService {
             }
         }
 
-        // 通道 B: /v4/get_grade_info (获取实时 d_sec 秒级时长与 p_grade)
-        let md5_val = signer::md5_hex("0011");
+        // 通道 A2: /v1/get_my_userinfo (对齐 Android 端 MusicRepository.userGradeInfo 通道2)
+        let p_ms_plain = json!({
+            "clienttime": now_ms,
+            "token": session.token
+        })
+        .to_string();
+        if let Ok(p_ms_rsa) = signer::rsa_raw_zero_pad_hex(&p_ms_plain) {
+            let rel_body = json!({
+                "p": p_ms_rsa.to_uppercase(),
+                "appid": APP_ID,
+                "mid": dev.mid,
+                "clientver": CLIENT_VERSION,
+                "source": 0,
+                "clienttime": now_ms,
+                "uuid": "-",
+                "userid": uid_num,
+                "key": signer::params_key(now_ms, "")
+            });
+            let mut rel_headers = HashMap::new();
+            rel_headers.insert("x-router".to_string(), "relation.user.kugou.com".to_string());
+            if let Ok(rel_resp) = self
+                .transport
+                .call(
+                    "/v1/get_my_userinfo",
+                    &dev,
+                    Some(&session),
+                    HashMap::new(),
+                    Some(rel_body),
+                    "https://gateway.kugou.com",
+                    "POST",
+                    false,
+                    rel_headers,
+                    false,
+                    false,
+                )
+                .await
+            {
+                let d_rel = rel_resp.data().get("data").unwrap_or_else(|| rel_resp.data());
+                for k in ["r_duration", "duration", "listen_duration", "user_duration"] {
+                    if let Some(m) = Self::val_i64(d_rel, k) {
+                        max_duration_min = max_duration_min.max(m);
+                    }
+                }
+                for k in ["user_grade", "p_grade", "grade"] {
+                    if let Some(g) = Self::val_i64(d_rel, k) {
+                        max_grade = max_grade.max(g as i32);
+                    }
+                }
+            }
+        }
+
+        // 通道 B: /v4/get_grade_info (获取实时 d_sec 秒级时长与 p_grade，并支持上报真实累计时长)
+        let req_d_sec = reported_d_sec.unwrap_or(0).max(0);
+        let req_diff_sec = reported_diff_sec.unwrap_or(0).max(0);
+        let md5_val = signer::md5_hex(&format!("{}{}11", req_d_sec, req_diff_sec));
         let aes_seed = signer::random_hex(16);
         let seed_md5 = signer::md5_hex(&aes_seed);
         let params_plain = json!({
@@ -733,8 +794,8 @@ impl KugouApiService {
                 "userid": uid_num,
                 "clienttime_ms": now_ms,
                 "type": 0,
-                "d_sec": 0,
-                "diff_sec": 0,
+                "d_sec": req_d_sec,
+                "diff_sec": req_diff_sec,
                 "y_type": 1,
                 "m_type": 1,
                 "pk": pk_v4.to_uppercase(),
@@ -1304,52 +1365,73 @@ impl KugouApiService {
             .and_then(|s| s.user_id.parse::<i64>().ok())
             .unwrap_or(0);
 
-        let (rank_id, fallback_chart_id) = match period_key.trim().to_uppercase().as_str() {
-            "CHINESE" | "21608" => (21608, 31308),
-            "WESTERN" | "21609" => (21609, 31310),
-            "JPKR" | "21610" => (21610, 31311),
-            "CANTON" | "21611" => (21611, 31313),
-            _ => (21608, 31308),
+        let norm_key = period_key.trim().to_uppercase();
+        let region_pairs: Vec<(i32, i32)> = match norm_key.as_str() {
+            "ALL" | "TODAY" => vec![(21608, 31308), (21609, 31310), (21610, 31311), (21611, 31313)],
+            "WESTERN" | "21609" => vec![(21609, 31310)],
+            "JPKR" | "21610" => vec![(21610, 31311)],
+            "CANTON" | "21611" => vec![(21611, 31313)],
+            _ => vec![(21608, 31308)],
         };
 
-        let body = json!({
-            "rank_id": rank_id,
-            "userid": uid_num,
-            "page": 1,
-            "pagesize": 30,
-            "tags": []
-        });
-
         let mut songs = Vec::new();
-        if let Ok(resp) = self
-            .transport
-            .call(
-                "/musicadservice/container/v1/newsong_publish",
-                &dev,
-                session.as_ref(),
-                HashMap::new(),
-                Some(body),
-                "https://gateway.kugou.com",
-                "POST",
-                false,
-                HashMap::new(),
-                true,
-                true,
-            )
-            .await
-        {
-            songs = Self::parse_songs(resp.data());
-            if songs.is_empty() {
-                songs = Self::parse_songs(&resp.body);
+        let mut seen_hashes = HashSet::new();
+        for (rank_id, fallback_chart_id) in region_pairs {
+            let body = json!({
+                "rank_id": rank_id,
+                "userid": uid_num,
+                "page": 1,
+                "pagesize": 30,
+                "tags": []
+            });
+            let mut batch = Vec::new();
+            if let Ok(resp) = self
+                .transport
+                .call(
+                    "/musicadservice/container/v1/newsong_publish",
+                    &dev,
+                    session.as_ref(),
+                    HashMap::new(),
+                    Some(body),
+                    "https://gateway.kugou.com",
+                    "POST",
+                    false,
+                    HashMap::new(),
+                    true,
+                    true,
+                )
+                .await
+            {
+                batch = Self::parse_songs(resp.data());
+                if batch.is_empty() {
+                    batch = Self::parse_songs(&resp.body);
+                }
+            }
+            if batch.is_empty() {
+                batch = self
+                    .fetch_rank_songs(fallback_chart_id, 1, 25)
+                    .await
+                    .unwrap_or_default();
+            }
+            for s in batch {
+                let k = if !s.hash.is_empty() {
+                    s.hash.to_lowercase()
+                } else {
+                    s.id.to_lowercase()
+                };
+                if !k.is_empty() && seen_hashes.insert(k) {
+                    songs.push(s);
+                }
             }
         }
 
-        if songs.is_empty() {
-            songs = self.fetch_rank_songs(fallback_chart_id, 1, 30).await.unwrap_or_default();
-        } else {
-            songs = self.enrich_songs_privilege_lite(songs).await;
-        }
+        songs = self.enrich_songs_privilege_lite(songs).await;
         songs = self.enrich_songs_publish_date(songs).await;
+        songs.sort_by(|a, b| {
+            b.publish_date
+                .cmp(&a.publish_date)
+                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+        });
 
         Ok(songs)
     }
@@ -1510,6 +1592,50 @@ impl KugouApiService {
         Ok(ranks.into_iter().take(24).collect())
     }
 
+    async fn resolve_latest_rank_vol_id(&self, rank_id: i32) -> i64 {
+        let dev = self.store.device();
+        let minute_stamp = (Utc::now().timestamp() / 60).to_string();
+        let mut query = HashMap::new();
+        query.insert("plat".to_string(), "0".to_string());
+        query.insert("ranktype".to_string(), "2".to_string());
+        query.insert("rankid".to_string(), rank_id.to_string());
+        query.insert("with_res_tag".to_string(), "0".to_string());
+        query.insert("_t".to_string(), minute_stamp);
+        if let Ok(resp) = self
+            .transport
+            .call(
+                "/api/v3/rank/vol",
+                &dev,
+                None,
+                query,
+                None,
+                "http://mobilecdnbj.kugou.com",
+                "GET",
+                false,
+                HashMap::new(),
+                false,
+                false,
+            )
+            .await
+        {
+            let arr = resp
+                .data()
+                .get("data")
+                .and_then(|d| d.get("info"))
+                .and_then(|v| v.as_array())
+                .or_else(|| resp.data().get("info").and_then(|v| v.as_array()))
+                .or_else(|| resp.data().get("vol_list").and_then(|v| v.as_array()));
+            if let Some(first) = arr.and_then(|a| a.first()) {
+                if let Some(vid) = Self::val_i64(first, "volid").or_else(|| Self::val_i64(first, "rank_cid")) {
+                    if vid > 0 {
+                        return vid;
+                    }
+                }
+            }
+        }
+        0
+    }
+
     pub async fn fetch_rank_songs(
         &self,
         rank_id: i32,
@@ -1518,15 +1644,20 @@ impl KugouApiService {
     ) -> Result<Vec<Song>, String> {
         let dev = self.store.device();
         let minute_stamp = (Utc::now().timestamp() / 60).to_string();
+        let latest_vol_id = self.resolve_latest_rank_vol_id(rank_id).await;
 
         let mut query = HashMap::new();
         query.insert("version".to_string(), "9108".to_string());
+        query.insert("ranktype".to_string(), "2".to_string());
         query.insert("rankid".to_string(), rank_id.to_string());
         query.insert("page".to_string(), page.to_string());
         query.insert("pagesize".to_string(), page_size.to_string());
         query.insert("plat".to_string(), "0".to_string());
         query.insert("area_code".to_string(), "1".to_string());
-        query.insert("_t".to_string(), minute_stamp);
+        query.insert("_t".to_string(), minute_stamp.clone());
+        if latest_vol_id > 0 {
+            query.insert("volid".to_string(), latest_vol_id.to_string());
+        }
 
         if let Ok(resp) = self
             .transport
@@ -1558,7 +1689,7 @@ impl KugouApiService {
             "filter_original_remarks": 1,
             "area_code": 1,
             "pagesize": page_size,
-            "rank_cid": 0,
+            "rank_cid": latest_vol_id,
             "type": 1,
             "page": page,
             "rank_id": rank_id
@@ -2038,77 +2169,81 @@ impl KugouApiService {
             "multitrack"
         ]);
 
-        let mut resources = Vec::new();
-        for s in songs.iter().take(60) {
-            let h = s.hash.trim().to_lowercase();
-            if h.len() >= 16 {
-                resources.push(json!({
-                    "type": "audio",
-                    "page_id": 1,
-                    "id": 0,
-                    "area_code": 1,
-                    "album_audio_id": s.album_audio_id,
-                    "album_id": s.album_id.parse::<i64>().unwrap_or(0),
-                    "hash": h,
-                    "qualities": qualities
-                }));
+        let mut all_items: Vec<Value> = Vec::new();
+        for chunk in songs.chunks(80) {
+            let mut resources = Vec::new();
+            for s in chunk {
+                let h = s.hash.trim().to_lowercase();
+                if h.len() >= 16 {
+                    resources.push(json!({
+                        "type": "audio",
+                        "page_id": 1,
+                        "id": 0,
+                        "area_code": 1,
+                        "album_audio_id": s.album_audio_id,
+                        "album_id": s.album_id.parse::<i64>().unwrap_or(0),
+                        "hash": h,
+                        "qualities": qualities
+                    }));
+                }
+            }
+            if resources.is_empty() {
+                continue;
+            }
+
+            let body = json!({
+                "appid": APP_ID,
+                "clientver": CLIENT_VERSION,
+                "mid": dev.mid,
+                "clienttime": Utc::now().timestamp(),
+                "support_verify": 1,
+                "area_code": 1,
+                "behavior": "play",
+                "need_hash_offset": 1,
+                "relate": 1,
+                "qualities": qualities,
+                "resource": resources,
+                "resources": resources
+            });
+
+            let mut headers = HashMap::new();
+            headers.insert("x-router".to_string(), "media.store.kugou.com".to_string());
+
+            if let Ok(resp) = self
+                .transport
+                .call(
+                    "/v2/get_res_privilege/lite",
+                    &dev,
+                    session.as_ref(),
+                    HashMap::new(),
+                    Some(body),
+                    "https://gateway.kugou.com",
+                    "POST",
+                    false,
+                    headers,
+                    true,
+                    true,
+                )
+                .await
+            {
+                let items_opt = resp
+                    .body
+                    .get("data")
+                    .and_then(|v| v.as_array())
+                    .or_else(|| resp.data().get("data").and_then(|v| v.as_array()))
+                    .or_else(|| resp.data().get("resource").and_then(|v| v.as_array()));
+                if let Some(items) = items_opt {
+                    all_items.extend(items.iter().cloned());
+                }
             }
         }
-        if resources.is_empty() {
+
+        if all_items.is_empty() {
             return songs;
         }
 
-        let body = json!({
-            "appid": APP_ID,
-            "clientver": CLIENT_VERSION,
-            "mid": dev.mid,
-            "clienttime": Utc::now().timestamp(),
-            "support_verify": 1,
-            "area_code": 1,
-            "behavior": "play",
-            "need_hash_offset": 1,
-            "relate": 1,
-            "qualities": qualities,
-            "resource": resources,
-            "resources": resources
-        });
-
-        let mut headers = HashMap::new();
-        headers.insert("x-router".to_string(), "media.store.kugou.com".to_string());
-
-        let Ok(resp) = self
-            .transport
-            .call(
-                "/v2/get_res_privilege/lite",
-                &dev,
-                session.as_ref(),
-                HashMap::new(),
-                Some(body),
-                "https://gateway.kugou.com",
-                "POST",
-                false,
-                headers,
-                true,
-                true,
-            )
-            .await
-        else {
-            return songs;
-        };
-
-        let items_opt = resp
-            .body
-            .get("data")
-            .and_then(|v| v.as_array())
-            .or_else(|| resp.data().get("data").and_then(|v| v.as_array()))
-            .or_else(|| resp.data().get("resource").and_then(|v| v.as_array()));
-
-        let Some(items) = items_opt else {
-            return songs;
-        };
-
         let mut map_by_hash: HashMap<String, &Value> = HashMap::new();
-        for item in items {
+        for item in &all_items {
             let h = Self::val_str(item, "hash").to_lowercase();
             if !h.is_empty() {
                 map_by_hash.insert(h, item);
@@ -2123,11 +2258,23 @@ impl KugouApiService {
             }
         }
 
-        songs
+        let enriched_list: Vec<Song> = songs
             .into_iter()
             .map(|mut s| {
                 let key = s.hash.to_lowercase();
                 if let Some(&priv_obj) = map_by_hash.get(&key) {
+                    if s.album.is_empty() {
+                        let alb_name = Self::val_str(priv_obj, "album_name");
+                        if !alb_name.is_empty() && alb_name != "0" {
+                            s.album = alb_name;
+                        }
+                    }
+                    if s.album_id.is_empty() || s.album_id == "0" {
+                        let aid = Self::val_str(priv_obj, "album_id");
+                        if !aid.is_empty() && aid != "0" {
+                            s.album_id = aid;
+                        }
+                    }
                     if s.duration_ms <= 0 {
                         if let Some(info_obj) = priv_obj.get("info") {
                             let d = Self::val_i64(info_obj, "duration")
@@ -2225,12 +2372,26 @@ impl KugouApiService {
                                         s.size_flac = sz;
                                     }
                                 }
+                                (_, q) if q.contains("accompany") || q.contains("伴奏") => {
+                                    if s.accompany_hash.is_empty() {
+                                        s.accompany_hash = rg_hash;
+                                    }
+                                }
+                                (7, _) | (_, "super" | "multitrack") => {
+                                    // 跳过正统酷狗 suvip 专属蝰蛇合成流
+                                }
                                 (6, _) | (_, "high" | "res" | "hires") => {
-                                    s.hash_hi_res = rg_hash;
-                                    s.is_hi_res = true;
-                                    s.is_lossless = true;
-                                    if sz > s.size_hi_res {
-                                        s.size_hi_res = sz;
+                                    if sz == 0 || sz >= 7_500_000 {
+                                        s.hash_hi_res = rg_hash;
+                                        s.is_hi_res = true;
+                                        s.is_lossless = true;
+                                        if sz > s.size_hi_res {
+                                            s.size_hi_res = sz;
+                                        }
+                                    } else if sz >= 4_000_000 && s.hash_flac.is_empty() {
+                                        s.hash_flac = rg_hash;
+                                        s.is_lossless = true;
+                                        s.size_flac = sz;
                                     }
                                 }
                                 _ => {}
@@ -2250,7 +2411,93 @@ impl KugouApiService {
                 }
                 s
             })
-            .collect()
+            .collect();
+
+        self.enrich_songs_album_names_batch(enriched_list).await
+    }
+
+    /// 对齐 Android 端 enrichSongsAlbumNamesBatch: 通过 /kmr/v2/albums 批量补全缺失的真实专辑名与发行日期
+    pub async fn enrich_songs_album_names_batch(&self, mut songs: Vec<Song>) -> Vec<Song> {
+        let missing_album_ids: Vec<String> = songs
+            .iter()
+            .filter(|s| s.album.trim().is_empty() && !s.album_id.trim().is_empty() && s.album_id != "0")
+            .map(|s| s.album_id.trim().to_string())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .take(45)
+            .collect();
+
+        if missing_album_ids.is_empty() {
+            return songs;
+        }
+
+        let dev = self.store.device();
+        let session = self.store.session();
+        let data_arr: Vec<Value> = missing_album_ids
+            .iter()
+            .map(|aid| {
+                if let Ok(num) = aid.parse::<i64>() {
+                    json!({ "album_id": num })
+                } else {
+                    json!({ "album_id": aid })
+                }
+            })
+            .collect();
+        let body = json!({
+            "data": data_arr,
+            "is_buy": 0,
+            "fields": "album_id,album_name,publish_date,sizable_cover"
+        });
+        let mut headers = HashMap::new();
+        headers.insert("x-router".to_string(), "openapi.kugou.com".to_string());
+        headers.insert("kg-tid".to_string(), "255".to_string());
+
+        if let Ok(resp) = self
+            .transport
+            .call(
+                "/kmr/v2/albums",
+                &dev,
+                session.as_ref(),
+                HashMap::new(),
+                Some(body),
+                "https://gateway.kugou.com",
+                "POST",
+                false,
+                headers,
+                true,
+                true,
+            )
+            .await
+        {
+            if let Some(arr) = resp
+                .data()
+                .get("data")
+                .and_then(|v| v.as_array())
+                .or_else(|| resp.data().as_array())
+                .or_else(|| resp.body.get("data").and_then(|v| v.as_array()))
+            {
+                let mut alb_map: HashMap<String, (String, String)> = HashMap::new();
+                for obj in arr {
+                    let aid = Self::val_str(obj, "album_id");
+                    let aname = Self::val_str(obj, "album_name");
+                    let pdate: String = Self::val_str(obj, "publish_date").chars().take(10).collect();
+                    if !aid.is_empty() && !aname.is_empty() {
+                        alb_map.insert(aid, (aname, pdate));
+                    }
+                }
+                for s in &mut songs {
+                    if let Some((aname, pdate)) = alb_map.get(s.album_id.trim()) {
+                        if s.album.trim().is_empty() {
+                            s.album = aname.clone();
+                        }
+                        if s.publish_date.trim().is_empty() && !pdate.is_empty() {
+                            s.publish_date = pdate.clone();
+                        }
+                    }
+                }
+            }
+        }
+        songs
     }
 
     /// 解析音频流前 512 字节头部（遵循 RFC 9639 FLAC STREAMINFO / OGG Vorbis / MP3 帧头）
@@ -2490,7 +2737,33 @@ impl KugouApiService {
             }
         }
 
-        // 阶段 3: 试听片段兜底 (is_free_part = 1)
+        // 阶段 3: 若原曲 Hash 因版权迁移失效，自动通过「歌手 + 歌名」检索同曲目可用音源替身 (对齐 Android MusicRepository.resolvePlayback 第三阶段)
+        if !enriched.title.trim().is_empty() && enriched.title != "未知歌曲" {
+            let clean_artist = if enriched.artist != "未知歌手" && enriched.artist != "群星" {
+                enriched.artist.trim()
+            } else {
+                ""
+            };
+            let kw = format!("{} {}", clean_artist, enriched.title).trim().to_string();
+            if let Ok(candidates) = self.search_songs(&kw, 1, 5).await {
+                if let Some(alt) = candidates.into_iter().find(|c| {
+                    !c.hash.is_empty() && !c.hash.eq_ignore_ascii_case(&enriched.hash)
+                }) {
+                    if let Some(priv_res) = self.resolve_vip_priv_url(&alt, &pref_q).await {
+                        if !priv_res.url.is_empty() && !priv_res.is_free_part {
+                            return Ok(self.finalize_playback_result(priv_res).await);
+                        }
+                    }
+                    if let Some(v5_res) = self.resolve_v5_fallback_url(&alt, &pref_q, false).await {
+                        if !v5_res.url.is_empty() {
+                            return Ok(self.finalize_playback_result(v5_res).await);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 阶段 4: 试听片段兜底 (is_free_part = 1)
         if let Some(free_res) = self.resolve_v5_fallback_url(&enriched, &pref_q, true).await {
             if !free_res.url.is_empty() {
                 return Ok(self.finalize_playback_result(free_res).await);
@@ -3034,18 +3307,58 @@ impl KugouApiService {
             }
         }
 
-        let Some((cand_id, cand_key)) = candidates.first() else {
+        if candidates.is_empty() {
             return Ok(LyricData::default());
-        };
+        }
 
-        if let Some(krc_data) = self.download_lyric_by_fmt(cand_id, cand_key, "krc").await {
-            if !krc_data.lines.is_empty() {
-                return Ok(krc_data);
+        let mut primary_krc: Option<LyricData> = None;
+        for (idx, (cand_id, cand_key)) in candidates.iter().take(5).enumerate() {
+            if let Some(krc_data) = self.download_lyric_by_fmt(cand_id, cand_key, "krc").await {
+                if !krc_data.lines.is_empty() {
+                    if primary_krc.is_none() {
+                        let is_chinese = krc::is_predominantly_chinese(&krc_data.lines);
+                        if is_chinese || (krc_data.has_translation && krc_data.has_phonetic) || candidates.len() == 1 {
+                            return Ok(krc_data);
+                        }
+                        primary_krc = Some(krc_data);
+                    } else if let Some(ref mut base) = primary_krc {
+                        if (!base.has_translation && krc_data.has_translation)
+                            || (!base.has_phonetic && krc_data.has_phonetic)
+                        {
+                            if (base.lines.len() as isize - krc_data.lines.len() as isize).abs() <= 2 {
+                                for (i, line) in base.lines.iter_mut().enumerate() {
+                                    if let Some(other) = krc_data.lines.get(i) {
+                                        if line.translation.is_none() && other.translation.is_some() {
+                                            line.translation = other.translation.clone();
+                                        }
+                                        if line.phonetic.is_none() && other.phonetic.is_some() {
+                                            line.phonetic = other.phonetic.clone();
+                                        }
+                                    }
+                                }
+                                base.has_translation = base.lines.iter().any(|l| l.translation.is_some());
+                                base.has_phonetic = base.lines.iter().any(|l| l.phonetic.is_some());
+                                if base.has_translation && base.has_phonetic {
+                                    break;
+                                }
+                            } else if krc_data.has_translation && !base.has_translation {
+                                *base = krc_data;
+                            }
+                        }
+                    }
+                }
+            }
+            if idx == 0 && primary_krc.is_none() {
+                if let Some(lrc_data) = self.download_lyric_by_fmt(cand_id, cand_key, "lrc").await {
+                    if !lrc_data.lines.is_empty() {
+                        return Ok(lrc_data);
+                    }
+                }
             }
         }
 
-        if let Some(lrc_data) = self.download_lyric_by_fmt(cand_id, cand_key, "lrc").await {
-            return Ok(lrc_data);
+        if let Some(krc_data) = primary_krc {
+            return Ok(krc_data);
         }
 
         Ok(LyricData::default())
@@ -3514,6 +3827,21 @@ impl KugouApiService {
         .find(|s| !s.is_empty() && s != "0")
         .unwrap_or_default();
 
+        let file_id = Self::val_i64(o, "fileid")
+            .or_else(|| Self::val_i64(o, "file_id"))
+            .unwrap_or(0);
+        let accompany_hash = [
+            Self::val_str(o, "AccompanyFileHash"),
+            Self::val_str(o, "accompany_hash"),
+            Self::val_str(audio_info, "accompany_hash"),
+            Self::val_str(trans_param, "ogg_320_accompany_hash"),
+            Self::val_str(trans_param, "accompany_hash"),
+        ]
+        .into_iter()
+        .find(|s| s.len() == 32 && !s.chars().all(|c| c == '0'))
+        .unwrap_or_default()
+        .to_lowercase();
+
         Song {
             id: if !primary_hash.is_empty() {
                 primary_hash.clone()
@@ -3525,6 +3853,7 @@ impl KugouApiService {
             hash320,
             hash_flac,
             hash_hi_res,
+            accompany_hash,
             size128: Self::val_i64(o, "filesize").unwrap_or(0),
             size320: Self::val_i64(o, "320filesize").unwrap_or(0),
             size_flac: Self::val_i64(o, "sqfilesize").unwrap_or(0),
@@ -3539,6 +3868,7 @@ impl KugouApiService {
             album_audio_id,
             audio_id,
             mix_song_id: album_audio_id.to_string(),
+            file_id,
             is_vip,
             is_lossless,
             is_hi_res,
@@ -3970,37 +4300,87 @@ impl KugouApiService {
         Ok(resp.is_success() || resp.http_code == 200)
     }
 
-    pub async fn delete_user_playlist(&self, list_id: i64) -> Result<bool, String> {
+    async fn execute_encrypted_delete_list(&self, list_id: i64, ptype: i32) -> Result<bool, String> {
         let Some(session) = self.store.session() else {
             return Err("请先登录酷狗账号".to_string());
         };
+        if list_id <= 0 {
+            return Err("无效的歌单 ID".to_string());
+        }
         let dev = self.store.device();
         let uid_num = session.user_id.parse::<i64>().unwrap_or(0);
-        let body = json!({
-            "userid": uid_num,
-            "token": session.token,
+        let client_time = Utc::now().timestamp();
+
+        let data_map = json!({
             "listid": list_id,
-            "type": 0
+            "total_ver": 0,
+            "type": ptype,
+            "userid": uid_num,
+            "token": session.token
         });
+        let (aes_key, aes_cipher) = signer::playlist_aes_encrypt(&data_map.to_string())?;
+        let p_inner = json!({
+            "aes": aes_key,
+            "uid": uid_num,
+            "token": session.token
+        })
+        .to_string();
+        let p_rsa = signer::rsa_pkcs1_hex(&p_inner)?;
+        let key = signer::md5_hex(&format!(
+            "{}{}{}{}",
+            APP_ID, ANDROID_SALT, CLIENT_VERSION, client_time
+        ));
+
+        let mut query = HashMap::new();
+        query.insert("clienttime".to_string(), client_time.to_string());
+        query.insert("key".to_string(), key);
+        query.insert("last_area".to_string(), "gztx".to_string());
+        query.insert("clientver".to_string(), CLIENT_VERSION.to_string());
+        query.insert("appid".to_string(), APP_ID.to_string());
+        query.insert("last_time".to_string(), client_time.to_string());
+        query.insert("p".to_string(), p_rsa);
+
         let mut headers = HashMap::new();
         headers.insert("x-router".to_string(), "cloudlist.service.kugou.com".to_string());
-        let resp = self
+
+        let raw_bytes = self
             .transport
-            .call(
+            .request_raw_bytes(
                 "/v2/delete_list",
                 &dev,
                 Some(&session),
-                HashMap::new(),
-                Some(body),
+                query,
+                Some(aes_cipher),
                 "https://gateway.kugou.com",
                 "POST",
-                false,
                 headers,
                 true,
                 true,
             )
             .await?;
-        Ok(resp.is_success() || resp.http_code == 200)
+
+        if raw_bytes.is_empty() {
+            return Ok(false);
+        }
+        let utf8_text = String::from_utf8_lossy(&raw_bytes).trim().to_string();
+        let decrypted_text = if utf8_text.starts_with('{') {
+            utf8_text
+        } else {
+            signer::playlist_aes_decrypt(&raw_bytes, &aes_key).unwrap_or(utf8_text)
+        };
+        if let Ok(parsed) = serde_json::from_str::<Value>(&decrypted_text) {
+            let status = Self::val_i64(&parsed, "status").unwrap_or(0);
+            let err_code = Self::val_i64(&parsed, "err_code")
+                .or_else(|| Self::val_i64(&parsed, "error_code"))
+                .or_else(|| Self::val_i64(&parsed, "errcode"))
+                .unwrap_or(0);
+            return Ok(status == 1 && err_code == 0);
+        }
+        Ok(false)
+    }
+
+    pub async fn delete_user_playlist(&self, list_id: i64) -> Result<bool, String> {
+        self.execute_encrypted_delete_list(list_id, 0).await
     }
 
     pub async fn add_song_to_user_playlist(&self, list_id: i64, song: &Song) -> Result<bool, String> {
@@ -4053,14 +4433,29 @@ impl KugouApiService {
         };
         let dev = self.store.device();
         let uid_num = session.user_id.parse::<i64>().unwrap_or(0);
+        let now_sec = Utc::now().timestamp();
+        let p_plain = json!({
+            "clienttime": now_sec,
+            "token": session.token
+        })
+        .to_string();
+        let p_encrypted = signer::rsa_raw_zero_pad_hex(&p_plain)
+            .unwrap_or_default()
+            .to_uppercase();
+
         let mut query = HashMap::new();
         query.insert("plat".to_string(), "1".to_string());
         let body = json!({
+            "merge": 2,
+            "need_iden_type": 1,
+            "ext_params": "k_pic,jumptype,singerid,score",
             "userid": uid_num,
             "token": session.token,
+            "type": 0,
+            "id_type": 0,
             "page": 1,
             "pagesize": 50,
-            "type": 1
+            "p": p_encrypted
         });
         let mut headers = HashMap::new();
         headers.insert("x-router".to_string(), "relationuser.kugou.com".to_string());
@@ -4088,35 +4483,57 @@ impl KugouApiService {
                 .get("lists")
                 .or_else(|| resp.data().get("list"))
                 .or_else(|| resp.data().get("info"))
+                .or_else(|| resp.data().get("follow_list"))
                 .and_then(|v| v.as_array())
             {
                 for item in arr {
+                    let ext = item.get("ext_params").or_else(|| item.get("extra"));
                     let singer_id = {
                         let s = Self::val_str(item, "singerid");
                         if !s.is_empty() && s != "0" {
                             s
+                        } else if let Some(e) = ext {
+                            let es = Self::val_str(e, "singerid");
+                            if !es.is_empty() && es != "0" {
+                                es
+                            } else {
+                                Self::val_str(item, "userid")
+                            }
                         } else {
                             Self::val_str(item, "userid")
                         }
                     };
-                    let target_uid = Self::val_str(item, "userid");
-                    let name = {
-                        let n = Self::val_str(item, "nickname");
-                        if !n.is_empty() {
-                            n
+                    let target_uid = {
+                        let t = Self::val_str(item, "target_userid");
+                        if !t.is_empty() {
+                            t
                         } else {
-                            Self::val_str(item, "singername")
+                            Self::val_str(item, "userid")
                         }
                     };
+                    let name = [
+                        Self::val_str(item, "singername"),
+                        Self::val_str(item, "author_name"),
+                        Self::val_str(item, "nickname"),
+                        Self::val_str(item, "r_nick"),
+                        Self::val_str(item, "name"),
+                    ]
+                    .into_iter()
+                    .find(|s| !s.is_empty())
+                    .unwrap_or_default();
+
                     if !name.is_empty() {
-                        let pic = {
-                            let p = Self::val_str(item, "pic");
-                            if !p.is_empty() {
-                                p
-                            } else {
-                                Self::val_str(item, "imgurl")
-                            }
-                        };
+                        let pic = [
+                            Self::val_str(item, "k_pic"),
+                            ext.map(|e| Self::val_str(e, "k_pic")).unwrap_or_default(),
+                            Self::val_str(item, "pic"),
+                            Self::val_str(item, "avatar"),
+                            Self::val_str(item, "imgurl"),
+                        ]
+                        .into_iter()
+                        .find(|s| !s.is_empty())
+                        .unwrap_or_default();
+
                         artists.push(FollowedArtist {
                             artist_id: if singer_id.is_empty() {
                                 target_uid.clone()
@@ -4126,9 +4543,15 @@ impl KugouApiService {
                             target_user_id: target_uid,
                             name,
                             avatar_url: signer::normalize_image_url(Some(&pic)),
-                            song_count: Self::val_i64(item, "song_count").unwrap_or(48) as i32,
-                            album_count: Self::val_i64(item, "album_count").unwrap_or(12) as i32,
-                            fans_count: Self::val_i64(item, "fanscount").unwrap_or(125_000) as i32,
+                            song_count: Self::val_i64(item, "songcount")
+                                .or_else(|| Self::val_i64(item, "song_count"))
+                                .unwrap_or(0) as i32,
+                            album_count: Self::val_i64(item, "albumcount")
+                                .or_else(|| Self::val_i64(item, "album_count"))
+                                .unwrap_or(0) as i32,
+                            fans_count: Self::val_i64(item, "fanscount")
+                                .or_else(|| Self::val_i64(item, "fans_count"))
+                                .unwrap_or(0) as i32,
                             is_followed: true,
                             intro: Self::val_str(item, "intro"),
                         });
@@ -4136,6 +4559,30 @@ impl KugouApiService {
                 }
             }
         }
+
+        // 并发或按需补全前 10 位缺少作品数的已关注歌手详情
+        for idx in 0..artists.len().min(10) {
+            if artists[idx].song_count == 0 && !artists[idx].artist_id.is_empty() {
+                if let Ok(det) = self.fetch_artist_detail(&artists[idx].artist_id).await {
+                    if det.song_count > 0 {
+                        artists[idx].song_count = det.song_count;
+                    }
+                    if det.album_count > 0 {
+                        artists[idx].album_count = det.album_count;
+                    }
+                    if det.fans_count > 0 {
+                        artists[idx].fans_count = det.fans_count;
+                    }
+                    if artists[idx].avatar_url.is_empty() && !det.avatar_url.is_empty() {
+                        artists[idx].avatar_url = det.avatar_url;
+                    }
+                    if artists[idx].intro.is_empty() && !det.intro.is_empty() {
+                        artists[idx].intro = det.intro;
+                    }
+                }
+            }
+        }
+
         Ok(artists)
     }
 
@@ -4149,33 +4596,45 @@ impl KugouApiService {
         };
         let dev = self.store.device();
         let now_sec = Utc::now().timestamp();
+        let target_id = artist_id.trim().parse::<i64>().unwrap_or(0);
+        if target_id <= 0 {
+            return Err("无效的歌手 ID".to_string());
+        }
         let path = if follow {
             "/followservice/v3/follow_singer"
         } else {
             "/followservice/v3/unfollow_singer"
         };
 
-        if let Ok((aes_key, _)) = signer::playlist_aes_encrypt("{}") {
+        let params_plain = json!({
+            "singerid": target_id,
+            "token": session.token
+        })
+        .to_string();
+        if let Ok(enc) = signer::encrypt_login_params(&params_plain) {
             let p_plain = json!({
                 "clienttime": now_sec,
-                "key": aes_key
+                "key": enc.key
             })
             .to_string();
             if let Ok(p_rsa) = signer::rsa_pkcs1_hex(&p_plain) {
+                let mut query = HashMap::new();
+                query.insert("clienttime".to_string(), now_sec.to_string());
                 let body = json!({
-                    "singerid": artist_id.parse::<i64>().unwrap_or(0),
+                    "plat": 0,
                     "userid": session.user_id.parse::<i64>().unwrap_or(0),
-                    "token": session.token,
-                    "source": 1,
-                    "p": p_rsa.to_uppercase()
+                    "singerid": target_id,
+                    "source": 7,
+                    "p": p_rsa.to_uppercase(),
+                    "params": enc.ciphertext
                 });
-                let _ = self
+                if let Ok(resp) = self
                     .transport
                     .call(
                         path,
                         &dev,
                         Some(&session),
-                        HashMap::new(),
+                        query,
                         Some(body),
                         "https://gateway.kugou.com",
                         "POST",
@@ -4184,10 +4643,56 @@ impl KugouApiService {
                         true,
                         true,
                     )
-                    .await;
+                    .await
+                {
+                    if resp.is_success() {
+                        return Ok(true);
+                    }
+                }
             }
         }
-        Ok(true)
+
+        // 备用通道: relationuser.kugou.com /v4/follow 或 /v4/unfollow
+        let v4_path = if follow { "/v4/follow" } else { "/v4/unfollow" };
+        let p_json = json!({
+            "clienttime": now_sec,
+            "token": session.token
+        })
+        .to_string();
+        if let Ok(p_enc) = signer::rsa_pkcs1_hex(&p_json) {
+            let mut query = HashMap::new();
+            query.insert("plat".to_string(), "1".to_string());
+            let mut headers = HashMap::new();
+            headers.insert("x-router".to_string(), "relationuser.kugou.com".to_string());
+            let body = json!({
+                "userid": session.user_id.parse::<i64>().unwrap_or(0),
+                "target_userid": target_id,
+                "singerid": target_id,
+                "type": 1,
+                "id_type": 1,
+                "source": 13,
+                "p": p_enc.to_uppercase()
+            });
+            let resp = self
+                .transport
+                .call(
+                    v4_path,
+                    &dev,
+                    Some(&session),
+                    query,
+                    Some(body),
+                    "https://gateway.kugou.com",
+                    "POST",
+                    false,
+                    headers,
+                    true,
+                    true,
+                )
+                .await?;
+            return Ok(resp.is_success());
+        }
+
+        Err("关注状态同步失败".to_string())
     }
 
     /// 24. 已购数字专辑与已购单曲 (对齐 MusicRepository.userPurchasedAlbums & userPurchasedSongs)
@@ -4306,8 +4811,84 @@ impl KugouApiService {
     /// 25. 歌手主页详情、歌手单曲、专辑详情与专辑曲目
     pub async fn fetch_artist_detail(&self, artist_id: &str) -> Result<FollowedArtist, String> {
         let dev = self.store.device();
+        let session = self.store.session();
+        let mut gw_artist: Option<FollowedArtist> = None;
+
+        // 通道 1: /kmr/v3/author (概念版完整歌手百科与作品计数)
+        let mut headers = HashMap::new();
+        headers.insert("x-router".to_string(), "openapi.kugou.com".to_string());
+        headers.insert("kg-tid".to_string(), "36".to_string());
+        let author_val = if let Ok(n) = artist_id.trim().parse::<i64>() {
+            json!(n)
+        } else {
+            json!(artist_id.trim())
+        };
+        let body = json!({
+            "author_id": author_val,
+            "fields": "base,extra",
+            "area_code": 1
+        });
+        if let Ok(resp) = self
+            .transport
+            .call(
+                "/kmr/v3/author",
+                &dev,
+                session.as_ref(),
+                HashMap::new(),
+                Some(body),
+                "https://gateway.kugou.com",
+                "POST",
+                false,
+                headers,
+                true,
+                true,
+            )
+            .await
+        {
+            let d = resp.data().get("data").unwrap_or_else(|| resp.data());
+            let base = d.get("base").unwrap_or(d);
+            let extra = d.get("extra").unwrap_or(d);
+            let name = Self::val_str(base, "author_name");
+            if !name.is_empty() {
+                let pic = {
+                    let p = Self::val_str(base, "sizable_avatar");
+                    if !p.is_empty() {
+                        p
+                    } else {
+                        Self::val_str(base, "avatar")
+                    }
+                };
+                let intro = {
+                    let li = Self::val_str(extra, "long_intro");
+                    if !li.is_empty() {
+                        li
+                    } else {
+                        Self::val_str(extra, "intro")
+                    }
+                };
+                gw_artist = Some(FollowedArtist {
+                    artist_id: artist_id.to_string(),
+                    target_user_id: String::new(),
+                    name,
+                    avatar_url: signer::normalize_image_url(Some(&pic)),
+                    song_count: Self::val_i64(extra, "audio_count")
+                        .or_else(|| Self::val_i64(base, "audio_count"))
+                        .unwrap_or(0) as i32,
+                    album_count: Self::val_i64(extra, "album_count")
+                        .or_else(|| Self::val_i64(base, "album_count"))
+                        .unwrap_or(0) as i32,
+                    fans_count: Self::val_i64(extra, "fans_count").unwrap_or(0) as i32,
+                    is_followed: false,
+                    intro,
+                });
+            }
+        }
+
+        // 通道 2: CDN /api/v3/singer/info
         let mut query = HashMap::new();
+        query.insert("version".to_string(), "9108".to_string());
         query.insert("singerid".to_string(), artist_id.to_string());
+        query.insert("plat".to_string(), "0".to_string());
         query.insert("with_res_tag".to_string(), "1".to_string());
 
         if let Ok(resp) = self
@@ -4327,11 +4908,22 @@ impl KugouApiService {
             )
             .await
         {
-            let d = resp.data();
+            let d = resp.data().get("data").unwrap_or_else(|| resp.data());
             let name = Self::val_str(d, "singername");
             if !name.is_empty() {
                 let pic = Self::val_str(d, "imgurl");
-                return Ok(FollowedArtist {
+                let raw_intro = Self::val_str(d, "intro");
+                let raw_profile = Self::val_str(d, "profile");
+                let cdn_intro = if !raw_intro.is_empty() && !raw_profile.is_empty() && !raw_intro.contains(&raw_profile) {
+                    format!("{}
+
+{}", raw_intro, raw_profile)
+                } else if !raw_intro.is_empty() {
+                    raw_intro
+                } else {
+                    raw_profile
+                };
+                let cdn_artist = FollowedArtist {
                     artist_id: artist_id.to_string(),
                     target_user_id: Self::val_str(d, "userid"),
                     name,
@@ -4340,9 +4932,27 @@ impl KugouApiService {
                     album_count: Self::val_i64(d, "albumcount").unwrap_or(0) as i32,
                     fans_count: Self::val_i64(d, "fanscount").unwrap_or(0) as i32,
                     is_followed: false,
-                    intro: Self::val_str(d, "intro"),
-                });
+                    intro: cdn_intro,
+                };
+                if let Some(gw) = gw_artist {
+                    return Ok(FollowedArtist {
+                        artist_id: artist_id.to_string(),
+                        target_user_id: cdn_artist.target_user_id,
+                        name: if !gw.name.is_empty() { gw.name } else { cdn_artist.name },
+                        avatar_url: if !gw.avatar_url.is_empty() { gw.avatar_url } else { cdn_artist.avatar_url },
+                        song_count: gw.song_count.max(cdn_artist.song_count),
+                        album_count: gw.album_count.max(cdn_artist.album_count),
+                        fans_count: gw.fans_count.max(cdn_artist.fans_count),
+                        is_followed: false,
+                        intro: if cdn_artist.intro.len() > gw.intro.len() { cdn_artist.intro } else { gw.intro },
+                    });
+                }
+                return Ok(cdn_artist);
             }
+        }
+
+        if let Some(gw) = gw_artist {
+            return Ok(gw);
         }
         Err("未获取到歌手详情".to_string())
     }
@@ -4647,7 +5257,218 @@ impl KugouApiService {
         Ok(out)
     }
 
-    /// 27. 歌曲多级楼中楼评论区 (对齐 MusicRepository.songComments -> /mcomment/v1/cmt_classify_list & /mcomment/v1/cmtlist)
+    fn extract_comment_images(item: &Value) -> Vec<String> {
+        let mut urls = Vec::new();
+        for key in ["images", "uimage", "img_list", "pic_list", "pictures", "imgs", "pics"] {
+            let arr_opt = item
+                .get(key)
+                .and_then(|v| v.as_array())
+                .or_else(|| item.get("content_ext").and_then(|e| e.get(key)).and_then(|v| v.as_array()));
+            if let Some(arr) = arr_opt {
+                for el in arr {
+                    if let Some(s) = el.as_str() {
+                        let u = signer::normalize_image_url(Some(s));
+                        if !u.is_empty() && !urls.contains(&u) {
+                            urls.push(u);
+                        }
+                    } else if el.is_object() {
+                        let raw = [
+                            Self::val_str(el, "url"),
+                            Self::val_str(el, "big_url"),
+                            Self::val_str(el, "origin_url"),
+                            Self::val_str(el, "img"),
+                            Self::val_str(el, "pic"),
+                        ]
+                        .into_iter()
+                        .find(|s| !s.is_empty())
+                        .unwrap_or_default();
+                        let u = signer::normalize_image_url(Some(&raw));
+                        if !u.is_empty() && !urls.contains(&u) {
+                            urls.push(u);
+                        }
+                    }
+                }
+            }
+        }
+        urls
+    }
+
+    fn parse_weibo_reply_chain(raw_content: &str) -> (String, Option<String>, Option<String>) {
+        // 解析酷狗楼中楼 `//@用户名:引用内容` 链式语法
+        let trimmed = raw_content.trim();
+        if let Some(idx) = trimmed.find("//@") {
+            let main_part = trimmed[..idx].trim().to_string();
+            let rest = &trimmed[idx + 3..];
+            if let Some(colon_idx) = rest.find(':').or_else(|| rest.find('：')) {
+                let target_user = rest[..colon_idx].trim().to_string();
+                let quoted = rest[colon_idx + 1..].trim().to_string();
+                return (
+                    if main_part.is_empty() { trimmed.to_string() } else { main_part },
+                    if target_user.is_empty() { None } else { Some(target_user) },
+                    if quoted.is_empty() { None } else { Some(quoted) },
+                );
+            }
+        }
+        (trimmed.to_string(), None, None)
+    }
+
+    fn parse_single_comment_item(item: &Value, default_parent_id: Option<&str>) -> Option<SongComment> {
+        let cid = {
+            let a = Self::val_str(item, "id");
+            if !a.is_empty() {
+                a
+            } else {
+                Self::val_str(item, "cmtid")
+            }
+        };
+        let raw_content = {
+            let c = Self::val_str(item, "content");
+            if !c.is_empty() {
+                c
+            } else {
+                Self::val_str(item, "text")
+            }
+        };
+        let images = Self::extract_comment_images(item);
+        if cid.is_empty() || (raw_content.is_empty() && images.is_empty()) {
+            return None;
+        }
+        let (clean_content, weibo_user, weibo_quote) = Self::parse_weibo_reply_chain(&raw_content);
+        let udetail = item.get("udetail").or_else(|| item.get("user"));
+        let uname = [
+            Self::val_str(item, "user_name"),
+            Self::val_str(item, "nickname"),
+            udetail.map(|u| Self::val_str(u, "user_name")).unwrap_or_default(),
+        ]
+        .into_iter()
+        .find(|s| !s.is_empty())
+        .unwrap_or_else(|| "微风乐迷".to_string());
+
+        let uav = [
+            Self::val_str(item, "user_pic"),
+            Self::val_str(item, "avatar"),
+            udetail.map(|u| Self::val_str(u, "user_pic")).unwrap_or_default(),
+        ]
+        .into_iter()
+        .find(|s| !s.is_empty())
+        .unwrap_or_default();
+
+        let like_cnt = item
+            .get("like")
+            .and_then(|l| Self::val_i64(l, "count").or_else(|| Self::val_i64(l, "like_count")))
+            .or_else(|| Self::val_i64(item, "like_count"))
+            .or_else(|| Self::val_i64(item, "likenum"))
+            .or_else(|| Self::val_i64(item, "praisecount"))
+            .unwrap_or(0) as i32;
+
+        let is_liked = Self::val_i64(item, "is_like") == Some(1)
+            || item
+                .get("like")
+                .and_then(|l| Self::val_i64(l, "is_like"))
+                == Some(1);
+
+        let loc = [
+            Self::val_str(item, "location"),
+            Self::val_str(item, "ip_location"),
+            Self::val_str(item, "ip_loc"),
+            Self::val_str(item, "province"),
+            udetail.map(|u| Self::val_str(u, "location")).unwrap_or_default(),
+        ]
+        .into_iter()
+        .find(|s| !s.is_empty() && s != "0" && s != "未知")
+        .unwrap_or_default()
+        .trim_start_matches("IP属地:")
+        .trim_start_matches("IP属地：")
+        .trim_start_matches("来自")
+        .trim()
+        .to_string();
+
+        let special_child_id = [
+            Self::val_str(item, "special_child_id"),
+            Self::val_str(item, "childrenid"),
+            Self::val_str(item, "special_id"),
+        ]
+        .into_iter()
+        .find(|s| !s.is_empty() && s != "0")
+        .unwrap_or_default();
+
+        let reply_user_name = weibo_user.or_else(|| {
+            [
+                Self::val_str(item, "reply_user_name"),
+                item.get("puser").map(|p| Self::val_str(p, "user_name")).unwrap_or_default(),
+                item.get("pcomment").map(|p| Self::val_str(p, "user_name")).unwrap_or_default(),
+                Self::val_str(item, "puser"),
+            ]
+            .into_iter()
+            .find(|s| !s.is_empty() && !s.starts_with('{'))
+        });
+
+        let reply_quoted_content = weibo_quote.or_else(|| {
+            [
+                item.get("pcomment").map(|p| Self::val_str(p, "content")).unwrap_or_default(),
+                item.get("pcontent").map(|p| Self::val_str(p, "content")).unwrap_or_default(),
+            ]
+            .into_iter()
+            .find(|s| !s.is_empty())
+        });
+
+        let parent_id = [
+            Self::val_str(item, "p_id"),
+            Self::val_str(item, "pid"),
+            Self::val_str(item, "reply_to_id"),
+        ]
+        .into_iter()
+        .find(|s| !s.is_empty() && s != "0")
+        .or_else(|| default_parent_id.map(|s| s.to_string()));
+
+        let mut inline_replies = Vec::new();
+        for rkey in ["reply_list", "list", "children", "replys"] {
+            if let Some(rarr) = item
+                .get(rkey)
+                .and_then(|v| v.as_array())
+                .or_else(|| item.get("reply").and_then(|r| r.get(rkey)).and_then(|v| v.as_array()))
+            {
+                for ritem in rarr {
+                    if let Some(rc) = Self::parse_single_comment_item(ritem, Some(&cid)) {
+                        if !inline_replies.iter().any(|existing: &SongComment| existing.id == rc.id) {
+                            inline_replies.push(rc);
+                        }
+                    }
+                }
+            }
+        }
+
+        let reply_count = [
+            Self::val_i64(item, "reply_num"),
+            Self::val_i64(item, "reply_count"),
+            item.get("reply").and_then(|r| Self::val_i64(r, "count")),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+        .unwrap_or(0)
+        .max(inline_replies.len() as i64) as i32;
+
+        Some(SongComment {
+            id: cid,
+            user_name: uname,
+            user_avatar: signer::normalize_image_url(Some(&uav)),
+            content: if clean_content.is_empty() { "[图片评论]".to_string() } else { clean_content },
+            created_time: Self::val_str(item, "addtime"),
+            like_count: like_cnt,
+            is_liked,
+            location: loc,
+            reply_count,
+            special_child_id,
+            replies: inline_replies,
+            images,
+            reply_user_name,
+            reply_quoted_content,
+            parent_id,
+        })
+    }
+
+    /// 27. 歌曲多级楼中楼评论区 (对齐 MusicRepository.songComments -> POST /mcomment/v1/cmt_classify_list & /mcomment/v1/cmtlist + 自动预取前排楼中楼)
     pub async fn fetch_song_comments(
         &self,
         song: &Song,
@@ -4656,81 +5477,106 @@ impl KugouApiService {
     ) -> Result<Vec<SongComment>, String> {
         let dev = self.store.device();
         let session = self.store.session();
-        let code_hash = signer::md5_hex(&format!("{}1005", song.hash.to_lowercase()));
+        let mix_id = if song.album_audio_id > 0 {
+            song.album_audio_id
+        } else {
+            song.audio_id
+        };
+        let ext_data = song.hash.to_lowercase();
+        let is_hot = sort_type != "new";
+        let code_hash = signer::md5_hex(&format!("{}1005", ext_data));
+
         let mut query = HashMap::new();
         query.insert("code".to_string(), "fc4be23b4e972707f36b8a828a93ba8a".to_string());
-        query.insert("kugouid".to_string(), session.as_ref().map(|s| s.user_id.clone()).unwrap_or_else(|| "0".to_string()));
-        query.insert("ver".to_string(), "10".to_string());
+        query.insert(
+            "kugouid".to_string(),
+            session
+                .as_ref()
+                .map(|s| s.user_id.clone())
+                .unwrap_or_else(|| "0".to_string()),
+        );
+        query.insert("ver".to_string(), "6".to_string());
         query.insert("clientver".to_string(), CLIENT_VERSION.to_string());
-        query.insert("extdata".to_string(), song.hash.to_lowercase());
-        query.insert("mix_songid".to_string(), song.album_audio_id.to_string());
+        query.insert("extdata".to_string(), ext_data);
+        query.insert("mixsongid".to_string(), mix_id.to_string());
+        query.insert("mix_songid".to_string(), mix_id.to_string());
+        query.insert("need_show_image".to_string(), "1".to_string());
+        query.insert("show_classify".to_string(), "1".to_string());
+        query.insert("show_hotword_list".to_string(), "1".to_string());
         query.insert("p".to_string(), page.to_string());
         query.insert("pagesize".to_string(), "30".to_string());
+        query.insert("sort_method".to_string(), if is_hot { "1" } else { "2" }.to_string());
+        query.insert("type".to_string(), if is_hot { "1" } else { "2" }.to_string());
         query.insert("UDID".to_string(), code_hash);
 
-        let path = if sort_type == "new" {
-            "/mcomment/v1/cmtlist"
+        let paths = if is_hot {
+            ["/mcomment/v1/cmt_classify_list", "/mcomment/v1/cmtlist"]
         } else {
-            "/mcomment/v1/cmt_classify_list"
+            ["/mcomment/v1/cmtlist", "/mcomment/v1/cmt_classify_list"]
         };
 
-        let mut comments = Vec::new();
-        if let Ok(resp) = self
-            .transport
-            .call(
-                path,
-                &dev,
-                session.as_ref(),
-                query,
-                None,
-                "https://gateway.kugou.com",
-                "GET",
-                false,
-                HashMap::new(),
-                true,
-                true,
-            )
-            .await
-        {
-            let root = resp.data();
-            for key in ["weight_list", "hot_list", "list", "lists", "comments"] {
-                if let Some(arr) = root.get(key).and_then(|v| v.as_array()) {
-                    for item in arr {
-                        let cid = Self::val_str(item, "id");
-                        let content = Self::val_str(item, "content");
-                        if !cid.is_empty() && !content.is_empty() {
-                            let uname = {
-                                let u = Self::val_str(item, "user_name");
-                                if !u.is_empty() {
-                                    u
-                                } else {
-                                    "微风乐迷".to_string()
+        let mut comments: Vec<SongComment> = Vec::new();
+        let mut seen_ids = HashSet::new();
+        for path in paths {
+            if let Ok(resp) = self
+                .transport
+                .call(
+                    path,
+                    &dev,
+                    session.as_ref(),
+                    query.clone(),
+                    None,
+                    "https://gateway.kugou.com",
+                    "POST",
+                    false,
+                    HashMap::new(),
+                    true,
+                    true,
+                )
+                .await
+            {
+                let root = resp.data();
+                let keys = if is_hot && page == 1 {
+                    ["weight_list", "hot_list", "list", "lists", "comments"]
+                } else {
+                    ["list", "lists", "comments", "weight_list", "hot_list"]
+                };
+                for key in keys {
+                    if !is_hot && (key == "weight_list" || key == "hot_list") && !comments.is_empty() {
+                        continue;
+                    }
+                    if let Some(arr) = root.get(key).and_then(|v| v.as_array()) {
+                        for item in arr {
+                            if let Some(cmt) = Self::parse_single_comment_item(item, None) {
+                                if seen_ids.insert(cmt.id.clone()) {
+                                    comments.push(cmt);
                                 }
-                            };
-                            let uav = Self::val_str(item, "user_pic");
-                            let like_cnt = item
-                                .get("like")
-                                .and_then(|l| Self::val_i64(l, "count"))
-                                .or_else(|| Self::val_i64(item, "likenum"))
-                                .unwrap_or(0) as i32;
-                            comments.push(SongComment {
-                                id: cid,
-                                user_name: uname,
-                                user_avatar: signer::normalize_image_url(Some(&uav)),
-                                content,
-                                created_time: Self::val_str(item, "addtime"),
-                                like_count: like_cnt,
-                                is_liked: false,
-                                location: Self::val_str(item, "location"),
-                                reply_count: Self::val_i64(item, "reply_num").unwrap_or(0) as i32,
-                                special_child_id: Self::val_str(item, "special_child_id"),
-                                replies: Vec::new(),
-                            });
+                            }
                         }
                     }
                 }
             }
         }
+
+        // 自动预取本页前 8 条有楼层回复但内联不足 3 条的主评论子回复（对齐 Android songComments 预取策略）
+        let mut prefetched_count = 0usize;
+        for cmt in comments.iter_mut() {
+            if cmt.reply_count > 0 && cmt.replies.len() < 3 && prefetched_count < 8 {
+                prefetched_count += 1;
+                if let Ok(fetched) = self
+                    .fetch_comment_floor_replies(song, &cmt.id, &cmt.special_child_id, 1)
+                    .await
+                {
+                    for r in fetched {
+                        if !cmt.replies.iter().any(|e| e.id == r.id) {
+                            cmt.replies.push(r);
+                        }
+                    }
+                    cmt.reply_count = cmt.reply_count.max(cmt.replies.len() as i32);
+                }
+            }
+        }
+
         Ok(comments)
     }
 
@@ -4776,6 +5622,7 @@ impl KugouApiService {
         embed_cover_and_tags: bool,
         embed_lyrics_in_audio: bool,
         bilingual_lrc: bool,
+        skip_existing: bool,
     ) -> Result<DownloadTaskResult, String> {
         let pb = self.resolve_song_url(song, preferred_quality).await?;
         let target_music_dir = if music_dir.trim().is_empty() {
@@ -4792,6 +5639,21 @@ impl KugouApiService {
             .map(|c| if "<>:\"/\\|?*".contains(c) { '_' } else { c })
             .collect();
         let audio_file_path = target_music_dir.join(format!("{}.{}", safe_name, pb.ext_name));
+        if skip_existing && audio_file_path.exists() {
+            let existing_size = std::fs::metadata(&audio_file_path)
+                .map(|m| m.len() as i64)
+                .unwrap_or(0);
+            if existing_size > 1024 {
+                return Ok(DownloadTaskResult {
+                    success: true,
+                    saved_audio_path: audio_file_path.to_string_lossy().to_string(),
+                    saved_lrc_path: String::new(),
+                    file_size_bytes: existing_size,
+                    quality_label: pb.quality_label,
+                    message: format!("已跳过同名已存在文件：{}", audio_file_path.to_string_lossy()),
+                });
+            }
+        }
 
         let resp = self
             .transport
@@ -4960,50 +5822,22 @@ impl KugouApiService {
     }
 
     pub async fn uncollect_playlist_cloud(&self, playlist: &Playlist) -> Result<bool, String> {
-        let Some(session) = self.store.session() else {
-            return Err("请先登录酷狗账号".to_string());
-        };
-        let dev = self.store.device();
         let mut list_id = playlist.list_id;
         if list_id <= 0 {
             if let Ok(cloud_lists) = self.fetch_user_playlists().await {
                 if let Some(found) = cloud_lists.into_iter().find(|p| {
                     p.is_favorite
-                        && (p.global_collection_id == playlist.global_collection_id
+                        && ((!playlist.global_collection_id.is_empty()
+                            && p.global_collection_id == playlist.global_collection_id)
+                            || (!playlist.id.is_empty() && p.id == playlist.id)
                             || p.title == playlist.title)
                 }) {
                     list_id = found.list_id;
                 }
             }
         }
-        let body = json!({
-            "userid": session.user_id.parse::<i64>().unwrap_or(0),
-            "token": session.token,
-            "listid": list_id,
-            "type": if playlist.is_created_by_me { 0 } else { 1 }
-        });
-        let mut headers = HashMap::new();
-        headers.insert(
-            "x-router".to_string(),
-            "cloudlist.service.kugou.com".to_string(),
-        );
-        let resp = self
-            .transport
-            .call(
-                "/v2/delete_list",
-                &dev,
-                Some(&session),
-                HashMap::new(),
-                Some(body),
-                "https://gateway.kugou.com",
-                "POST",
-                false,
-                headers,
-                true,
-                true,
-            )
-            .await?;
-        Ok(resp.is_success() || resp.http_code == 200)
+        let ptype = if playlist.is_created_by_me { 0 } else { 1 };
+        self.execute_encrypted_delete_list(list_id, ptype).await
     }
 
     /// 31. 从自建歌单中移除单曲 (对齐 MusicRepository.removeSongFromPlaylist -> /v4/delete_songs)
@@ -5017,6 +5851,29 @@ impl KugouApiService {
         };
         let dev = self.store.device();
         let now_sec = Utc::now().timestamp();
+        let mut resolved_file_id = song.file_id;
+        if resolved_file_id <= 0 {
+            if let Ok(playlists) = self.fetch_user_playlists().await {
+                if let Some(target_pl) = playlists.into_iter().find(|p| p.list_id == list_id) {
+                    let gid = if !target_pl.global_collection_id.is_empty() {
+                        target_pl.global_collection_id
+                    } else {
+                        target_pl.id
+                    };
+                    if let Ok(tracks) = self.fetch_playlist_songs(&gid).await {
+                        if let Some(matched) = tracks.into_iter().find(|t| {
+                            (!t.hash.is_empty() && t.hash.eq_ignore_ascii_case(&song.hash))
+                                || (t.album_audio_id > 0 && t.album_audio_id == song.album_audio_id)
+                                || (!t.id.is_empty() && t.id == song.id)
+                        }) {
+                            if matched.file_id > 0 {
+                                resolved_file_id = matched.file_id;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let mix_id = if song.album_audio_id > 0 {
             song.album_audio_id
         } else {
@@ -5029,7 +5886,7 @@ impl KugouApiService {
             "type": 0,
             "list_ver": 0,
             "data": [{
-                "fileid": 0,
+                "fileid": resolved_file_id,
                 "hash": song.hash.to_uppercase(),
                 "mixsongid": mix_id
             }]
@@ -5039,6 +5896,28 @@ impl KugouApiService {
         query.insert("last_area".to_string(), "gztx".to_string());
         query.insert("userid".to_string(), session.user_id.clone());
         query.insert("token".to_string(), session.token.clone());
+
+        if let Ok(resp) = self
+            .transport
+            .call(
+                "/cloudlist.service/v4/delete_songs",
+                &dev,
+                Some(&session),
+                query.clone(),
+                Some(body.clone()),
+                "https://gateway.kugou.com",
+                "POST",
+                false,
+                HashMap::new(),
+                true,
+                true,
+            )
+            .await
+        {
+            if resp.is_success() {
+                return Ok(true);
+            }
+        }
 
         let mut headers = HashMap::new();
         headers.insert(
@@ -5061,7 +5940,7 @@ impl KugouApiService {
                 true,
             )
             .await?;
-        Ok(resp.is_success() || resp.http_code == 200)
+        Ok(resp.is_success())
     }
 
     /// 32. 歌手专辑列表与专辑详情 (对齐 MusicRepository.artistAlbums & albumDetail)
@@ -5409,39 +6288,13 @@ impl KugouApiService {
                 .await
             {
                 let root = resp.data();
-                for key in ["list", "lists", "reply_list", "hot_reply_list", "comments"] {
+                for key in ["list", "lists", "reply_list", "hot_reply_list", "comments", "weight_list"] {
                     if let Some(arr) = root.get(key).and_then(|v| v.as_array()) {
                         for item in arr {
-                            let cid = Self::val_str(item, "id");
-                            let content = Self::val_str(item, "content");
-                            if !cid.is_empty() && !content.is_empty() && !replies.iter().any(|r: &SongComment| r.id == cid) {
-                                let uname = {
-                                    let u = Self::val_str(item, "user_name");
-                                    if !u.is_empty() {
-                                        u
-                                    } else {
-                                        "微风乐迷".to_string()
-                                    }
-                                };
-                                let uav = Self::val_str(item, "user_pic");
-                                let like_cnt = item
-                                    .get("like")
-                                    .and_then(|l| Self::val_i64(l, "count"))
-                                    .or_else(|| Self::val_i64(item, "likenum"))
-                                    .unwrap_or(0) as i32;
-                                replies.push(SongComment {
-                                    id: cid,
-                                    user_name: uname,
-                                    user_avatar: signer::normalize_image_url(Some(&uav)),
-                                    content,
-                                    created_time: Self::val_str(item, "addtime"),
-                                    like_count: like_cnt,
-                                    is_liked: false,
-                                    location: Self::val_str(item, "location"),
-                                    reply_count: 0,
-                                    special_child_id: String::new(),
-                                    replies: Vec::new(),
-                                });
+                            if let Some(rc) = Self::parse_single_comment_item(item, Some(comment_id)) {
+                                if !replies.iter().any(|r: &SongComment| r.id == rc.id) {
+                                    replies.push(rc);
+                                }
                             }
                         }
                     }
@@ -5535,40 +6388,127 @@ impl KugouApiService {
             }
         }
 
-        let _ = self
+        // 通道 1: 对齐 Android MusicRepository.postSongComment -> /index.php?r=commentsv3/add (m.comment.service.kugou.com)
+        let now_sec = Utc::now().timestamp();
+        let route = if reply_to_id.is_some() {
+            "commentsv2/reply"
+        } else {
+            "commentsv3/add"
+        };
+        let mut data_obj = json!({
+            "content": trimmed,
+            "code": "fc4be23b4e972707f36b8a828a93ba8a",
+            "childrenid": if mix_id > 0 { mix_id.to_string() } else { song.hash.to_lowercase() },
+            "extdata": song.hash.to_lowercase(),
+            "mixsongid": mix_id,
+            "userid": session.user_id,
+            "token": session.token,
+            "ver": 6
+        });
+        if let Some(tid) = reply_to_id {
+            if !tid.is_empty() {
+                data_obj["tid"] = json!(tid);
+            }
+        }
+        let data_json = data_obj.to_string();
+        let sign_key = signer::params_key(now_sec, &format!("{}{}", dev.mid, data_json));
+        let mut primary_q = HashMap::new();
+        primary_q.insert("r".to_string(), route.to_string());
+        primary_q.insert("clienttime".to_string(), now_sec.to_string());
+        primary_q.insert("key".to_string(), sign_key);
+        let mut primary_h = HashMap::new();
+        primary_h.insert("x-router".to_string(), "m.comment.service.kugou.com".to_string());
+
+        let mut comment_id = format!("c_{}", Utc::now().timestamp_millis());
+        let mut location = String::new();
+        let mut confirmed = false;
+
+        if let Ok(resp) = self
             .transport
             .call(
-                path,
+                "/index.php",
                 &dev,
                 Some(&session),
-                query,
-                None,
+                primary_q,
+                Some(json!({ "data": data_json })),
                 "https://gateway.kugou.com",
                 "POST",
                 false,
-                HashMap::new(),
+                primary_h,
                 true,
                 true,
             )
-            .await;
+            .await
+        {
+            if resp.is_success() {
+                confirmed = true;
+                let d = resp.data();
+                let sid = Self::val_str(d, "cmtid");
+                if !sid.is_empty() {
+                    comment_id = sid;
+                }
+                location = Self::val_str(d, "location");
+            }
+        }
+
+        if !confirmed {
+            if let Ok(fb_resp) = self
+                .transport
+                .call(
+                    path,
+                    &dev,
+                    Some(&session),
+                    query,
+                    None,
+                    "https://gateway.kugou.com",
+                    "POST",
+                    false,
+                    HashMap::new(),
+                    true,
+                    true,
+                )
+                .await
+            {
+                let d = fb_resp.data();
+                let sid = Self::val_str(d, "cmtid");
+                if !sid.is_empty() {
+                    comment_id = sid;
+                }
+            }
+        }
 
         Ok(SongComment {
-            id: format!("c_{}", Utc::now().timestamp_millis()),
+            id: comment_id,
             user_name: session.nickname.clone(),
             user_avatar: session.avatar_url.clone(),
             content: trimmed.to_string(),
             created_time: "刚刚".to_string(),
             like_count: 0,
             is_liked: false,
-            location: String::new(),
+            location,
             reply_count: 0,
             special_child_id: String::new(),
             replies: Vec::new(),
+            images: Vec::new(),
+            reply_user_name: None,
+            reply_quoted_content: None,
+            parent_id: reply_to_id.map(|s| s.to_string()),
         })
     }
 
     /// 35. KTV 伴奏匹配与解析 (对齐 MusicRepository.matchAccompanyHash & resolvePlayback(useAccompaniment=true))
     pub async fn resolve_song_accompaniment(&self, song: &Song) -> Result<PlaybackResult, String> {
+        if !song.accompany_hash.trim().is_empty() {
+            let mut acc_song = song.clone();
+            acc_song.hash = song.accompany_hash.clone();
+            acc_song.hash128 = song.accompany_hash.clone();
+            acc_song.hash320 = song.accompany_hash.clone();
+            acc_song.hash_flac.clear();
+            acc_song.hash_hi_res.clear();
+            if let Ok(res) = self.resolve_song_url(&acc_song, "320").await {
+                return Ok(res);
+            }
+        }
         let keyword = format!("{} {} 伴奏", song.artist, song.title);
         let candidates = self.search_songs(&keyword, 1, 8).await.unwrap_or_default();
         if let Some(acc_song) = candidates.into_iter().find(|c| {
@@ -5673,6 +6613,7 @@ impl KugouApiService {
             )
         };
 
+        let accompany_hash = enriched.accompany_hash.clone();
         Ok(SongDetailInfo {
             song: enriched,
             album_name,
@@ -5685,7 +6626,7 @@ impl KugouApiService {
             file_size,
             file_hash,
             has_accompaniment: true,
-            accompany_hash: String::new(),
+            accompany_hash,
         })
     }
 
@@ -5953,5 +6894,147 @@ impl KugouApiService {
         ];
         Ok(presets)
     }
-}
 
+    /// 39. 解析酷狗音乐/概念版分享链接、口令、global_collection_id 或歌单文本 (对齐 Android KugouShareLinkParser & resolveSharedMusicText)
+    pub async fn parse_shared_music_text(&self, raw_text: &str) -> Result<SharedMusicResolved, String> {
+        let text = raw_text.trim();
+        if text.is_empty() {
+            return Err("请输入分享链接、口令或歌单内容".to_string());
+        }
+
+        let mut working_text = text.to_string();
+
+        // 1. 若包含短链 (t1.kugou.com / kgurl.cn / m.kugou.com / m3ws.kugou.com 等)，跟随重定向并提取最终 URL 与 HTML
+        let url_re = regex::Regex::new(r#"https?://[^\s"'<>|，。！？、；：（）【】《》“”‘’]+"#).unwrap();
+        if let Some(m) = url_re.find(text) {
+            let candidate_url = m
+                .as_str()
+                .trim_end_matches(&[',', '.', '!', '?', ';', ':', ')', ']', '}', '，', '。', '！', '？', '）', '】', '》'][..]);
+            if let Ok(resp) = self.transport.client.get(candidate_url).send().await {
+                let final_url = resp.url().to_string();
+                let html = resp.text().await.unwrap_or_default();
+                working_text = format!("{}\n{}\n{}", working_text, final_url, html);
+            }
+        }
+
+        // 2. 提取 global_collection_id (如 collection_3_... 或 gcid=...)
+        let gcid_re = regex::Regex::new(r#"(?:global_collection_id|gcid|globalCollectionId)[=:]["']?(collection_[a-zA-Z0-9_]+|[a-zA-Z0-9_]{16,})"#).unwrap();
+        let bare_collection_re = regex::Regex::new(r#"\b(collection_\d+_\d+_\d+_\d+)\b"#).unwrap();
+        let special_id_re = regex::Regex::new(r#"(?:specialid|special_id|specialID|listid|list_id)[=:]["']?(\d{4,})"#).unwrap();
+
+        let resolved_gcid = bare_collection_re
+            .captures(&working_text)
+            .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+            .or_else(|| {
+                gcid_re
+                    .captures(&working_text)
+                    .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+            })
+            .or_else(|| {
+                if text.starts_with("collection_") {
+                    Some(text.to_string())
+                } else {
+                    None
+                }
+            });
+
+        let resolved_special_id = special_id_re
+            .captures(&working_text)
+            .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+            .or_else(|| {
+                if text.chars().all(|c| c.is_ascii_digit()) && text.len() >= 4 {
+                    Some(text.to_string())
+                } else {
+                    None
+                }
+            });
+
+        if let Some(pid) = resolved_gcid.or(resolved_special_id) {
+            let songs = self.fetch_playlist_songs(&pid).await.unwrap_or_default();
+            if !songs.is_empty() {
+                let pl = Playlist {
+                    id: pid.clone(),
+                    title: format!("导入歌单 ({})", &pid[..pid.len().min(12)]),
+                    cover_url: songs.first().map(|s| s.cover_url.clone()).unwrap_or_default(),
+                    track_count: songs.len() as i32,
+                    description: "通过酷狗分享链接/集合 ID 解析导入".to_string(),
+                    creator_name: "酷狗概念版分享".to_string(),
+                    is_created_by_me: false,
+                    is_favorite: false,
+                    is_liked: false,
+                    list_id: 0,
+                    global_collection_id: pid,
+                };
+                return Ok(SharedMusicResolved {
+                    target_type: "playlist".to_string(),
+                    song: None,
+                    playlist: Some(pl),
+                    songs,
+                    message: "成功解析分享歌单".to_string(),
+                });
+            }
+        }
+
+        // 3. 提取 32 位单曲 Hash 或 mixsongid / album_audio_id
+        let hash_re = regex::Regex::new(r#"(?:hash|Hash|FileHash)[=:]["']?([0-9a-fA-F]{32})"#).unwrap();
+        if let Some(caps) = hash_re.captures(&working_text) {
+            if let Some(h_match) = caps.get(1) {
+                let hash_str = h_match.as_str().to_lowercase();
+                let seed = Song {
+                    id: hash_str.clone(),
+                    hash: hash_str.clone(),
+                    hash128: hash_str,
+                    title: "分享单曲".to_string(),
+                    artist: "酷狗歌手".to_string(),
+                    ..Default::default()
+                };
+                let enriched = self
+                    .enrich_songs_privilege_lite(vec![seed])
+                    .await
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default();
+                if !enriched.hash.is_empty() {
+                    return Ok(SharedMusicResolved {
+                        target_type: "song".to_string(),
+                        song: Some(enriched.clone()),
+                        playlist: None,
+                        songs: vec![enriched],
+                        message: "成功解析分享单曲".to_string(),
+                    });
+                }
+            }
+        }
+
+        // 4. 逐行歌名解析匹配
+        let mut matched_songs = Vec::new();
+        for line in text.lines() {
+            let clean_line = line
+                .trim()
+                .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '、' || c == '-')
+                .trim();
+            if clean_line.len() >= 2 && !clean_line.starts_with("http") {
+                if let Ok(mut res) = self.search_songs(clean_line, 1, 1).await {
+                    if let Some(first) = res.pop() {
+                        matched_songs.push(first);
+                    }
+                }
+                if matched_songs.len() >= 50 {
+                    break;
+                }
+            }
+        }
+
+        if !matched_songs.is_empty() {
+            return Ok(SharedMusicResolved {
+                target_type: "playlist".to_string(),
+                song: matched_songs.first().cloned(),
+                playlist: None,
+                songs: matched_songs,
+                message: "成功匹配歌单曲目列表".to_string(),
+            });
+        }
+
+        Err("未能从输入内容中识别出有效的酷狗歌单或歌曲".to_string())
+    }
+}

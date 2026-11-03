@@ -192,7 +192,7 @@ const changelogVersions = [
 ];
 
 async function copyEnvDiagnostic() {
-  const text = `BreezeMusic Windows v1.3.2 (Skyline Edition)\nOS: Windows 11 Desktop (Tauri 2.0 + WebView2)\nProtocol: KuGou Concept Lite (appid=3116, clientver=11440)\nAudio: 64-bit Pure LTI Biquad WebAudio DSP (${store.preferredQuality})`;
+  const text = `BreezeMusic Windows v1.4.0 (Skyline Edition)\nOS: Windows 11 Desktop (Tauri 2.0 + WebView2)\nProtocol: KuGou Concept Lite (appid=3116, clientver=11440)\nAudio: 64-bit Pure LTI Biquad WebAudio DSP (${store.preferredQuality})`;
   try {
     await navigator.clipboard.writeText(text);
     store.notify("已一键复制系统与音源环境信息，可直接粘贴至 GitHub Issue");

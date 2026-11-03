@@ -4,8 +4,8 @@ use kugou::api::KugouApiService;
 use kugou::models::{
     AccountProfile, AlbumItem, DownloadTaskResult, FmChannel, FollowedArtist, GatewayDiagResult,
     KugouSession, LyricData, PhoneLoginOutcome, PlaybackResult, Playlist, PurchasedAlbumItem,
-    PurchasedSongItem, QrCodeSession, QrPollResult, RankItem, Song, SongComment, SongDetailInfo,
-    VipStatusInfo, ViperEffectItem,
+    PurchasedSongItem, QrCodeSession, QrPollResult, RankItem, SharedMusicResolved, Song,
+    SongComment, SongDetailInfo, VipStatusInfo, ViperEffectItem,
 };
 use kugou::store::AppStore;
 use std::sync::Arc;
@@ -78,8 +78,15 @@ async fn logout_account(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn get_account_profile(state: State<'_, AppState>) -> Result<AccountProfile, String> {
-    state.api.fetch_full_profile().await
+async fn get_account_profile(
+    state: State<'_, AppState>,
+    reported_d_sec: Option<i64>,
+    reported_diff_sec: Option<i64>,
+) -> Result<AccountProfile, String> {
+    state
+        .api
+        .fetch_full_profile_with_report(reported_d_sec, reported_diff_sec)
+        .await
 }
 
 #[tauri::command]
@@ -426,6 +433,7 @@ async fn download_song_cmd(
     embed_cover_and_tags: Option<bool>,
     embed_lyrics_in_audio: Option<bool>,
     bilingual_lrc: Option<bool>,
+    skip_existing: Option<bool>,
 ) -> Result<DownloadTaskResult, String> {
     state
         .api
@@ -438,8 +446,17 @@ async fn download_song_cmd(
             embed_cover_and_tags.unwrap_or(true),
             embed_lyrics_in_audio.unwrap_or(true),
             bilingual_lrc.unwrap_or(true),
+            skip_existing.unwrap_or(true),
         )
         .await
+}
+
+#[tauri::command]
+async fn parse_shared_music_cmd(
+    state: State<'_, AppState>,
+    raw_text: String,
+) -> Result<SharedMusicResolved, String> {
+    state.api.parse_shared_music_text(&raw_text).await
 }
 
 #[tauri::command]
@@ -551,6 +568,7 @@ pub fn run() {
             resign_device_cmd,
             diagnose_gateway_cmd,
             download_song_cmd,
+            parse_shared_music_cmd,
             resolve_song_url,
             resolve_song_accompaniment_cmd,
             get_song_detail_info_cmd,

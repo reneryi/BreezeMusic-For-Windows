@@ -6,10 +6,21 @@
         <div class="tuner-eyebrow">CONCEPT MASTERING DESK · 64-BIT LTI DSP ENGINE</div>
         <h2 class="tuner-hero-title">概念版声学调音台</h2>
         <p class="tuner-hero-sub">
-          集成酷狗概念版蝰蛇声学矩阵、10 段参量均衡器 (Parametric EQ) 与三维空间声场工作站 · 后续还将持续扩展专业调音模块
+          集成酷狗概念版蝰蛇声学矩阵、10 段双二阶参量均衡器 (Parametric EQ · 含 96 点对数频响曲线) 与三维空间声场工作站
         </p>
       </div>
       <div class="tuner-hero-right">
+        <button
+          class="frameless-hover-btn"
+          :class="{ 'primary-tint': store.peqBypass }"
+          @click="
+            store.peqBypass = !store.peqBypass;
+            store.syncDspChain();
+          "
+        >
+          <PlumpIcon name="wave" :size="16" />
+          <span>{{ store.peqBypass ? "原音直通对比中 (A/B)" : "A/B 原音对比" }}</span>
+        </button>
         <button
           class="frameless-hover-btn"
           @click="goToRadioPlaza"
@@ -33,23 +44,53 @@
         <div class="block-title-with-tabs">
           <h3 class="block-title">蝰蛇声学矩阵</h3>
           <span class="block-sub-date">/ 概念版官方声学渲染预设</span>
+
+          <div class="bg-choice-pills" style="margin-left: 12px">
+            <button
+              v-for="cat in viperCategories"
+              :key="cat"
+              class="bg-pill-btn"
+              :class="{ active: selectedViperCategory === cat }"
+              @click="selectedViperCategory = cat"
+            >
+              {{ cat }}
+            </button>
+          </div>
         </div>
+
+        <button
+          v-if="store.activeViperEffectId !== 'off'"
+          class="frameless-hover-btn"
+          style="color: var(--coral)"
+          @click="store.applyViperEffect(null)"
+        >
+          <span>关闭蝰蛇音效</span>
+        </button>
       </div>
 
       <div class="tuner-viper-grid">
         <div
-          v-for="vf in store.viperEffects"
+          v-for="vf in filteredViperEffects"
           :key="vf.id"
           class="tuner-viper-card"
           :class="{ active: store.activeViperEffectId === vf.id }"
-          @click="store.applyViperEffect(vf.id)"
+          @click="store.applyViperEffect(vf)"
         >
           <div class="tv-top">
-            <span class="tv-badge">{{ vf.badge }}</span>
+            <span class="tv-badge">{{ vf.usageBadge || vf.badge }}</span>
             <span class="tv-status-dot" :class="{ on: store.activeViperEffectId === vf.id }"></span>
           </div>
-          <h4 class="tv-name">{{ vf.name }}</h4>
+          <h4 class="tv-name">{{ vf.label || vf.name }}</h4>
           <p class="tv-desc">{{ vf.desc }}</p>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px">
+            <span
+              v-for="tag in vf.acousticTags"
+              :key="tag"
+              class="mini-badge hires"
+            >
+              {{ tag }}
+            </span>
+          </div>
         </div>
       </div>
     </section>
@@ -60,7 +101,9 @@
         <div class="tuner-panel-header">
           <div>
             <h3 class="block-title">10 段参量均衡器 (PEQ)</h3>
-            <span class="block-sub-date">Q 值: {{ store.eqQFactor.toFixed(2) }} · 实时双二阶滤波器链路</span>
+            <span class="block-sub-date">
+              Q 值: {{ store.eqQFactor.toFixed(2) }} · 前级: {{ store.masterPreampDb > 0 ? `+${store.masterPreampDb}` : store.masterPreampDb }}dB · 实时双二阶滤波器链路
+            </span>
           </div>
           <div class="tuner-preset-pills">
             <button
@@ -71,6 +114,52 @@
               @click="store.setEqPreset(p.id)"
             >
               <span>{{ p.label }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 实时 96 点对数频率响应包络画布 -->
+        <div class="peq-biquad-curve-box">
+          <svg viewBox="0 0 560 100" preserveAspectRatio="none" class="peq-curve-svg">
+            <defs>
+              <linearGradient id="radioPeqAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#00e5ff" stop-opacity="0.38" />
+                <stop offset="50%" stop-color="#2b8cff" stop-opacity="0.08" />
+                <stop offset="100%" stop-color="#6c5ce7" stop-opacity="0.32" />
+              </linearGradient>
+            </defs>
+            <line x1="0" y1="20" x2="560" y2="20" stroke="rgba(148,163,184,0.14)" stroke-dasharray="3 3" />
+            <line x1="0" y1="50" x2="560" y2="50" stroke="rgba(0,229,255,0.32)" stroke-width="1" />
+            <line x1="0" y1="80" x2="560" y2="80" stroke="rgba(148,163,184,0.14)" stroke-dasharray="3 3" />
+            <path :d="peqResponseCurveSvg.areaPath" fill="url(#radioPeqAreaGrad)" />
+            <path :d="peqResponseCurveSvg.linePath" fill="none" stroke="var(--cyan)" stroke-width="2.4" stroke-linecap="round" />
+          </svg>
+          <div class="peq-curve-overlay-tags">
+            <span>+12dB</span>
+            <span>0dB · 20Hz ~ 20kHz Logarithmic Biquad</span>
+            <span>-12dB</span>
+          </div>
+        </div>
+
+        <!-- 三槽独立调音记忆槽 -->
+        <div class="peq-slots-row">
+          <div
+            v-for="slot in store.peqMemorySlots"
+            :key="slot.slotId"
+            class="peq-slot-pill"
+            :class="{ active: store.activeEqPreset === `slot_${slot.slotId}` }"
+          >
+            <button class="slot-load-btn" @click="store.loadPeqFromSlot(slot.slotId)">
+              <span>记忆槽 {{ slot.slotId }}</span>
+              <small>{{ slot.saved ? "已存" : "空置" }}</small>
+            </button>
+            <button class="slot-mini-act" @click="store.savePeqToSlot(slot.slotId)">存入</button>
+            <button
+              v-if="slot.saved"
+              class="slot-mini-act danger"
+              @click="store.resetSinglePeqSlot(slot.slotId)"
+            >
+              删
             </button>
           </div>
         </div>
@@ -88,12 +177,51 @@
               type="range"
               min="-12"
               max="12"
-              step="0.5"
+              step="0.1"
               :value="store.eqGains[idx]"
               class="tuner-vertical-slider"
               @input="onEqBandInput(idx, $event)"
             />
             <span class="eq-freq-label">{{ freq >= 1000 ? `${freq / 1000}k` : freq }}Hz</span>
+          </div>
+        </div>
+
+        <div class="lyric-sliders-row">
+          <div class="cfg-col">
+            <div class="cfg-label">品质因数 Q 值：{{ store.eqQFactor.toFixed(2) }}</div>
+            <input
+              v-model.number="store.eqQFactor"
+              type="range"
+              min="0.4"
+              max="6.0"
+              step="0.1"
+              class="pb-volume-slider full"
+              @input="store.syncDspChain()"
+            />
+          </div>
+          <div class="cfg-col">
+            <div class="cfg-label">高通滤波 (HPF)：{{ store.eqHighPassHz }} Hz</div>
+            <input
+              v-model.number="store.eqHighPassHz"
+              type="range"
+              min="15"
+              max="180"
+              step="5"
+              class="pb-volume-slider full"
+              @input="store.syncDspChain()"
+            />
+          </div>
+          <div class="cfg-col">
+            <div class="cfg-label">低通滤波 (LPF)：{{ store.eqLowPassHz }} Hz</div>
+            <input
+              v-model.number="store.eqLowPassHz"
+              type="range"
+              min="8000"
+              max="20000"
+              step="500"
+              class="pb-volume-slider full"
+              @input="store.syncDspChain()"
+            />
           </div>
         </div>
       </div>
@@ -103,8 +231,32 @@
         <div class="tuner-panel-header">
           <div>
             <h3 class="block-title">空间声场与倍速变调</h3>
-            <span class="block-sub-date">环绕宽度 · 低频下潜 · 播放速率</span>
+            <span class="block-sub-date">环绕宽度 · 混响模型 · 低频下潜 · 变速升降调</span>
           </div>
+          <label class="plump-switch sm">
+            <input
+              v-model="store.acousticField.enabled"
+              type="checkbox"
+              @change="store.syncDspChain()"
+            />
+            <span class="plump-slider"></span>
+          </label>
+        </div>
+
+        <div class="bg-choice-pills">
+          <button
+            v-for="rv in reverbPresets"
+            :key="rv.id"
+            class="bg-pill-btn"
+            :class="{ active: store.acousticField.reverbPreset === rv.id }"
+            @click="
+              store.acousticField.enabled = true;
+              store.acousticField.reverbPreset = rv.id;
+              store.syncDspChain();
+            "
+          >
+            {{ rv.label }}
+          </button>
         </div>
 
         <div class="tuner-knob-rows">
@@ -116,7 +268,7 @@
             <input
               v-model.number="store.acousticField.stereoWidth"
               type="range"
-              min="0"
+              min="0.5"
               max="2"
               step="0.05"
               class="pb-volume-slider full"
@@ -126,34 +278,61 @@
 
           <div class="tuner-slider-row">
             <div class="tsr-label">
-              <span>空间混响纵深 (Reverb Mix)</span>
-              <strong>{{ Math.round(store.acousticField.reverbMix * 100) }}%</strong>
+              <span>空间混响湿度与纵深 (Reverb &amp; Stage Depth)</span>
+              <strong>{{ store.acousticField.reverbWetPercent }}%</strong>
             </div>
             <input
-              v-model.number="store.acousticField.reverbMix"
+              v-model.number="store.acousticField.reverbWetPercent"
               type="range"
               min="0"
-              max="1"
-              step="0.02"
+              max="100"
+              step="1"
               class="pb-volume-slider full"
-              @input="enableAcousticAndSync"
+              @input="onReverbWetChange"
             />
           </div>
 
           <div class="tuner-slider-row">
             <div class="tsr-label">
-              <span>超重低音谐波激励 (Sub-Bass Punch)</span>
-              <strong>+{{ store.acousticField.bassBoostDb.toFixed(1) }} dB</strong>
+              <span>超重低音下潜与谐波激励 ({{ store.acousticField.bassCrossoverHz }}Hz)</span>
+              <strong>{{ store.acousticField.subBassDepth }}%</strong>
             </div>
             <input
-              v-model.number="store.acousticField.bassBoostDb"
+              v-model.number="store.acousticField.subBassDepth"
               type="range"
               min="0"
-              max="12"
-              step="0.5"
+              max="100"
+              step="1"
               class="pb-volume-slider full"
-              @input="enableAcousticAndSync"
+              @input="onSubBassChange"
             />
+          </div>
+
+          <div class="tuner-slider-row">
+            <div class="tsr-label">
+              <span>人声结像通透度 &amp; 12kHz+ 空气泛音</span>
+              <strong>{{ store.acousticField.vocalClarity }}% / {{ store.acousticField.airHarmonics }}%</strong>
+            </div>
+            <div style="display: flex; gap: 10px">
+              <input
+                v-model.number="store.acousticField.vocalClarity"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                class="pb-volume-slider full"
+                @input="enableAcousticAndSync"
+              />
+              <input
+                v-model.number="store.acousticField.airHarmonics"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                class="pb-volume-slider full"
+                @input="enableAcousticAndSync"
+              />
+            </div>
           </div>
 
           <div class="tuner-slider-row">
@@ -194,20 +373,95 @@
 </template>
 
 <script setup lang="ts">
+import { computed, ref } from "vue";
 import { useAppStore } from "../stores/appStore";
+import type { ReverbPresetId } from "../types";
 import PlumpIcon from "../components/PlumpIcon.vue";
 
 const store = useAppStore();
+const selectedViperCategory = ref<string>("全部");
+const viperCategories = ["全部", "官方旗舰", "3D空间", "复古介质", "曲风人声"];
+
+const filteredViperEffects = computed(() => {
+  if (selectedViperCategory.value === "全部") return store.viperEffects;
+  return store.viperEffects.filter(
+    (v) => v.category === selectedViperCategory.value
+  );
+});
 
 const eqPresets = [
-  { id: "flat", label: "平直原音" },
+  { id: "flat", label: "监听平直" },
+  { id: "harman", label: "哈曼曲线" },
+  { id: "diffuse_field", label: "弥散场" },
+  { id: "vocal_velvet", label: "人声丝绒" },
+  { id: "hifi_sub", label: "HiFi 低音" },
+  { id: "acg_bright", label: "ACG 空气" },
   { id: "pop", label: "清澈流行" },
   { id: "rock", label: "现场摇滚" },
-  { id: "classical", label: "古典交响" },
-  { id: "jazz", label: "微醺爵士" },
-  { id: "vocal", label: "人声特写" },
-  { id: "bass", label: "深海低音" },
 ];
+
+const reverbPresets: { id: ReverbPresetId; label: string }[] = [
+  { id: "none", label: "无混响" },
+  { id: "small_room", label: "小型房间" },
+  { id: "medium_room", label: "中型房间" },
+  { id: "large_room", label: "大型场馆" },
+  { id: "medium_hall", label: "音乐大厅" },
+  { id: "large_hall", label: "混响礼堂" },
+  { id: "plate", label: "录音室板式" },
+];
+
+// 96 点对数频率响应曲线计算
+const peqResponseCurveSvg = computed(() => {
+  const width = 560;
+  const height = 100;
+  const midY = height / 2;
+  const numPoints = 96;
+  const logMin = Math.log10(20);
+  const logMax = Math.log10(20000);
+
+  const freqs = store.eqFrequencies;
+  const gains = store.eqGains;
+  const qBase = Math.max(0.4, store.eqQFactor || 1.41);
+  const hpf = store.eqHighPassHz || 20;
+  const lpf = store.eqLowPassHz || 20000;
+  const bypass = store.peqBypass;
+
+  const pts: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < numPoints; i++) {
+    const ratio = i / (numPoints - 1);
+    const f = Math.pow(10, logMin + ratio * (logMax - logMin));
+    let totalDb = 0;
+
+    if (!bypass) {
+      for (let b = 0; b < freqs.length; b++) {
+        const fc = freqs[b];
+        const g = gains[b] || 0;
+        if (Math.abs(g) < 0.01) continue;
+        const octDist = Math.log2(f / fc);
+        const bw = 1.0 / qBase;
+        const bell = Math.exp(-(octDist * octDist) / (2 * bw * bw));
+        totalDb += g * bell;
+      }
+      if (f < hpf) {
+        totalDb -= Math.min(14, Math.log2(hpf / f) * 9);
+      }
+      if (f > lpf) {
+        totalDb -= Math.min(14, Math.log2(f / lpf) * 9);
+      }
+    }
+
+    const clampedDb = Math.max(-13, Math.min(13, totalDb));
+    const x = Number((ratio * width).toFixed(1));
+    const y = Number((midY - (clampedDb / 13) * (midY - 8)).toFixed(1));
+    pts.push({ x, y });
+  }
+
+  const linePath = pts
+    .map((p, idx) => `${idx === 0 ? "M" : "L"}${p.x},${p.y}`)
+    .join(" ");
+  const areaPath = `${linePath} L${width},${midY} L0,${midY} Z`;
+  return { linePath, areaPath };
+});
 
 function onEqBandInput(idx: number, e: Event) {
   const val = parseFloat((e.target as HTMLInputElement).value);
@@ -216,6 +470,21 @@ function onEqBandInput(idx: number, e: Event) {
 
 function enableAcousticAndSync() {
   store.acousticField.enabled = true;
+  store.syncDspChain();
+}
+
+function onReverbWetChange() {
+  store.acousticField.enabled = true;
+  store.acousticField.reverbMix = Number((store.acousticField.reverbWetPercent / 100).toFixed(2));
+  if (store.acousticField.reverbWetPercent > 0 && store.acousticField.reverbPreset === "none") {
+    store.acousticField.reverbPreset = "medium_hall";
+  }
+  store.syncDspChain();
+}
+
+function onSubBassChange() {
+  store.acousticField.enabled = true;
+  store.acousticField.bassBoostDb = Number(((store.acousticField.subBassDepth / 100) * 9).toFixed(1));
   store.syncDspChain();
 }
 
@@ -230,12 +499,8 @@ function onPitchChange(e: Event) {
 }
 
 function resetAllTuning() {
-  store.applyViperEffect("off");
-  store.setEqPreset("flat");
-  store.acousticField.enabled = false;
-  store.acousticField.stereoWidth = 1.0;
-  store.acousticField.reverbMix = 0;
-  store.acousticField.bassBoostDb = 0;
+  store.applyViperEffect(null);
+  store.resetAllPeqSlots();
   store.setPlaybackSpeed(1.0);
   store.setPitchSemitones(0);
   store.syncDspChain();

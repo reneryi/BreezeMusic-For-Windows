@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { useAppStore } from "../stores/appStore";
+import { formatDuration } from "../api/kugou";
 import PlumpIcon from "../components/PlumpIcon.vue";
 
 const store = useAppStore();
 
-function formatDuration(ms: number): string {
-  if (!ms || ms <= 0) return "03:30";
-  const sec = Math.floor(ms / 1000);
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+function openSearchedPlaylist(pl: any) {
+  store.activeTab = "library";
+  store.libraryAssetTab = "collected";
+  store.libraryDetailMode = "playlist";
+  store.selectPlaylist(pl);
 }
 </script>
 
@@ -20,8 +20,15 @@ function formatDuration(ms: number): string {
         <h3 class="block-title">检索词：「{{ store.searchKeyword || "热搜漫游" }}」</h3>
       </div>
 
-      <!-- 四维分类胶囊切换 -->
+      <!-- 五维分类胶囊切换（对齐 Android SearchViewModel：综合 / 单曲 / 歌单 / 专辑 / 歌手） -->
       <div class="pill-tabs">
+        <button
+          class="pill-tab-btn"
+          :class="{ active: store.searchCategoryTab === 'all' }"
+          @click="store.searchCategoryTab = 'all'"
+        >
+          综合
+        </button>
         <button
           class="pill-tab-btn"
           :class="{ active: store.searchCategoryTab === 'songs' }"
@@ -70,6 +77,201 @@ function formatDuration(ms: number): string {
       正在检索酷狗概念版无损曲库并补全 Hi-Res / SQ 音质标签...
     </div>
 
+    <!-- 0. 综合智能意图结果页（Artist Hero + 精选单曲 + 专辑 + 歌单） -->
+    <div
+      v-else-if="store.searchCategoryTab === 'all'"
+      class="search-comprehensive-grid"
+    >
+      <!-- 意图命中歌手卡片 -->
+      <div
+        v-if="store.searchResultsArtists.length > 0"
+        class="search-intent-artist-hero"
+        @click="
+          store.openArtistDetail(
+            store.searchResultsArtists[0].artistId,
+            store.searchResultsArtists[0].name,
+            store.searchResultsArtists[0].avatarUrl
+          )
+        "
+      >
+        <div style="display: flex; align-items: center; gap: 16px">
+          <img
+            v-if="store.searchResultsArtists[0].avatarUrl"
+            :src="store.searchResultsArtists[0].avatarUrl"
+            class="ldh-avatar"
+            style="width: 68px; height: 68px"
+          />
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px">
+              <span style="font-size: 20px; font-weight: 900">
+                {{ store.searchResultsArtists[0].name }}
+              </span>
+              <span class="mini-badge sq">最佳匹配音乐人</span>
+            </div>
+            <div style="font-size: 13.5px; color: var(--text-secondary); margin-top: 4px">
+              单曲 {{ store.searchResultsArtists[0].songCount || 30 }} 首 · 点击进入歌手主页与百科
+            </div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px" @click.stop>
+          <button
+            class="tonal-pill-btn sm primary"
+            @click="store.toggleFollowArtist(store.searchResultsArtists[0])"
+          >
+            {{ store.searchResultsArtists[0].isFollowed ? "已关注" : "关注歌手" }}
+          </button>
+          <button
+            class="primary-btn"
+            style="padding: 8px 16px; font-size: 14px"
+            @click="
+              store.openArtistDetail(
+                store.searchResultsArtists[0].artistId,
+                store.searchResultsArtists[0].name,
+                store.searchResultsArtists[0].avatarUrl
+              )
+            "
+          >
+            <span>查看代表作</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 热门单曲 Top 8 -->
+      <section v-if="store.searchResultsSongs.length > 0">
+        <div class="block-header" style="margin-bottom: 10px">
+          <div class="block-title-row">
+            <h4 class="block-title" style="font-size: 18.5px">单曲精选</h4>
+          </div>
+          <button
+            class="tonal-pill-btn sm"
+            @click="store.searchCategoryTab = 'songs'"
+          >
+            查看全部 {{ store.searchResultsSongs.length }} 首 >
+          </button>
+        </div>
+        <div class="dual-column-song-grid">
+          <div
+            v-for="(song, idx) in store.searchResultsSongs.slice(0, 8)"
+            :key="song.hash || song.id"
+            class="plump-song-card"
+            :class="{
+              'track-card-playing': store.currentSong?.hash === song.hash,
+            }"
+            @click="
+              store.playSongFromList(
+                song,
+                store.searchResultsSongs,
+                `搜索：${store.searchKeyword}`
+              )
+            "
+            @contextmenu.prevent="
+              store.openSongContextMenu($event, song, store.searchResultsSongs)
+            "
+          >
+            <div class="psc-index">
+              <PlumpIcon
+                v-if="store.currentSong?.hash === song.hash"
+                name="wave"
+                :size="16"
+                color="var(--cyan)"
+              />
+              <span v-else>{{ String(idx + 1).padStart(2, "0") }}</span>
+            </div>
+            <img
+              v-if="song.coverUrl"
+              :src="song.coverUrl"
+              class="psc-cover"
+              loading="lazy"
+            />
+            <div v-else class="psc-cover-fallback">
+              <PlumpIcon name="disc" :size="18" />
+            </div>
+            <div class="psc-main">
+              <div class="psc-title">{{ song.title }}</div>
+              <div class="psc-sub">
+                <span v-if="song.isHiRes || song.hasHiRes" class="mini-badge hires">Hi-Res</span>
+                <span v-else-if="song.isLossless || song.hasSq" class="mini-badge sq">SQ</span>
+                <span v-if="song.isVip" class="mini-badge vip">VIP</span>
+                <span>{{ song.artist }}</span>
+                <span v-if="song.album" class="psc-album">· {{ song.album }}</span>
+              </div>
+            </div>
+            <div class="psc-dur">{{ formatDuration(song) }}</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 专辑与歌单双栏预览 -->
+      <section v-if="store.searchResultsAlbums.length > 0">
+        <div class="block-header" style="margin-bottom: 10px">
+          <h4 class="block-title" style="font-size: 18.5px">相关数字专辑</h4>
+          <button
+            class="tonal-pill-btn sm"
+            @click="store.searchCategoryTab = 'albums'"
+          >
+            更多专辑 >
+          </button>
+        </div>
+        <div class="album-cards-grid">
+          <div
+            v-for="alb in store.searchResultsAlbums.slice(0, 6)"
+            :key="alb.albumId"
+            class="plump-album-card"
+            @click="
+              store.openAlbumDetail(
+                alb.albumId,
+                alb.albumName,
+                alb.artistName,
+                alb.coverUrl
+              )
+            "
+          >
+            <img v-if="alb.coverUrl" :src="alb.coverUrl" class="palb-cover" />
+            <div class="palb-info">
+              <div class="palb-name">{{ alb.albumName }}</div>
+              <div class="palb-sub">
+                {{ alb.artistName }} · {{ alb.publishDate || "数字发行" }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="store.searchResultsPlaylists.length > 0">
+        <div class="block-header" style="margin-bottom: 10px">
+          <h4 class="block-title" style="font-size: 18.5px">精选概念歌单</h4>
+          <button
+            class="tonal-pill-btn sm"
+            @click="store.searchCategoryTab = 'playlists'"
+          >
+            更多歌单 >
+          </button>
+        </div>
+        <div class="album-cards-grid">
+          <div
+            v-for="pl in store.searchResultsPlaylists.slice(0, 6)"
+            :key="pl.id"
+            class="plump-album-card"
+            @click="openSearchedPlaylist(pl)"
+          >
+            <img v-if="pl.coverUrl" :src="pl.coverUrl" class="palb-cover" />
+            <div class="palb-info">
+              <div class="palb-name">{{ pl.title }}</div>
+              <div class="palb-sub">
+                {{ pl.trackCount }} 首 · {{ pl.creatorName || "概念歌单" }}
+              </div>
+            </div>
+            <button
+              class="tonal-pill-btn sm"
+              @click.stop="store.toggleCollectPlaylist(pl)"
+            >
+              {{ store.isPlaylistCollected(pl) ? "已收藏" : "收藏" }}
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+
     <!-- 1. 单曲结果（桌面双列无框软润卡片） -->
     <div
       v-else-if="store.searchCategoryTab === 'songs'"
@@ -89,7 +291,7 @@ function formatDuration(ms: number): string {
             `搜索：${store.searchKeyword}`
           )
         "
-        @contextmenu="store.openSongContextMenu($event, song)"
+        @contextmenu.prevent="store.openSongContextMenu($event, song, store.searchResultsSongs)"
       >
         <div class="psc-index">
           <PlumpIcon
@@ -112,14 +314,14 @@ function formatDuration(ms: number): string {
         <div class="psc-main">
           <div class="psc-title">{{ song.title }}</div>
           <div class="psc-sub">
-            <span v-if="song.isHiRes" class="mini-badge hires">Hi-Res</span>
-            <span v-else-if="song.isLossless" class="mini-badge sq">SQ</span>
+            <span v-if="song.isHiRes || song.hasHiRes" class="mini-badge hires">Hi-Res</span>
+            <span v-else-if="song.isLossless || song.hasSq" class="mini-badge sq">SQ</span>
             <span v-if="song.isVip" class="mini-badge vip">VIP</span>
             <span>{{ song.artist }}</span>
             <span v-if="song.album" class="psc-album">· {{ song.album }}</span>
           </div>
         </div>
-        <div class="psc-dur">{{ formatDuration(song.durationMs) }}</div>
+        <div class="psc-dur">{{ formatDuration(song) }}</div>
       </div>
     </div>
 
@@ -132,11 +334,7 @@ function formatDuration(ms: number): string {
         v-for="pl in store.searchResultsPlaylists"
         :key="pl.id"
         class="plump-album-card"
-        @click="
-          store.activeTab = 'library';
-          store.libraryAssetTab = 'collected';
-          store.selectPlaylist(pl);
-        "
+        @click="openSearchedPlaylist(pl)"
       >
         <img v-if="pl.coverUrl" :src="pl.coverUrl" class="palb-cover" />
         <div class="palb-info">

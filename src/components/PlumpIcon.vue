@@ -4,7 +4,7 @@
  * 严格对齐 Android 端 NowPlayingCanvasControls.kt 设计哲学：
  * 1. 彻底摒弃细线条线框 (Wireframe) 的干瘪感；
  * 2. 采用大圆角贝塞尔饱满填充 (Plump Filled Shapes) + 3.0px 超粗圆头流体笔画 + 双色柔光层叠 (Duotone Soft Layer)；
- * 3. 支持播放/暂停圆润三角与胶囊双柱、饱满红心、双色声波、歌词牌、海报星芒、天际线导航等全场景图标。
+ * 3. 支持播放/暂停圆润三角与胶囊双柱、饱满红心、双色声波、歌词牌、海报星芒、天际线导航、分享、链接、置顶等全场景图标。
  */
 withDefaults(
   defineProps<{
@@ -183,7 +183,7 @@ withDefaults(
     </template>
 
     <!-- 12. 母带声波 / 蝰蛇音效 (对齐 PlumpAudioWaveCanvasIcon 4根胶囊声柱) -->
-    <template v-else-if="name === 'wave' || name === 'sliders'">
+    <template v-else-if="name === 'wave' || name === 'sliders' || name === 'waveform'">
       <rect x="3.4" y="7.5" width="3.2" height="9" rx="1.6" :fill="color" />
       <rect x="8.1" y="3.5" width="3.2" height="17" rx="1.6" :fill="accent" />
       <rect x="12.8" y="6.0" width="3.2" height="12" rx="1.6" :fill="color" />
@@ -295,8 +295,8 @@ withDefaults(
       <circle cx="18.5" cy="12" r="2.2" :fill="color" />
     </template>
 
-    <!-- 19. 列表循环 / 单曲循环 / 随机播放 (对齐 AnimatedPlayModeButton) -->
-    <template v-else-if="name === 'repeat-all'">
+    <!-- 19. 列表循环 / 单曲循环 / 随机播放 / 顺序播放 (对齐 AnimatedPlayModeButton) -->
+    <template v-else-if="name === 'repeat-all' || name === 'repeat'">
       <path
         d="M5 9C5 6.8 6.8 5 9 5H17.5M17.5 5L15 2.8M17.5 5L15 7.2M19 15C19 17.2 17.2 19 15 19H6.5M6.5 19L9 16.8M6.5 19L9 21.2"
         :stroke="color"
@@ -336,6 +336,17 @@ withDefaults(
         stroke-linejoin="round"
       />
     </template>
+    <template v-else-if="name === 'sequence'">
+      <rect x="3.5" y="6.5" width="11.5" height="3.2" rx="1.6" :fill="color" />
+      <rect x="3.5" y="14.3" width="11.5" height="3.2" rx="1.6" :fill="color" fill-opacity="0.7" />
+      <path
+        d="M16.5 8.5L20 12L16.5 15.5"
+        :stroke="accent"
+        stroke-width="2.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </template>
 
     <!-- 20. 刷新同步 (流体圆弧双箭头) -->
     <template v-else-if="name === 'refresh'">
@@ -367,7 +378,7 @@ withDefaults(
     </template>
 
     <!-- 22. 历史时钟 / 番茄钟 -->
-    <template v-else-if="name === 'history' || name === 'timer'">
+    <template v-else-if="name === 'history' || name === 'timer' || name === 'clock'">
       <circle cx="12" cy="12" r="9.2" :fill="color" fill-opacity="0.2" />
       <circle cx="12" cy="12" r="8.2" :stroke="color" stroke-width="2.5" />
       <path
@@ -395,7 +406,7 @@ withDefaults(
     </template>
 
     <!-- 24. 黑胶唱片 (饱满双环黑胶) -->
-    <template v-else-if="name === 'disc'">
+    <template v-else-if="name === 'disc' || name === 'vinyl'">
       <circle cx="12" cy="12" r="9.5" :fill="color" fill-opacity="0.26" />
       <circle cx="12" cy="12" r="8.5" :stroke="color" stroke-width="2.4" />
       <circle cx="12" cy="12" r="3.4" :fill="accent" />
@@ -416,7 +427,7 @@ withDefaults(
       />
     </template>
 
-    <!-- 26. 下载 / 导入 / 文件夹 / 盾牌 -->
+    <!-- 26. 下载 / 导入 / 文件夹 / 盾牌 / 分享 / 链接 -->
     <template v-else-if="name === 'download'">
       <rect
         x="4"
@@ -453,6 +464,40 @@ withDefaults(
         stroke-linejoin="round"
       />
     </template>
+    <template v-else-if="name === 'share'">
+      <circle cx="17.5" cy="5.5" r="3.2" :fill="accent" />
+      <circle cx="6.2" cy="12" r="3.2" :fill="color" />
+      <circle cx="17.5" cy="18.5" r="3.2" :fill="color" />
+      <path
+        d="M8.9 10.5L14.8 7.0M8.9 13.5L14.8 17.0"
+        :stroke="color"
+        stroke-width="2.6"
+        stroke-linecap="round"
+      />
+    </template>
+    <template v-else-if="name === 'link'">
+      <path
+        d="M10 13.8C11.2 15.0 13.2 15.0 14.4 13.8L17.6 10.6C18.8 9.4 18.8 7.4 17.6 6.2C16.4 5.0 14.4 5.0 13.2 6.2L11.8 7.6"
+        :stroke="color"
+        stroke-width="2.8"
+        stroke-linecap="round"
+      />
+      <path
+        d="M14 10.2C12.8 9.0 10.8 9.0 9.6 10.2L6.4 13.4C5.2 14.6 5.2 16.6 6.4 17.8C7.6 19.0 9.6 19.0 10.8 17.8L12.2 16.4"
+        :stroke="accent"
+        stroke-width="2.8"
+        stroke-linecap="round"
+      />
+    </template>
+    <template v-else-if="name === 'copy'">
+      <rect x="8.2" y="8.2" width="11.6" height="11.6" rx="3.4" :fill="color" fill-opacity="0.24" :stroke="color" stroke-width="2.4" />
+      <path
+        d="M5.2 15.2H4.8C3.8 15.2 3 14.4 3 13.4V5.8C3 4.8 3.8 4 4.8 4H12.4C13.4 4 14.2 4.8 14.2 5.8V6.2"
+        :stroke="accent"
+        stroke-width="2.6"
+        stroke-linecap="round"
+      />
+    </template>
     <template v-else-if="name === 'shield'">
       <path
         d="M12 2.8L4.5 6.0V11.6C4.5 16.5 7.7 20.8 12 22.2C16.3 20.8 19.5 16.5 19.5 11.6V6.0L12 2.8Z"
@@ -471,13 +516,28 @@ withDefaults(
       />
     </template>
 
-    <!-- 27. 基础方向、加号、网格、列表、关闭 -->
+    <!-- 27. 基础方向、加号、网格、列表、关闭、置顶 -->
     <template v-else-if="name === 'plus'">
       <path
         d="M12 5V19M5 12H19"
         :stroke="color"
         stroke-width="3.1"
         stroke-linecap="round"
+      />
+    </template>
+    <template v-else-if="name === 'top' || name === 'pin-top'">
+      <path
+        d="M6 4.5H18"
+        :stroke="accent"
+        stroke-width="2.9"
+        stroke-linecap="round"
+      />
+      <path
+        d="M12 19.5V8.5M12 8.5L7.5 13M12 8.5L16.5 13"
+        :stroke="color"
+        stroke-width="2.9"
+        stroke-linecap="round"
+        stroke-linejoin="round"
       />
     </template>
     <template v-else-if="name === 'back' || name === 'arrow-left'">
@@ -536,16 +596,7 @@ withDefaults(
         stroke-linejoin="round"
       />
     </template>
-    <template v-else-if="name === 'repeat'">
-      <path
-        d="M5 9C5 6.8 6.8 5 9 5H17.5M17.5 5L15 2.8M17.5 5L15 7.2M19 15C19 17.2 17.2 19 15 19H6.5M6.5 19L9 16.8M6.5 19L9 21.2"
-        :stroke="color"
-        stroke-width="2.7"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-    </template>
-    <template v-else-if="name === 'sparkle'">
+    <template v-else-if="name === 'sparkle' || name === 'climax'">
       <path
         d="M12 2.8L14.3 9.2L20.8 11.5L14.3 13.8L12 20.2L9.7 13.8L3.2 11.5L9.7 9.2L12 2.8Z"
         :fill="color"
@@ -612,16 +663,6 @@ withDefaults(
         :fill="color"
       />
     </template>
-    <template v-else-if="name === 'clock'">
-      <circle cx="12" cy="12" r="8.8" :stroke="color" stroke-width="2.6" />
-      <path
-        d="M12 7.5V12.2L15.2 14.2"
-        :stroke="accent"
-        stroke-width="2.6"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-    </template>
     <template v-else-if="name === 'folder'">
       <path
         d="M3.2 7.4C3.2 5.9 4.4 4.8 5.8 4.8H9.4L11.5 7.1H18.2C19.6 7.1 20.8 8.3 20.8 9.7V16.8C20.8 18.2 19.6 19.4 18.2 19.4H5.8C4.4 19.4 3.2 18.2 3.2 16.8V7.4Z"
@@ -639,6 +680,21 @@ withDefaults(
         stroke-linecap="round"
         stroke-linejoin="round"
       />
+    </template>
+    <template v-else-if="name === 'lock'">
+      <rect x="4.5" y="10.2" width="15" height="10.5" rx="3.6" :fill="color" fill-opacity="0.26" :stroke="color" stroke-width="2.4" />
+      <path d="M8 10.2V7.2C8 5.0 9.8 3.2 12 3.2C14.2 3.2 16 5.0 16 7.2V10.2" :stroke="accent" stroke-width="2.6" stroke-linecap="round" />
+      <circle cx="12" cy="15.4" r="1.6" :fill="accent" />
+    </template>
+    <template v-else-if="name === 'unlock'">
+      <rect x="4.5" y="10.2" width="15" height="10.5" rx="3.6" :fill="color" fill-opacity="0.22" :stroke="color" stroke-width="2.4" />
+      <path d="M8 10.2V7.2C8 5.0 9.8 3.2 12 3.2C13.9 3.2 15.5 4.5 15.9 6.2" :stroke="accent" stroke-width="2.6" stroke-linecap="round" />
+      <circle cx="12" cy="15.4" r="1.6" :fill="color" />
+    </template>
+    <template v-else-if="name === 'image'">
+      <rect x="3.2" y="4.2" width="17.6" height="15.6" rx="4.2" :fill="color" fill-opacity="0.2" :stroke="color" stroke-width="2.3" />
+      <circle cx="8.6" cy="9.2" r="2.0" :fill="accent" />
+      <path d="M4.5 17.5L10.2 12.2L13.8 15.4L16.4 13.0L19.8 16.8" :stroke="color" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
     </template>
     <!-- 28. 侧边栏收起 / 展开专属双色 UI 图标 -->
     <template v-else-if="name === 'sidebar-collapse'">

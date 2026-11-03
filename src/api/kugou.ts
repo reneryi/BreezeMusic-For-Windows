@@ -16,6 +16,7 @@ import type {
   QrCodeSession,
   QrPollResult,
   RankItem,
+  SharedMusicResolved,
   Song,
   SongComment,
   SongDetailInfo,
@@ -23,10 +24,22 @@ import type {
   ViperEffectItem,
 } from "../types";
 
-function normSong(s: Song): Song {
+export function normSong(s: Song): Song {
+  const durMs =
+    s.durationMs && s.durationMs > 0
+      ? s.durationMs < 10000
+        ? s.durationMs * 1000
+        : s.durationMs
+      : s.durationSeconds && s.durationSeconds > 0
+      ? s.durationSeconds * 1000
+      : 0;
   return {
     ...s,
-    durationSeconds: s.durationSeconds ?? Math.floor((s.durationMs || 0) / 1000),
+    durationMs: durMs,
+    durationSeconds: s.durationSeconds ?? Math.floor(durMs / 1000),
+    albumAudioId: Number(s.albumAudioId) || 0,
+    audioId: Number(s.audioId) || 0,
+    fileId: Number(s.fileId) || 0,
     hasHiRes: s.hasHiRes ?? Boolean(s.isHiRes || s.hashHiRes),
     hasSq: s.hasSq ?? Boolean(s.isLossless || s.hashFlac),
     hasHighQuality: s.hasHighQuality ?? Boolean(s.hash320 || s.size320 > 0),
@@ -44,6 +57,7 @@ function normPlaylist(p: Playlist): Playlist {
     ...p,
     name: p.name || p.title,
     title: p.title || p.name || "",
+    listId: Number(p.listId) || 0,
   };
 }
 
@@ -146,8 +160,14 @@ export const kugouClient = {
   },
 
   /** 获取当前账号详细资料、听歌等级与权威累计听歌时长 (d_sec) */
-  async getAccountProfile(): Promise<AccountProfile> {
-    const p = await invoke<AccountProfile>("get_account_profile");
+  async getAccountProfile(
+    reportedDSec?: number,
+    reportedDiffSec?: number
+  ): Promise<AccountProfile> {
+    const p = await invoke<AccountProfile>("get_account_profile", {
+      reportedDSec: reportedDSec ?? null,
+      reportedDiffSec: reportedDiffSec ?? null,
+    });
     return normProfile(p);
   },
 
@@ -173,7 +193,7 @@ export const kugouClient = {
     return normSongs(await invoke<Song[]>("get_personal_fm"));
   },
 
-  /** 获取新歌速递（CHINESE / WESTERN / JPKR / CANTON / TODAY） */
+  /** 获取新歌速递（CHINESE / WESTERN / JPKR / CANTON / TODAY / ALL） */
   async getNewSongExpress(periodKey = "CHINESE"): Promise<Song[]> {
     return normSongs(await invoke<Song[]>("get_new_song_express", { periodKey }));
   },
@@ -259,22 +279,22 @@ export const kugouClient = {
 
   /** 收藏外部歌单至云端 */
   collectPlaylist(playlist: Playlist): Promise<boolean> {
-    return invoke<boolean>("collect_playlist_cmd", { playlist });
+    return invoke<boolean>("collect_playlist_cmd", { playlist: normPlaylist(playlist) });
   },
 
   /** 取消收藏云端歌单 */
   uncollectPlaylist(playlist: Playlist): Promise<boolean> {
-    return invoke<boolean>("uncollect_playlist_cmd", { playlist });
+    return invoke<boolean>("uncollect_playlist_cmd", { playlist: normPlaylist(playlist) });
   },
 
   /** 添加歌曲到指定歌单 */
   addSongToPlaylist(listId: number, song: Song): Promise<boolean> {
-    return invoke<boolean>("add_song_to_playlist_cmd", { listId, song });
+    return invoke<boolean>("add_song_to_playlist_cmd", { listId, song: normSong(song) });
   },
 
   /** 从自建歌单中移除单曲 */
   removeSongFromPlaylist(listId: number, song: Song): Promise<boolean> {
-    return invoke<boolean>("remove_song_from_playlist_cmd", { listId, song });
+    return invoke<boolean>("remove_song_from_playlist_cmd", { listId, song: normSong(song) });
   },
 
   /** 获取已关注歌手列表 */
@@ -347,7 +367,7 @@ export const kugouClient = {
     page = 1
   ): Promise<SongComment[]> {
     return invoke<SongComment[]>("get_song_comments_cmd", {
-      song,
+      song: normSong(song),
       sortType,
       page,
     });
@@ -361,7 +381,7 @@ export const kugouClient = {
     page = 1
   ): Promise<SongComment[]> {
     return invoke<SongComment[]>("get_comment_floor_replies_cmd", {
-      song,
+      song: normSong(song),
       commentId,
       specialChildId,
       page,
@@ -375,7 +395,7 @@ export const kugouClient = {
     like: boolean
   ): Promise<boolean> {
     return invoke<boolean>("like_song_comment_cmd", {
-      song,
+      song: normSong(song),
       commentId,
       like,
     });
@@ -388,7 +408,7 @@ export const kugouClient = {
     replyToId?: string
   ): Promise<SongComment> {
     return invoke<SongComment>("post_song_comment_cmd", {
-      song,
+      song: normSong(song),
       content,
       replyToId: replyToId ?? null,
     });
@@ -413,10 +433,11 @@ export const kugouClient = {
     exportLrc = true,
     embedCoverAndTags = true,
     embedLyricsInAudio = true,
-    bilingualLrc = true
+    bilingualLrc = true,
+    skipExisting = true
   ): Promise<DownloadTaskResult> {
     return invoke<DownloadTaskResult>("download_song_cmd", {
-      song,
+      song: normSong(song),
       preferredQuality,
       musicDir,
       lrcDir,
@@ -424,7 +445,20 @@ export const kugouClient = {
       embedCoverAndTags,
       embedLyricsInAudio,
       bilingualLrc,
+      skipExisting,
     });
+  },
+
+  /** 解析酷狗分享链接、口令、集合 ID 或外部歌单文本 */
+  async parseSharedMusic(rawText: string): Promise<SharedMusicResolved> {
+    const res = await invoke<SharedMusicResolved>("parse_shared_music_cmd", {
+      rawText,
+    });
+    return {
+      ...res,
+      song: res.song ? normSong(res.song) : null,
+      songs: normSongs(res.songs || []),
+    };
   },
 
   /** 解析歌曲真实播放音源 URL + 硬件级 STREAMINFO 采样率/位深探测 */
@@ -433,7 +467,7 @@ export const kugouClient = {
     preferredQuality = "flac"
   ): Promise<PlaybackResult> {
     const res = await invoke<PlaybackResult>("resolve_song_url", {
-      song,
+      song: normSong(song),
       preferredQuality,
     });
     return {
@@ -444,7 +478,9 @@ export const kugouClient = {
 
   /** 解析歌曲 KTV 伴奏音轨 URL */
   async resolveSongAccompaniment(song: Song): Promise<PlaybackResult> {
-    const res = await invoke<PlaybackResult>("resolve_song_accompaniment_cmd", { song });
+    const res = await invoke<PlaybackResult>("resolve_song_accompaniment_cmd", {
+      song: normSong(song),
+    });
     return {
       ...res,
       matchedQuality: res.matchedQuality || res.actualQuality,
@@ -453,7 +489,9 @@ export const kugouClient = {
 
   /** 获取单曲完整技术参数与唱片公司详情 */
   getSongDetailInfo(song: Song): Promise<SongDetailInfo> {
-    return invoke<SongDetailInfo>("get_song_detail_info_cmd", { song });
+    return invoke<SongDetailInfo>("get_song_detail_info_cmd", {
+      song: normSong(song),
+    });
   },
 
   /** CSCC 三段式真实听歌时长与云端历史遥测上报 */
@@ -463,7 +501,7 @@ export const kugouClient = {
     playedDurationMs = 0
   ): Promise<boolean> {
     return invoke<boolean>("report_playback_telemetry_cmd", {
-      song,
+      song: normSong(song),
       isStart,
       playedDurationMs,
     });
@@ -481,15 +519,31 @@ export const kugouClient = {
 
   /** 获取并解密 KRC/LRC 歌词 */
   getSongLyric(song: Song): Promise<LyricData> {
-    return invoke<LyricData>("get_song_lyric", { song });
+    return invoke<LyricData>("get_song_lyric", { song: normSong(song) });
   },
 };
 
-/** 格式化时长（兼容秒数或毫秒数） */
-export function formatDuration(val?: number | null): string {
-  if (!val || val <= 0 || !Number.isFinite(val)) return "00:00";
-  const totalSec = val > 10000 ? Math.floor(val / 1000) : Math.floor(val);
+/** 格式化时长（兼容秒数、毫秒数或 Song 对象） */
+export function formatDuration(val?: number | Song | null): string {
+  if (!val) return "03:30";
+  let rawNum = 0;
+  if (typeof val === "object") {
+    rawNum = val.durationMs || (val.durationSeconds ? val.durationSeconds * 1000 : 0);
+  } else {
+    rawNum = val;
+  }
+  if (!rawNum || rawNum <= 0 || !Number.isFinite(rawNum)) return "03:30";
+  const totalSec = rawNum > 10000 ? Math.floor(rawNum / 1000) : Math.floor(rawNum);
   const mins = Math.floor(totalSec / 60);
   const secs = totalSec % 60;
   return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+/** 格式化评论数（对齐 Android 端 formatPlayerCommentCount: <1000 精确值, >=1000 1.2k, >=10000 1.5w） */
+export function formatCommentCount(count?: number | null): string {
+  const n = Number(count) || 0;
+  if (n <= 0) return "0";
+  if (n < 1000) return String(n);
+  if (n < 10000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  return `${(n / 10000).toFixed(1).replace(/\.0$/, "")}w`;
 }

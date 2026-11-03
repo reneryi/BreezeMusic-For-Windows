@@ -1375,11 +1375,8 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   function openDailyRecommendPage() {
     if (discoverSubView.value === "daily") return;
-    discoverHeroExpanding.value = "daily";
-    setTimeout(() => {
-      discoverSubView.value = "daily";
-      discoverHeroExpanding.value = "none";
-    }, 380);
+    discoverHeroExpanding.value = "none";
+    discoverSubView.value = "daily";
   }
 
   function openGuessYouLikePage() {
@@ -1387,11 +1384,8 @@ export const useAppStore = defineStore("breezeApp", () => {
     if (personalFmSongs.value.length === 0) {
       loadPersonalFm(false);
     }
-    discoverHeroExpanding.value = "fm";
-    setTimeout(() => {
-      discoverSubView.value = "fm_detail";
-      discoverHeroExpanding.value = "none";
-    }, 380);
+    discoverHeroExpanding.value = "none";
+    discoverSubView.value = "fm_detail";
   }
 
   async function playRankDirectly(rank: RankItem) {

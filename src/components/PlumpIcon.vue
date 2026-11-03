@@ -640,6 +640,49 @@ withDefaults(
         stroke-linejoin="round"
       />
     </template>
+    <!-- 28. 侧边栏收起 / 展开专属双色 UI 图标 -->
+    <template v-else-if="name === 'sidebar-collapse'">
+      <rect
+        x="2.8"
+        y="4"
+        width="18.4"
+        height="16"
+        rx="4.2"
+        :fill="color"
+        fill-opacity="0.16"
+        :stroke="color"
+        stroke-width="2.2"
+      />
+      <rect x="5.8" y="7" width="3.2" height="10" rx="1.6" :fill="accent" />
+      <path
+        d="M15.6 9.2L12.6 12L15.6 14.8"
+        :stroke="color"
+        stroke-width="2.4"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </template>
+    <template v-else-if="name === 'sidebar-expand'">
+      <rect
+        x="2.8"
+        y="4"
+        width="18.4"
+        height="16"
+        rx="4.2"
+        :fill="color"
+        fill-opacity="0.16"
+        :stroke="color"
+        stroke-width="2.2"
+      />
+      <rect x="5.8" y="7" width="2.4" height="10" rx="1.2" :fill="accent" />
+      <path
+        d="M12.4 9.2L15.4 12L12.4 14.8"
+        :stroke="accent"
+        stroke-width="2.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </template>
     <template v-else-if="name === 'music'">
       <path
         d="M9 17.5V6.5L19 4.5V15.5"

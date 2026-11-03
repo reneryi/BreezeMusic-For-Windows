@@ -244,7 +244,7 @@ const downloadTierChoices = computed(() => {
 
         <div class="playlist-pick-list">
           <button
-            v-for="pl in store.userPlaylists.filter((p) => p.isCreatedByMe)"
+            v-for="pl in store.userPlaylists.filter((p) => p.isCreatedByMe && (p.title || p.name || '').trim() !== '默认收藏')"
             :key="pl.id"
             class="playlist-pick-row"
             @click="

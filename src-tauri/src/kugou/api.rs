@@ -1778,6 +1778,9 @@ impl KugouApiService {
                         list_id.to_string()
                     }
                 };
+                if name.trim() == "默认收藏" {
+                    continue;
+                }
                 let is_default = Self::val_i64(item, "is_def") == Some(2) || name == "我喜欢";
                 let is_fav = Self::val_str(item, "type") == "1";
                 let pic = {

@@ -149,20 +149,66 @@ export const useAppStore = defineStore("breezeApp", () => {
   const activeAlbumSongs = ref<Song[]>([]);
   const isLoadingAlbum = ref(false);
 
-  const createdPlaylists = computed(() =>
-    userPlaylists.value.filter((p) => p.isCreatedByMe && !p.isLiked)
+  const createdOrderIds = ref<string[]>(
+    JSON.parse(localStorage.getItem("bm_order_created") || "[]")
   );
+  const collectedOrderIds = ref<string[]>(
+    JSON.parse(localStorage.getItem("bm_order_collected") || "[]")
+  );
+  const artistsOrderIds = ref<string[]>(
+    JSON.parse(localStorage.getItem("bm_order_artists") || "[]")
+  );
+  const purchasedOrderIds = ref<string[]>(
+    JSON.parse(localStorage.getItem("bm_order_purchased") || "[]")
+  );
+
+  function isDefaultCollectPlaylist(p: Playlist): boolean {
+    const t = (p.title || p.name || "").trim();
+    return t === "默认收藏";
+  }
+
+  function applySavedOrder<T>(
+    items: T[],
+    orderIds: string[],
+    getKey: (item: T) => string
+  ): T[] {
+    if (!orderIds || orderIds.length === 0) return items;
+    const orderMap = new Map<string, number>();
+    orderIds.forEach((id, idx) => orderMap.set(id, idx));
+    return [...items].sort((a, b) => {
+      const ia = orderMap.get(getKey(a));
+      const ib = orderMap.get(getKey(b));
+      if (ia !== undefined && ib !== undefined) return ia - ib;
+      if (ia !== undefined) return -1;
+      if (ib !== undefined) return 1;
+      return 0;
+    });
+  }
+
+  const createdPlaylists = computed(() => {
+    const raw = userPlaylists.value.filter(
+      (p) => p.isCreatedByMe && !p.isLiked && !isDefaultCollectPlaylist(p)
+    );
+    return applySavedOrder(raw, createdOrderIds.value, (p) =>
+      String(p.id || p.listId || p.title)
+    );
+  });
   const collectedPlaylists = computed(() => {
     const cloud = userPlaylists.value.filter(
-      (p) => p.isFavorite && !p.isCreatedByMe
+      (p) => p.isFavorite && !p.isCreatedByMe && !isDefaultCollectPlaylist(p)
     );
     const merged = [...cloud];
     for (const rp of collectedRemotePlaylists.value) {
-      if (!merged.some((m) => m.id === rp.id || m.title === rp.title)) {
+      if (
+        !isDefaultCollectPlaylist(rp) &&
+        !merged.some((m) => m.id === rp.id || m.title === rp.title)
+      ) {
         merged.push(rp);
       }
     }
-    return merged;
+    return applySavedOrder(merged, collectedOrderIds.value, (p) =>
+      String(p.id || p.globalCollectionId || p.title)
+    );
   });
   const likedPlaylistMeta = computed(() =>
     userPlaylists.value.find((p) => p.isLiked || p.title === "我喜欢")
@@ -1421,7 +1467,8 @@ export const useAppStore = defineStore("breezeApp", () => {
     if (!isLoggedIn.value) return;
     isLoadingLibrary.value = true;
     try {
-      const list = await kugouClient.getUserPlaylists();
+      const rawList = await kugouClient.getUserPlaylists();
+      const list = rawList.filter((p) => !isDefaultCollectPlaylist(p));
       userPlaylists.value = list;
 
       const likedPl = list.find((p) => p.isLiked || p.title === "我喜欢");
@@ -1645,7 +1692,12 @@ export const useAppStore = defineStore("breezeApp", () => {
   async function loadFollowedArtists() {
     if (!isLoggedIn.value) return;
     try {
-      followedArtists.value = await kugouClient.getFollowedArtists();
+      const list = await kugouClient.getFollowedArtists();
+      followedArtists.value = applySavedOrder(
+        list,
+        artistsOrderIds.value,
+        (a) => String(a.singerId || a.artistId || a.name)
+      );
     } catch (e) {
       console.warn("loadFollowedArtists error:", e);
     }
@@ -1681,10 +1733,111 @@ export const useAppStore = defineStore("breezeApp", () => {
         kugouClient.getPurchasedAlbums().catch(() => []),
         kugouClient.getPurchasedSongs().catch(() => []),
       ]);
-      purchasedAlbums.value = albums;
+      purchasedAlbums.value = applySavedOrder(
+        albums,
+        purchasedOrderIds.value,
+        (a) => String(a.id || a.albumId || a.albumName)
+      );
       purchasedSongs.value = songs;
     } catch (e) {
       console.warn("loadPurchasedAssets error:", e);
+    }
+  }
+
+  function reorderLibraryAssetList(
+    category: "created" | "collected" | "artists" | "purchased",
+    fromIndex: number,
+    toIndex: number,
+    customKeys?: string[]
+  ) {
+    if (fromIndex === toIndex && !customKeys) return;
+    if (category === "created") {
+      const current = [...createdPlaylists.value];
+      if (
+        fromIndex < 0 ||
+        fromIndex >= current.length ||
+        toIndex < 0 ||
+        toIndex >= current.length
+      )
+        return;
+      const [moved] = current.splice(fromIndex, 1);
+      current.splice(toIndex, 0, moved);
+      createdOrderIds.value = current.map((p) =>
+        String(p.id || p.listId || p.title)
+      );
+      localStorage.setItem(
+        "bm_order_created",
+        JSON.stringify(createdOrderIds.value)
+      );
+    } else if (category === "collected") {
+      const current = [...collectedPlaylists.value];
+      if (
+        fromIndex < 0 ||
+        fromIndex >= current.length ||
+        toIndex < 0 ||
+        toIndex >= current.length
+      )
+        return;
+      const [moved] = current.splice(fromIndex, 1);
+      current.splice(toIndex, 0, moved);
+      collectedOrderIds.value = current.map((p) =>
+        String(p.id || p.globalCollectionId || p.title)
+      );
+      localStorage.setItem(
+        "bm_order_collected",
+        JSON.stringify(collectedOrderIds.value)
+      );
+    } else if (category === "artists") {
+      const current = [...followedArtists.value];
+      if (
+        fromIndex < 0 ||
+        fromIndex >= current.length ||
+        toIndex < 0 ||
+        toIndex >= current.length
+      )
+        return;
+      const [moved] = current.splice(fromIndex, 1);
+      current.splice(toIndex, 0, moved);
+      followedArtists.value = current;
+      artistsOrderIds.value = current.map((a) =>
+        String(a.singerId || a.artistId || a.name)
+      );
+      localStorage.setItem(
+        "bm_order_artists",
+        JSON.stringify(artistsOrderIds.value)
+      );
+    } else if (category === "purchased") {
+      if (customKeys) {
+        purchasedOrderIds.value = [...customKeys];
+        localStorage.setItem(
+          "bm_order_purchased",
+          JSON.stringify(purchasedOrderIds.value)
+        );
+        purchasedAlbums.value = applySavedOrder(
+          purchasedAlbums.value,
+          purchasedOrderIds.value,
+          (a) => String(a.id || a.albumId || a.albumName)
+        );
+      } else {
+        const current = [...purchasedAlbums.value];
+        if (
+          fromIndex < 0 ||
+          fromIndex >= current.length ||
+          toIndex < 0 ||
+          toIndex >= current.length
+        )
+          return;
+        const [moved] = current.splice(fromIndex, 1);
+        current.splice(toIndex, 0, moved);
+        purchasedAlbums.value = current;
+        purchasedOrderIds.value = current.map((a) =>
+          String(a.id || a.albumId || a.albumName)
+        );
+        localStorage.setItem(
+          "bm_order_purchased",
+          JSON.stringify(purchasedOrderIds.value)
+        );
+      }
     }
   }
 
@@ -2390,6 +2543,10 @@ export const useAppStore = defineStore("breezeApp", () => {
     createdPlaylists,
     collectedPlaylists,
     likedPlaylistMeta,
+    createdOrderIds,
+    collectedOrderIds,
+    artistsOrderIds,
+    purchasedOrderIds,
     searchKeyword,
     searchSuggestions,
     searchCategoryTab,
@@ -2471,6 +2628,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     loadFollowedArtists,
     toggleFollowArtist,
     loadPurchasedAssets,
+    reorderLibraryAssetList,
     openArtistDetail,
     openAlbumDetail,
     executeSearch,

@@ -7,6 +7,8 @@ import LoginModal from "./components/LoginModal.vue";
 import FocusPodModal from "./components/FocusPodModal.vue";
 import LyricPosterModal from "./components/LyricPosterModal.vue";
 import SongContextMenu from "./components/SongContextMenu.vue";
+import CommentsModal from "./components/CommentsModal.vue";
+import MultiArtistModal from "./components/MultiArtistModal.vue";
 import PlumpIcon from "./components/PlumpIcon.vue";
 import DiscoverView from "./views/DiscoverView.vue";
 import LibraryView from "./views/LibraryView.vue";
@@ -14,9 +16,65 @@ import RadioView from "./views/RadioView.vue";
 import SearchPlaceholderView from "./views/SearchPlaceholderView.vue";
 import SettingsPlaceholderView from "./views/SettingsPlaceholderView.vue";
 import NowPlayingView from "./views/NowPlayingView.vue";
+import PlaylistDetailView from "./views/PlaylistDetailView.vue";
+import ArtistDetailView from "./views/ArtistDetailView.vue";
+import AlbumDetailView from "./views/AlbumDetailView.vue";
 
 const store = useAppStore();
 const stageViewportRef = ref<HTMLElement | null>(null);
+const desktopLyricRef = ref<HTMLElement | null>(null);
+const isDraggingDesktopLyric = ref(false);
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+
+function onDesktopLyricMouseDown(e: MouseEvent) {
+  if (store.desktopLyricLocked) return;
+  const target = e.target as HTMLElement | null;
+  if (target && (target.closest("button") || target.closest("input"))) return;
+  const el = desktopLyricRef.value;
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  isDraggingDesktopLyric.value = true;
+  dragOffsetX = e.clientX - rect.left;
+  dragOffsetY = e.clientY - rect.top;
+
+  const onMove = (ev: MouseEvent) => {
+    if (!isDraggingDesktopLyric.value) return;
+    const width = store.desktopLyricWidth || rect.width || 760;
+    const height = rect.height || 100;
+    const maxX = Math.max(12, window.innerWidth - width - 12);
+    const maxY = Math.max(12, window.innerHeight - height - 12);
+    store.desktopLyricX = Math.min(maxX, Math.max(12, Math.round(ev.clientX - dragOffsetX)));
+    store.desktopLyricY = Math.min(maxY, Math.max(12, Math.round(ev.clientY - dragOffsetY)));
+  };
+
+  const onUp = () => {
+    isDraggingDesktopLyric.value = false;
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+  };
+
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
+}
+
+const desktopLyricPositionStyle = computed(() => {
+  const w = store.desktopLyricWidth || 760;
+  const base: Record<string, string> = {
+    "--fdl-color": store.desktopLyricColor || "#00e5ff",
+    "--fdl-size": `${store.desktopLyricFontSize || 24}px`,
+    width: `${w}px`,
+    maxWidth: "calc(100vw - 24px)",
+  };
+  if (store.desktopLyricX !== null && store.desktopLyricY !== null) {
+    base.left = `${store.desktopLyricX}px`;
+    base.top = `${store.desktopLyricY}px`;
+    base.bottom = "auto";
+    base.transform = "none";
+  }
+  return base;
+});
+
 
 const calibratedPosMs = computed(() => {
   return (
@@ -131,6 +189,14 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
 
   // Esc：收起弹窗或全屏播放舞台
   if (e.key === "Escape") {
+    if (store.isMultiArtistModalOpen) {
+      store.isMultiArtistModalOpen = false;
+      return;
+    }
+    if (store.isCommentsModalOpen) {
+      store.closeCommentsModal();
+      return;
+    }
     if (store.hdArtworkPreviewUrl) {
       store.hdArtworkPreviewUrl = null;
       return;
@@ -335,8 +401,20 @@ onBeforeUnmount(() => {
               key="library"
             />
             <RadioView
-              v-else-if="store.activeTab === 'radio'"
-              key="radio"
+              v-else-if="store.activeTab === 'radio' || store.activeTab === 'tuner'"
+              key="tuner"
+            />
+            <PlaylistDetailView
+              v-else-if="store.activeTab === 'playlist_detail'"
+              key="playlist-detail"
+            />
+            <ArtistDetailView
+              v-else-if="store.activeTab === 'artist_detail'"
+              key="artist-detail"
+            />
+            <AlbumDetailView
+              v-else-if="store.activeTab === 'album_detail'"
+              key="album-detail"
             />
             <SearchPlaceholderView
               v-else-if="store.activeTab === 'search'"
@@ -347,20 +425,22 @@ onBeforeUnmount(() => {
         </main>
       </div>
 
-      <!-- 系统级悬浮桌面歌词舱（支持 KRC 逐字流光扫掠 + 7 键圆润控播顶栏） -->
+      <!-- 系统级悬浮桌面歌词舱（规定长度 + 屏幕内任意 2D 自由拖动 + KRC 逐字流光扫掠） -->
       <transition name="pop-spring">
         <div
           v-if="store.desktopLyricEnabled"
+          ref="desktopLyricRef"
           class="floating-desktop-lyric-bar"
-          :class="{ locked: store.desktopLyricLocked }"
-          :style="{
-            '--fdl-color': store.desktopLyricColor || '#00e5ff',
-            '--fdl-size': `${store.desktopLyricFontSize || 24}px`,
+          :class="{
+            locked: store.desktopLyricLocked,
+            dragging: isDraggingDesktopLyric,
           }"
+          :style="desktopLyricPositionStyle"
+          @mousedown="onDesktopLyricMouseDown"
         >
           <div v-if="!store.desktopLyricLocked" class="fdl-top-toolbar">
-            <span class="fdl-song-chip">
-              {{ store.currentSong?.title || "微风桌面歌词" }}
+            <span class="fdl-song-chip" title="按住歌词栏任意空白处即可在屏幕内自由拖动">
+              ✥ {{ store.currentSong?.title || "微风桌面歌词" }} ({{ store.desktopLyricWidth }}px)
             </span>
             <div class="fdl-btn-cluster">
               <button class="fdl-icon-btn" title="上一曲" @click.stop="store.playPrev()">
@@ -371,6 +451,20 @@ onBeforeUnmount(() => {
               </button>
               <button class="fdl-icon-btn" title="下一曲" @click.stop="store.playNext(false)">
                 <PlumpIcon name="next" :size="13" />
+              </button>
+              <button
+                class="fdl-icon-btn"
+                title="缩短桌面歌词规定长度 (-60px)"
+                @click.stop="store.desktopLyricWidth = Math.max(480, (store.desktopLyricWidth || 760) - 60)"
+              >
+                W-
+              </button>
+              <button
+                class="fdl-icon-btn"
+                title="加长桌面歌词规定长度 (+60px)"
+                @click.stop="store.desktopLyricWidth = Math.min(1280, (store.desktopLyricWidth || 760) + 60)"
+              >
+                W+
               </button>
               <button
                 class="fdl-icon-btn"
@@ -387,8 +481,19 @@ onBeforeUnmount(() => {
                 A+
               </button>
               <button
+                class="fdl-icon-btn"
+                title="切换桌面歌词流光配色"
+                @click.stop="
+                  store.desktopLyricColor = ['#00e5ff', '#ffd54f', '#ff6b8b', '#00e5a3', '#b388ff'][
+                    (['#00e5ff', '#ffd54f', '#ff6b8b', '#00e5a3', '#b388ff'].indexOf(store.desktopLyricColor) + 1) % 5
+                  ]
+                "
+              >
+                🎨
+              </button>
+              <button
                 class="fdl-btn"
-                title="锁定桌面歌词"
+                title="锁定桌面歌词防误触"
                 @click.stop="store.desktopLyricLocked = true"
               >
                 <PlumpIcon name="lock" :size="13" />
@@ -450,6 +555,8 @@ onBeforeUnmount(() => {
       <FocusPodModal />
       <LyricPosterModal />
       <SongContextMenu />
+      <CommentsModal />
+      <MultiArtistModal />
 
       <!-- 全局 1000P 超清专辑封面预览与保存弹窗 -->
       <transition name="fade">

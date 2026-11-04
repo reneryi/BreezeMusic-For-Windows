@@ -10839,3 +10839,35 @@ body.lib-dragging-cursor * {
 .search-intent-artist-hero:hover {
   transform: translateY(-2px);
 }
+
+
+/* 15.8 自由拖动定长桌面歌词增强与 12 级色彩分级微调 */
+.floating-desktop-lyric-bar {
+  cursor: grab;
+  user-select: none;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.floating-desktop-lyric-bar.dragging {
+  cursor: grabbing;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.72), 0 0 24px rgba(0, 229, 255, 0.28);
+}
+.floating-desktop-lyric-bar.locked {
+  cursor: default;
+}
+.fdl-lines {
+  width: 100%;
+  overflow: hidden;
+}
+.fdl-main,
+.fdl-sub {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mini-badge.hq {
+  background: rgba(56, 189, 248, 0.14);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.32);
+}

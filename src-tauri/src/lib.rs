@@ -4,8 +4,8 @@ use kugou::api::KugouApiService;
 use kugou::models::{
     AccountProfile, AlbumItem, DownloadTaskResult, FmChannel, FollowedArtist, GatewayDiagResult,
     KugouSession, LyricData, PhoneLoginOutcome, PlaybackResult, Playlist, PurchasedAlbumItem,
-    PurchasedSongItem, QrCodeSession, QrPollResult, RankItem, SharedMusicResolved, Song,
-    SongComment, SongDetailInfo, VipStatusInfo, ViperEffectItem,
+    PurchasedSongItem, QrCodeSession, QrPollResult, RankItem, ResolvedSongAlbumMeta,
+    SharedMusicResolved, Song, SongComment, SongDetailInfo, VipStatusInfo, ViperEffectItem,
 };
 use kugou::store::AppStore;
 use std::sync::Arc;
@@ -132,7 +132,7 @@ async fn get_rank_songs(
 ) -> Result<Vec<Song>, String> {
     state
         .api
-        .fetch_rank_songs(rank_id, page.unwrap_or(1), page_size.unwrap_or(50))
+        .fetch_rank_songs(rank_id, page.unwrap_or(1), page_size.unwrap_or(100))
         .await
 }
 
@@ -163,7 +163,7 @@ async fn search_songs(
 ) -> Result<Vec<Song>, String> {
     state
         .api
-        .search_songs(&keyword, page.unwrap_or(1), page_size.unwrap_or(30))
+        .search_songs(&keyword, page.unwrap_or(1), page_size.unwrap_or(40))
         .await
 }
 
@@ -184,29 +184,52 @@ async fn get_search_suggest_cmd(
 async fn search_playlists_cmd(
     state: State<'_, AppState>,
     keyword: String,
+    page: Option<u32>,
+    page_size: Option<u32>,
 ) -> Result<Vec<Playlist>, String> {
-    state.api.search_playlists(&keyword).await
+    state
+        .api
+        .search_playlists(&keyword, page.unwrap_or(1), page_size.unwrap_or(30))
+        .await
 }
 
 #[tauri::command]
 async fn search_albums_cmd(
     state: State<'_, AppState>,
     keyword: String,
+    page: Option<u32>,
+    page_size: Option<u32>,
 ) -> Result<Vec<AlbumItem>, String> {
-    state.api.search_albums(&keyword).await
+    state
+        .api
+        .search_albums(&keyword, page.unwrap_or(1), page_size.unwrap_or(30))
+        .await
 }
 
 #[tauri::command]
 async fn search_artists_cmd(
     state: State<'_, AppState>,
     keyword: String,
+    page: Option<u32>,
+    page_size: Option<u32>,
 ) -> Result<Vec<FollowedArtist>, String> {
-    state.api.search_artists(&keyword).await
+    state
+        .api
+        .search_artists(&keyword, page.unwrap_or(1), page_size.unwrap_or(24))
+        .await
 }
 
 #[tauri::command]
 async fn get_user_playlists(state: State<'_, AppState>) -> Result<Vec<Playlist>, String> {
     state.api.fetch_user_playlists().await
+}
+
+#[tauri::command]
+async fn get_playlist_info_cmd(
+    state: State<'_, AppState>,
+    playlist_id: String,
+) -> Result<Playlist, String> {
+    state.api.fetch_playlist_info(&playlist_id).await
 }
 
 #[tauri::command]
@@ -223,6 +246,25 @@ async fn create_user_playlist_cmd(
     name: String,
 ) -> Result<bool, String> {
     state.api.create_user_playlist(&name).await
+}
+
+#[tauri::command]
+async fn update_user_playlist_cmd(
+    state: State<'_, AppState>,
+    list_id: i64,
+    global_id: Option<String>,
+    title: String,
+    description: Option<String>,
+) -> Result<bool, String> {
+    state
+        .api
+        .update_user_playlist(
+            list_id,
+            &global_id.unwrap_or_default(),
+            &title,
+            &description.unwrap_or_default(),
+        )
+        .await
 }
 
 #[tauri::command]
@@ -259,12 +301,29 @@ async fn add_song_to_playlist_cmd(
 }
 
 #[tauri::command]
+async fn add_songs_to_playlist_batch_cmd(
+    state: State<'_, AppState>,
+    list_id: i64,
+    songs: Vec<Song>,
+) -> Result<usize, String> {
+    state.api.add_songs_to_playlist_batch(list_id, &songs).await
+}
+
+#[tauri::command]
 async fn remove_song_from_playlist_cmd(
     state: State<'_, AppState>,
     list_id: i64,
     song: Song,
 ) -> Result<bool, String> {
     state.api.remove_song_from_user_playlist(list_id, &song).await
+}
+
+#[tauri::command]
+async fn resolve_song_album_meta_cmd(
+    state: State<'_, AppState>,
+    song: Song,
+) -> Result<ResolvedSongAlbumMeta, String> {
+    state.api.resolve_song_album_meta(&song).await
 }
 
 #[tauri::command]
@@ -545,13 +604,17 @@ pub fn run() {
             search_albums_cmd,
             search_artists_cmd,
             get_user_playlists,
+            get_playlist_info_cmd,
             get_playlist_songs,
             create_user_playlist_cmd,
+            update_user_playlist_cmd,
             delete_user_playlist_cmd,
             collect_playlist_cmd,
             uncollect_playlist_cmd,
             add_song_to_playlist_cmd,
+            add_songs_to_playlist_batch_cmd,
             remove_song_from_playlist_cmd,
+            resolve_song_album_meta_cmd,
             get_followed_artists,
             toggle_follow_artist_cmd,
             get_purchased_albums,

@@ -856,6 +856,27 @@
             </button>
 
             <button
+              v-if="rightStageMode === 'playlist' && store.selectedPlaylist"
+              class="frameless-hover-btn"
+              :disabled="store.isLoadingLibrary"
+              title="独立刷新当前歌单云端数据"
+              @click="store.refreshCurrentPlaylistOnly()"
+            >
+              <PlumpIcon name="refresh" :size="15" />
+              <span>刷新歌单</span>
+            </button>
+
+            <button
+              v-if="rightStageMode === 'playlist' && store.selectedPlaylist"
+              class="frameless-hover-btn primary-tint"
+              title="进入歌单独立全屏管理页（支持编辑歌单信息与批量曲目操作）"
+              @click="store.openPlaylistDetail(store.selectedPlaylist)"
+            >
+              <PlumpIcon name="maximize" :size="15" />
+              <span>独立页与编辑</span>
+            </button>
+
+            <button
               v-if="filteredAndSortedRightStageSongs.length > 0"
               class="frameless-hover-btn"
               :class="{ 'primary-tint': isBatchMode }"
@@ -1046,8 +1067,21 @@
                       <span v-if="song.isVip" class="fs-badge vip">VIP</span>
                     </div>
                     <div class="fs-sub-line">
-                      <span>{{ song.artist }}</span>
-                      <span v-if="song.album" class="fs-album">· {{ song.album }}</span>
+                      <button
+                        class="lib-inline-meta-btn"
+                        title="点击进入歌手独立主页"
+                        @click.stop="store.navigateToSongArtist(song)"
+                      >
+                        {{ song.artist }}
+                      </button>
+                      <button
+                        v-if="song.album"
+                        class="lib-inline-meta-btn fs-album"
+                        title="点击进入专辑独立页面"
+                        @click.stop="store.navigateToSongAlbum(song)"
+                      >
+                        · {{ song.album }}
+                      </button>
                     </div>
                   </div>
 
@@ -1414,7 +1448,7 @@ function selectPlaylistToRight(pl: PlaylistItem) {
   expandedTopCard.value = "none";
   rightStageMode.value = "playlist";
   songFilterKw.value = "";
-  store.selectPlaylist(pl);
+  store.openPlaylistDetail(pl);
 }
 
 async function selectArtistToRight(art: FollowedArtistItem) {
@@ -1725,3 +1759,18 @@ onBeforeUnmount(() => {
   document.body.classList.remove("lib-dragging-cursor");
 });
 </script>
+
+<style scoped>
+.lib-inline-meta-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.lib-inline-meta-btn:hover {
+  color: var(--cyan);
+  text-decoration: underline;
+}
+</style>

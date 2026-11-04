@@ -1,7 +1,34 @@
-export type MainNavTab = "discover" | "library" | "radio" | "search" | "settings";
+export type MainNavTab =
+  | "discover"
+  | "library"
+  | "tuner"
+  | "radio"
+  | "search"
+  | "settings"
+  | "artist_detail"
+  | "album_detail"
+  | "playlist_detail";
+
 export type NavTab = MainNavTab;
 
-export type DiscoverSubView = "home" | "daily" | "fm_detail" | "new_songs" | "rank" | "radio";
+export type DiscoverSubView =
+  | "home"
+  | "daily"
+  | "fm_detail"
+  | "new_songs"
+  | "rank"
+  | "radio";
+
+export interface NavigationHistoryEntry {
+  tab: MainNavTab;
+  discoverSubView?: DiscoverSubView;
+  libraryAssetTab?: LibraryAssetTab;
+  libraryDetailMode?: LibraryDetailMode;
+  artistId?: string;
+  albumId?: string;
+  playlistId?: string;
+  returnToNowPlaying?: boolean;
+}
 
 export type LibraryAssetTab =
   | "created"
@@ -23,9 +50,21 @@ export type LibraryDetailMode =
   | "album_detail"
   | "purchased_songs";
 
-export type SearchCategoryTab = "all" | "complex" | "songs" | "playlists" | "albums" | "artists";
+export type SearchCategoryTab =
+  | "all"
+  | "complex"
+  | "songs"
+  | "playlists"
+  | "albums"
+  | "artists";
 
-export type AudioQualityValue = "128" | "320" | "flac" | "high" | "hires" | "master";
+export type AudioQualityValue =
+  | "128"
+  | "320"
+  | "flac"
+  | "high"
+  | "hires"
+  | "master";
 export type AudioQuality = AudioQualityValue;
 
 export type ThemePresetId =
@@ -138,6 +177,11 @@ export interface AccountProfile {
   listenDurationSec: number;
   listenDurationFormatted: string;
   userGrade: number;
+  rawServerDsec?: number;
+  userScore?: number;
+  nextLevelScore?: number;
+  levelProgressPct?: number;
+  nextLevelRemainMin?: number;
   userLevel?: number;
   listenDurationMinutes?: number;
 }
@@ -190,6 +234,13 @@ export interface VipStatusInfo {
   guid: string;
 }
 
+export interface SongAuthor {
+  id: string;
+  name: string;
+  avatarUrl?: string;
+  avatar?: string;
+}
+
 export interface Song {
   id: string;
   hash: string;
@@ -205,6 +256,7 @@ export interface Song {
   title: string;
   artist: string;
   artistId: string;
+  authors?: SongAuthor[];
   album: string;
   albumId: string;
   coverUrl: string;
@@ -220,6 +272,7 @@ export interface Song {
   hasHiRes?: boolean;
   hasHighQuality?: boolean;
   hasSq?: boolean;
+  isSq?: boolean;
   mvHash?: string;
   privilege?: number;
   payType?: number;
@@ -256,15 +309,18 @@ export interface Playlist {
   coverUrl: string;
   trackCount: number;
   description: string;
+  intro?: string;
   creatorName: string;
+  creator?: string;
   isCreatedByMe: boolean;
   isFavorite: boolean;
   isLiked: boolean;
   listId: number;
   globalCollectionId: string;
-  listCreateUserid?: number;
+  listCreateUserid?: number | string;
+  listCreateListid?: string;
   listCreateGid?: string;
-  playCount?: number;
+  playCount?: number | string;
   category?: string;
   tags?: string;
   customOrder?: number;
@@ -354,23 +410,36 @@ export interface PurchasedSongItem {
   buyTime: string;
 }
 
+export interface QuotedReplyHop {
+  userName: string;
+  content: string;
+}
+
 export interface SongComment {
   id: string;
+  userId?: string;
   userName: string;
   userAvatar: string;
   content: string;
   createdTime: string;
   likeCount: number;
   isLiked: boolean;
+  isHot?: boolean;
+  vipLevel?: number;
   location: string;
   replyCount: number;
   specialChildId: string;
   replies: SongComment[];
   images?: string[];
+  timeText?: string;
+  replyToUser?: string | null;
   replyUserName?: string | null;
   replyQuotedContent?: string | null;
   parentId?: string | null;
-  vipLevel?: number;
+  rootId?: string | null;
+  replyTargetCommentId?: string | null;
+  replyChainHops?: QuotedReplyHop[];
+  timestampMs?: number;
 }
 
 export interface GatewayDiagResult {
@@ -443,22 +512,71 @@ export interface SharedMusicResolved {
   message: string;
 }
 
+export interface ResolvedSongAlbumMeta {
+  albumName: string;
+  albumId: string;
+  artistId: string;
+  artistName: string;
+  coverUrl: string;
+  publishDate: string;
+  company: string;
+}
+
+/** 12级封面动态取色分级调色板 (Upgraded 12-Grade Cover Tonal Palette) */
+export interface CoverColorGrades {
+  c1: string;
+  c2: string;
+  c3: string;
+  c4: string;
+  c5: string;
+  c6: string;
+  c7: string;
+  c8: string;
+  c9: string;
+  c10: string;
+  c11: string;
+  c12: string;
+  seedHex?: string;
+  hue?: number;
+  saturation?: number;
+  c1Primary?: string;
+  c2Secondary?: string;
+  c3Tertiary?: string;
+  c4AccentBright?: string;
+  c5AccentSoft?: string;
+  c6ContainerDark?: string;
+  c7ContainerLight?: string;
+  c8SurfaceDeep?: string;
+  c9SurfaceElevated?: string;
+  c10GlowHalo?: string;
+  c11TextOnDark?: string;
+  c12TextOnLight?: string;
+}
+
 /** 母带级声场调音工作台参数（对齐 Android AcousticFieldTuningTab） */
 export interface AcousticFieldSettings {
   enabled: boolean;
   subBassDepth: number; // 0 ~ 100 超重低音下潜
   bassCrossoverHz: number; // 40 / 55 / 68 / 80 / 95 / 110 Hz
+  bassPunch?: number; // 0 ~ 100 低频弹性冲击
   transientPunch: number; // 0 ~ 100 瞬态微动态与鼓点冲击
   surroundWidth: number; // 0 ~ 100 3D 环绕声场宽度
   stageDepth: number; // 0 ~ 100 舞台纵深距离感
   stageDistance: number; // 0 ~ 100 舞台纵深距离感（兼容别名）
   bauerCrossfeed: boolean; // Bauer 耳机交叉馈送（消除头中效应）
+  crossfeedLevel?: number; // 0 ~ 100 交叉馈送强度
+  surroundRotation?: boolean; // 360° 全息环绕声场旋转
+  surroundRotationSpeed?: number; // 10 ~ 100 旋转速率
   reverbPreset: ReverbPresetId; // Schroeder 空间声学混响模型
   reverbPreDelayMs: number; // 0 ~ 80 ms 空间混响预延迟
   reverbWetPercent: number; // 0 ~ 100 空间混响湿度百分比
-  vocalClarity: number; // 0 ~ 100 人声通透与 6.2kHz 齿音柔化
+  reverbDamping?: number; // 0 ~ 100 混响高频阻尼
+  vocalClarity: number; // 0 ~ 100 人声通透
+  deEsserLevel?: number; // 0 ~ 100 6.2kHz 齿音消除
   airHarmonics: number; // 0 ~ 100 12kHz+ 极高频空气泛音
   vinylTubeWarmth: number; // 0 ~ 100 黑胶胆机温暖度
+  loudnessBoost?: number; // 0 ~ 100 响度增益
+  equalLoudnessContour?: boolean; // 等响度曲线补偿
   stereoWidth: number;
   reverbMix: number;
   bassBoostDb: number;
@@ -471,6 +589,8 @@ export interface PeqMemorySlot {
   saved: boolean;
   gains: number[];
   qFactor: number;
+  bandQFactors?: number[];
+  bandFreqOffsets?: number[];
   bandTypes?: PeqFilterType[];
 }
 

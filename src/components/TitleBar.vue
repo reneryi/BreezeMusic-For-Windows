@@ -4,7 +4,7 @@
     <!-- 顶部边缘拖拽热区 -->
     <div class="skyline-top-drag-strip" data-tauri-drag-region></div>
 
-    <!-- 播放页左上角悬浮返回按钮（仅在进入全屏播放页时显示） -->
+    <!-- 左上角悬浮返回/收起按钮：播放页显示「收起舞台」，独立详情页/二级页显示「返回上一页」 -->
     <button
       v-if="store.isNowPlayingOpen"
       class="skyline-np-floating-back"
@@ -14,6 +14,15 @@
       <PlumpIcon name="chevron-down" :size="18" />
       <span>收起舞台</span>
     </button>
+    <button
+      v-else-if="store.canNavigateBack"
+      class="skyline-np-floating-back"
+      title="返回上一页"
+      @click="store.navigateBack()"
+    >
+      <PlumpIcon name="arrow-left" :size="17" />
+      <span>返回</span>
+    </button>
 
     <!-- 居中悬浮岛：顶部导航胶囊 + 响应式搜索框（小窗口自动收缩为圆形按钮，无快捷键标签） -->
     <div class="skyline-floating-center">
@@ -22,7 +31,7 @@
           v-for="item in navItems"
           :key="item.id"
           class="skyline-nav-btn"
-          :class="{ active: store.activeTab === item.id && !store.isNowPlayingOpen }"
+          :class="{ active: (store.activeTab === item.id || (item.id === 'tuner' && store.activeTab === 'radio')) && !store.isNowPlayingOpen }"
           :title="item.hint"
           @click="handleNavClick(item.id)"
           @dblclick.stop="handleNavDblClick(item.id)"
@@ -411,7 +420,7 @@ const navItems: Array<{
 }> = [
   { id: "discover", label: "发现", hint: "单击进入发现页 · 双击整体刷新发现页内容", icon: "compass" },
   { id: "library", label: "我的", hint: "单击进入我的音乐 · 双击同步云端音乐资产", icon: "library" },
-  { id: "radio", label: "调音台", hint: "概念版母带声学调音台与蝰蛇音效工作站", icon: "tuning" },
+  { id: "tuner", label: "调音台", hint: "概念版母带声学调音台与蝰蛇音效工作站（与电台完全独立）", icon: "tuning" },
   { id: "settings", label: "设置", hint: "外观材质、播放偏好、设备凭证与下载设置", icon: "settings" },
 ];
 
@@ -532,11 +541,16 @@ function openLoginFromCard() {
 }
 
 const listenHoursText = computed(() => {
+  if (store.profile?.listenDurationFormatted) {
+    return store.profile.listenDurationFormatted;
+  }
   const mins =
     store.profile?.listenDurationMinutes ??
     store.profile?.listenDurationMin ??
     0;
-  return `${Math.round(mins / 60)}h`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h > 0 ? `${h}小时${m}分` : `${m}分钟`;
 });
 
 function conciseDate(raw?: string) {
@@ -565,12 +579,14 @@ const calendarCells = computed(() => {
     const mm = String(currentMonth).padStart(2, "0");
     const dd = String(d).padStart(2, "0");
     const dateStr = `${currentYear}-${mm}-${dd}`;
-    const found = recs.find((r) => r.day === dateStr && r.received);
+    const found = recs.find((r) => (r.day === dateStr || r.day.endsWith(`-${mm}-${dd}`)) && r.received);
+    const isClaimed = Boolean(found) || (d === todayDay && Boolean(store.vipStatus?.todayClaimed));
+    const isSvipDay = isClaimed && (found?.vipType === "svip" || (d === todayDay && Boolean(store.vipStatus?.svipActive)));
     cells.push({
       day: d,
       dateStr,
-      claimed: Boolean(found) || (d === todayDay && Boolean(store.vipStatus?.todayClaimed)),
-      isSvip: found?.vipType === "svip" || Boolean(store.vipStatus?.svipActive),
+      claimed: isClaimed,
+      isSvip: isSvipDay,
       isToday: d === todayDay,
     });
   }

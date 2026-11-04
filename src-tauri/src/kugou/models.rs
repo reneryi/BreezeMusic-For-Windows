@@ -95,8 +95,8 @@ pub struct KugouSession {
     pub avatar_url: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct AccountProfile {
     pub user_id: String,
     pub nickname: String,
@@ -109,6 +109,11 @@ pub struct AccountProfile {
     pub listen_duration_sec: i64,
     pub listen_duration_formatted: String,
     pub user_grade: i32,
+    pub raw_server_dsec: i64,
+    pub user_score: i64,
+    pub next_level_score: i64,
+    pub level_progress_pct: f32,
+    pub next_level_remain_min: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +179,14 @@ pub struct VipStatusInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
+pub struct SongAuthor {
+    pub id: String,
+    pub name: String,
+    pub avatar_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Song {
     pub id: String,
     pub hash: String,
@@ -193,6 +206,8 @@ pub struct Song {
     pub title: String,
     pub artist: String,
     pub artist_id: String,
+    #[serde(default)]
+    pub authors: Vec<SongAuthor>,
     pub album: String,
     pub album_id: String,
     pub cover_url: String,
@@ -284,6 +299,14 @@ pub struct Playlist {
     #[serde(deserialize_with = "deserialize_i64_flexible")]
     pub list_id: i64,
     pub global_collection_id: String,
+    #[serde(default)]
+    pub play_count: String,
+    #[serde(default)]
+    pub list_create_userid: String,
+    #[serde(default)]
+    pub list_create_listid: String,
+    #[serde(default)]
+    pub list_create_gid: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -389,14 +412,27 @@ pub struct PurchasedSongItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
+pub struct QuotedReplyHop {
+    pub user_name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct SongComment {
     pub id: String,
+    #[serde(default)]
+    pub user_id: String,
     pub user_name: String,
     pub user_avatar: String,
     pub content: String,
     pub created_time: String,
     pub like_count: i32,
     pub is_liked: bool,
+    #[serde(default)]
+    pub is_hot: bool,
+    #[serde(default)]
+    pub vip_level: i32,
     pub location: String,
     pub reply_count: i32,
     pub special_child_id: String,
@@ -405,6 +441,14 @@ pub struct SongComment {
     pub reply_user_name: Option<String>,
     pub reply_quoted_content: Option<String>,
     pub parent_id: Option<String>,
+    #[serde(default)]
+    pub root_id: Option<String>,
+    #[serde(default)]
+    pub reply_target_comment_id: Option<String>,
+    #[serde(default)]
+    pub reply_chain_hops: Vec<QuotedReplyHop>,
+    #[serde(default)]
+    pub timestamp_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -473,4 +517,16 @@ pub struct SharedMusicResolved {
     pub playlist: Option<Playlist>,
     pub songs: Vec<Song>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ResolvedSongAlbumMeta {
+    pub album_name: String,
+    pub album_id: String,
+    pub artist_id: String,
+    pub artist_name: String,
+    pub cover_url: String,
+    pub publish_date: String,
+    pub company: String,
 }

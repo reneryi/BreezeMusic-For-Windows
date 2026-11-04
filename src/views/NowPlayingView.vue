@@ -402,6 +402,18 @@ async function handleSendComment() {
     :style="{
       '--lyric-c1': activeLyricColors.c1,
       '--lyric-c2': activeLyricColors.c2,
+      '--dyn-c1': store.coverColorGrades.c1,
+      '--dyn-c2': store.coverColorGrades.c2,
+      '--dyn-c3': store.coverColorGrades.c3,
+      '--dyn-c4': store.coverColorGrades.c4,
+      '--dyn-c5': store.coverColorGrades.c5,
+      '--dyn-c6': store.coverColorGrades.c6,
+      '--dyn-c7': store.coverColorGrades.c7,
+      '--dyn-c8': store.coverColorGrades.c8,
+      '--dyn-c9': store.coverColorGrades.c9,
+      '--dyn-c10': store.coverColorGrades.c10,
+      '--dyn-c11': store.coverColorGrades.c11,
+      '--dyn-c12': store.coverColorGrades.c12,
       '--halo-scale': 1 + (avgEnergy / 100) * 0.24,
       '--bass-scale': 1 + (store.rhythmTelemetry?.bassEnergy || 0) * 0.32,
       '--mid-scale': 1 + (store.rhythmTelemetry?.midVocalEnergy || 0) * 0.24,
@@ -656,31 +668,16 @@ async function handleSendComment() {
             <p class="np-song-sub">
               <span
                 class="np-clickable-link"
-                title="点击前往歌手主页"
-                @click="
-                  store.currentSong &&
-                    store.openArtistDetail(
-                      store.currentSong.artistId,
-                      store.currentSong.artist,
-                      store.currentSong.coverUrl
-                    )
-                "
+                title="点击前往歌手独立主页（多歌手支持选择）"
+                @click="store.currentSong && store.navigateToSongArtist(store.currentSong)"
               >
                 {{ store.currentSong?.artist || "微风音乐" }}
               </span>
               <span
                 v-if="store.currentSong?.album"
                 class="np-clickable-link"
-                title="点击前往专辑详情"
-                @click="
-                  store.currentSong &&
-                    store.openAlbumDetail(
-                      store.currentSong.albumId,
-                      store.currentSong.album,
-                      store.currentSong.artist,
-                      store.currentSong.coverUrl
-                    )
-                "
+                title="点击前往专辑独立详情页"
+                @click="store.currentSong && store.navigateToSongAlbum(store.currentSong)"
               >
                 · {{ store.currentSong.album }}
               </span>
@@ -819,11 +816,22 @@ async function handleSendComment() {
 
             <button
               class="np-tool-pill"
-              :class="{ active: activeOverlayPanel === 'comments' }"
-              @click="togglePanel('comments')"
+              :class="{ active: store.isCommentsModalOpen }"
+              title="打开独立歌曲评论弹窗（支持热评/最新、贝塞尔分支回复与7级楼中楼树）"
+              @click="store.openCommentsModal(store.currentSong)"
             >
               <PlumpIcon name="comment" :size="15" />
               <span>评论 ({{ formatCommentCount(store.activeSongComments.length) }})</span>
+            </button>
+
+            <button
+              class="np-tool-pill"
+              :class="{ active: store.desktopLyricEnabled }"
+              title="开启/关闭桌面悬浮逐字歌词（支持自由拖动与定长调节）"
+              @click="store.desktopLyricEnabled = !store.desktopLyricEnabled"
+            >
+              <PlumpIcon name="lyric" :size="15" />
+              <span>词</span>
             </button>
 
             <button
@@ -1035,6 +1043,29 @@ async function handleSendComment() {
               {{ b.label }}
             </button>
           </div>
+
+          <div class="cfg-label mt-14">当前专辑封面 12 级全色阶流体取色矩阵 (CIE L* 色相直方图提取)</div>
+          <div style="display: grid; grid-template-columns: repeat(12, 1fr); gap: 6px; margin-top: 6px">
+            <div
+              v-for="(hex, key) in store.coverColorGrades"
+              :key="key"
+              :style="{
+                height: '26px',
+                borderRadius: '6px',
+                background: hex,
+                border: '1px solid rgba(255,255,255,0.16)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '10px',
+                fontWeight: '800',
+                color: Number(String(key).slice(1)) <= 6 ? '#fff' : '#08121e'
+              }"
+              :title="`${String(key).toUpperCase()}: ${hex}`"
+            >
+              {{ String(key).toUpperCase() }}
+            </div>
+          </div>
         </div>
 
         <!-- 面板 B：歌词显示设置（2x3 六大四字主题网格 + 景深 + 时长校准） -->
@@ -1136,6 +1167,16 @@ async function handleSendComment() {
 
             <div class="dsp-right-btns">
               <button
+                class="bg-pill-btn active"
+                title="跳转到专门的独立调音台页面进行深度编辑修改"
+                @click="
+                  activeOverlayPanel = 'none';
+                  store.openSoundMixerFromPlayer();
+                "
+              >
+                🎛️ 跳转独立调音台编辑
+              </button>
+              <button
                 class="bg-pill-btn"
                 :class="{ active: store.peqBypass }"
                 @click="
@@ -1206,6 +1247,18 @@ async function handleSendComment() {
                     class="mini-badge hires"
                   >
                     {{ tag }}
+                  </span>
+                  <span
+                    class="mini-badge sq"
+                    style="margin-left: auto; cursor: pointer"
+                    title="跳转到专门的调音台页面编辑修改此音效参数"
+                    @click.stop="
+                      store.applyViperEffect(vf);
+                      activeOverlayPanel = 'none';
+                      store.openSoundMixerFromPlayer();
+                    "
+                  >
+                    编辑音效 →
                   </span>
                 </div>
               </button>

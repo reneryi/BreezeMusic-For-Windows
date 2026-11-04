@@ -51,17 +51,19 @@
           <span
             class="pb-song-artist"
             style="cursor: pointer"
-            title="点击查看歌手详情"
-            @click="
-              store.currentSong &&
-                store.openArtistDetail(
-                  store.currentSong.artistId,
-                  store.currentSong.artist,
-                  store.currentSong.coverUrl
-                )
-            "
+            title="点击查看歌手详情（多歌手支持选择）"
+            @click="store.currentSong && store.navigateToSongArtist(store.currentSong)"
           >
             {{ store.currentSong?.artist || "双击顶部「发现」开启概念版畅听之旅" }}
+          </span>
+          <span
+            v-if="store.currentSong?.album"
+            class="pb-song-artist"
+            style="cursor: pointer; opacity: 0.78"
+            title="点击跳转到专辑详情页"
+            @click.stop="store.navigateToSongAlbum(store.currentSong)"
+          >
+            · {{ store.currentSong.album }}
           </span>
           <span
             v-if="store.currentSong"
@@ -177,6 +179,14 @@
           </div>
         </div>
       </div>
+
+      <button
+        class="pb-tool-icon-btn"
+        title="查看当前歌曲评论弹窗"
+        @click="store.openCommentsModal(store.currentSong)"
+      >
+        <PlumpIcon name="comment" :size="18" />
+      </button>
 
       <button
         class="pb-tool-icon-btn"
@@ -560,7 +570,6 @@ function cycleQualityQuick() {
 }
 
 function openTunerDesk() {
-  store.isNowPlayingOpen = false;
-  store.activeTab = "radio";
+  store.openSoundMixerFromPlayer();
 }
 </script>

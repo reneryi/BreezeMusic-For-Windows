@@ -408,18 +408,76 @@ async function copyEnvDiagnostic() {
         <!-- 3. 歌词与桌面悬浮词 -->
         <template v-else-if="activeCategory === 'lyrics'">
           <section class="settings-card-panel">
-            <h3>KRC 逐字歌词排版与光学景深</h3>
+            <h3>系统级自由拖动桌面歌词与定长规格</h3>
             <div class="setting-toggle-line">
               <div>
                 <div class="stl-title">系统级跨应用穿透桌面歌词</div>
                 <div class="stl-sub">
-                  在屏幕上方或底部悬浮显示实时逐字双语歌词，支持锁定物理点击穿透
+                  在屏幕内任意位置自由拖动悬浮显示实时逐字双语歌词，支持规定长度与锁定防误触
                 </div>
               </div>
               <label class="plump-switch">
                 <input v-model="store.desktopLyricEnabled" type="checkbox" />
                 <span class="plump-slider"></span>
               </label>
+            </div>
+
+            <div class="setting-toggle-line">
+              <div>
+                <div class="stl-title">桌面歌词规定长度 ({{ store.desktopLyricWidth }}px)</div>
+                <div class="stl-sub">
+                  自由设定桌面歌词悬浮条固定宽度 (480px ~ 1280px)，超出自动优雅截断不溢出
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px">
+                <input
+                  v-model.number="store.desktopLyricWidth"
+                  type="range"
+                  min="480"
+                  max="1280"
+                  step="20"
+                />
+                <button
+                  class="tonal-pill-btn sm"
+                  @click="
+                    store.desktopLyricX = null;
+                    store.desktopLyricY = null;
+                    store.desktopLyricWidth = 760;
+                    store.notify('已重置桌面歌词位置与规定长度 (760px)');
+                  "
+                >
+                  重置位置
+                </button>
+              </div>
+            </div>
+
+            <div class="setting-toggle-line">
+              <div>
+                <div class="stl-title">桌面歌词字号 ({{ store.desktopLyricFontSize }}px) 与主题色</div>
+                <div class="stl-sub">实时调整桌面悬浮逐字扫光字号与色彩</div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px">
+                <input
+                  v-model.number="store.desktopLyricFontSize"
+                  type="range"
+                  min="18"
+                  max="38"
+                  step="1"
+                />
+                <button
+                  v-for="c in ['#00e5ff', '#ffd54f', '#ff6b8b', '#00e5a3', '#b388ff']"
+                  :key="c"
+                  :style="{
+                    width: '22px',
+                    height: '22px',
+                    borderRadius: '50%',
+                    background: c,
+                    border: store.desktopLyricColor === c ? '2px solid #fff' : '1px solid rgba(255,255,255,0.2)',
+                    cursor: 'pointer'
+                  }"
+                  @click="store.desktopLyricColor = c"
+                ></button>
+              </div>
             </div>
 
             <div class="setting-toggle-line">

@@ -1,10 +1,13 @@
 import { defineStore } from "pinia";
 import { ref, computed, watch, reactive } from "vue";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-import { kugouClient } from "../api/kugou";
+import { kugouClient, splitSongAuthors } from "../api/kugou";
 import type {
   AccountProfile,
   AcousticFieldSettings,
+  CoverColorGrades,
+  NavigationHistoryEntry,
+  SongAuthor,
   AlbumItem,
   AppColorScheme,
   AudioQualityValue,
@@ -42,6 +45,74 @@ import type {
 
 export type MainTab = MainNavTab;
 
+function clampVal(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+
+function hslToRgbTuple(h: number, s: number, l: number): [number, number, number] {
+  const hue = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r1 = 0, g1 = 0, b1 = 0;
+  if (hue < 60) { r1 = c; g1 = x; b1 = 0; }
+  else if (hue < 120) { r1 = x; g1 = c; b1 = 0; }
+  else if (hue < 180) { r1 = 0; g1 = c; b1 = x; }
+  else if (hue < 240) { r1 = 0; g1 = x; b1 = c; }
+  else if (hue < 300) { r1 = x; g1 = 0; b1 = c; }
+  else { r1 = c; g1 = 0; b1 = x; }
+  return [
+    Math.round(clampVal((r1 + m) * 255, 0, 255)),
+    Math.round(clampVal((g1 + m) * 255, 0, 255)),
+    Math.round(clampVal((b1 + m) * 255, 0, 255))
+  ];
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  return "#" + [r, g, b].map((v) => clampVal(Math.round(v), 0, 255).toString(16).padStart(2, "0")).join("");
+}
+
+function buildTwelveGradePalette(h: number, s: number, l: number, secondaryHue?: number): CoverColorGrades {
+  const baseHue = ((h % 360) + 360) % 360;
+  const secHue = secondaryHue !== undefined ? (((secondaryHue % 360) + 360) % 360) : ((baseHue + 32) % 360);
+  const sat = clampVal(s, 0.34, 0.88);
+  const g = (hue: number, sVal: number, lVal: number) => {
+    const [r, gr, b] = hslToRgbTuple(hue, clampVal(sVal, 0.12, 0.96), clampVal(lVal, 0.04, 0.97));
+    return rgbToHex(r, gr, b);
+  };
+  return {
+    c1: g(baseHue, sat * 0.65, 0.06),
+    c2: g(baseHue, sat * 0.72, 0.11),
+    c3: g(baseHue, sat * 0.78, 0.17),
+    c4: g((baseHue + secHue) * 0.5, sat * 0.82, 0.24),
+    c5: g(baseHue, sat * 0.86, 0.33),
+    c6: g(baseHue, sat * 0.92, clampVal(l, 0.44, 0.56)),
+    c7: g(secHue, sat * 0.90, 0.54),
+    c8: g(baseHue, sat * 0.95, 0.64),
+    c9: g(secHue, sat * 0.88, 0.72),
+    c10: g(baseHue, sat * 0.74, 0.82),
+    c11: g(baseHue, sat * 0.48, 0.91),
+    c12: g(baseHue, sat * 0.35, 0.96)
+  };
+}
+
+function applyCoverColorGradesCss(grades: CoverColorGrades) {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  root.style.setProperty("--dyn-c1", grades.c1);
+  root.style.setProperty("--dyn-c2", grades.c2);
+  root.style.setProperty("--dyn-c3", grades.c3);
+  root.style.setProperty("--dyn-c4", grades.c4);
+  root.style.setProperty("--dyn-c5", grades.c5);
+  root.style.setProperty("--dyn-c6", grades.c6);
+  root.style.setProperty("--dyn-c7", grades.c7);
+  root.style.setProperty("--dyn-c8", grades.c8);
+  root.style.setProperty("--dyn-c9", grades.c9);
+  root.style.setProperty("--dyn-c10", grades.c10);
+  root.style.setProperty("--dyn-c11", grades.c11);
+  root.style.setProperty("--dyn-c12", grades.c12);
+}
+
 export const useAppStore = defineStore("breezeApp", () => {
   // ================= 1. 顶部天际线中枢导航与全局浮层状态 =================
   const activeTab = ref<MainNavTab>("discover");
@@ -51,15 +122,70 @@ export const useAppStore = defineStore("breezeApp", () => {
   const isVipCenterOpen = ref(false);
   const isFocusPodOpen = ref(false);
   const isLyricPosterOpen = ref(false);
+  const isCommentsModalOpen = ref(false);
+  const commentsModalSong = ref<Song | null>(null);
+  const isMultiArtistModalOpen = ref(false);
+  const multiArtistCandidates = ref<SongAuthor[]>([]);
+  const multiArtistSongTitle = ref<string>("");
   const statusBanner = ref<string>("");
 
-  // 桌面悬浮穿透歌词栏
+  // 独立页面返回栈与历史记录
+  const navHistoryStack = ref<NavigationHistoryEntry[]>([]);
+  const canNavigateBack = computed(() =>
+    isNowPlayingOpen.value ||
+    navHistoryStack.value.length > 0 ||
+    (activeTab.value === "discover" && discoverSubView.value !== "home") ||
+    activeTab.value === "artist_detail" ||
+    activeTab.value === "album_detail" ||
+    activeTab.value === "playlist_detail" ||
+    activeTab.value === "search"
+  );
+
+  // 心流舱专注统计与环境伴音协同
+  const todayDateKey = new Date().toISOString().slice(0, 10);
+  const savedFocusDate = localStorage.getItem("bm_focus_date") || "";
+  const focusTodayCompletedCount = ref<number>(
+    savedFocusDate === todayDateKey ? Number(localStorage.getItem("bm_focus_count") || 0) : 0
+  );
+  const focusTodayTotalMinutes = ref<number>(
+    savedFocusDate === todayDateKey ? Number(localStorage.getItem("bm_focus_mins") || 0) : 0
+  );
+  const ambientSyncWithMusic = ref<boolean>(
+    localStorage.getItem("bm_ambient_sync_music") === "true"
+  );
+  function recordCompletedFocusSession(minutes: number) {
+    const m = Math.max(1, Math.round(minutes));
+    focusTodayCompletedCount.value += 1;
+    focusTodayTotalMinutes.value += m;
+    const key = new Date().toISOString().slice(0, 10);
+    localStorage.setItem("bm_focus_date", key);
+    localStorage.setItem("bm_focus_count", String(focusTodayCompletedCount.value));
+    localStorage.setItem("bm_focus_mins", String(focusTodayTotalMinutes.value));
+  }
+
+  // 桌面悬浮穿透歌词栏（支持规定长度与全屏自由拖动）
   const desktopLyricEnabled = ref<boolean>(
     localStorage.getItem("bm_desktop_lyric") === "true"
   );
   const desktopLyricLocked = ref<boolean>(false);
   const desktopLyricColor = ref<string>(localStorage.getItem("bm_desktop_lyric_color") || "#00e5ff");
   const desktopLyricFontSize = ref<number>(Number(localStorage.getItem("bm_desktop_lyric_size")) || 24);
+  const desktopLyricWidth = ref<number>(
+    clampVal(Number(localStorage.getItem("bm_desktop_lyric_width")) || 760, 480, 1280)
+  );
+  const desktopLyricX = ref<number | null>(
+    localStorage.getItem("bm_desktop_lyric_x") !== null
+      ? Number(localStorage.getItem("bm_desktop_lyric_x"))
+      : null
+  );
+  const desktopLyricY = ref<number | null>(
+    localStorage.getItem("bm_desktop_lyric_y") !== null
+      ? Number(localStorage.getItem("bm_desktop_lyric_y"))
+      : null
+  );
+  const desktopLyricShowTranslation = ref<boolean>(
+    localStorage.getItem("bm_desktop_lyric_trans") !== "false"
+  );
 
   // 全局右键上下文菜单与歌曲详情/加歌单弹窗
   const contextMenu = reactive<{
@@ -482,6 +608,29 @@ export const useAppStore = defineStore("breezeApp", () => {
   watch(desktopLyricEnabled, (v) =>
     localStorage.setItem("bm_desktop_lyric", String(v))
   );
+  watch(desktopLyricColor, (v) =>
+    localStorage.setItem("bm_desktop_lyric_color", v)
+  );
+  watch(desktopLyricFontSize, (v) =>
+    localStorage.setItem("bm_desktop_lyric_size", String(v))
+  );
+  watch(desktopLyricWidth, (v) =>
+    localStorage.setItem("bm_desktop_lyric_width", String(clampVal(v, 480, 1280)))
+  );
+  watch(desktopLyricX, (v) => {
+    if (v === null) localStorage.removeItem("bm_desktop_lyric_x");
+    else localStorage.setItem("bm_desktop_lyric_x", String(Math.round(v)));
+  });
+  watch(desktopLyricY, (v) => {
+    if (v === null) localStorage.removeItem("bm_desktop_lyric_y");
+    else localStorage.setItem("bm_desktop_lyric_y", String(Math.round(v)));
+  });
+  watch(desktopLyricShowTranslation, (v) =>
+    localStorage.setItem("bm_desktop_lyric_trans", String(v))
+  );
+  watch(ambientSyncWithMusic, (v) =>
+    localStorage.setItem("bm_ambient_sync_music", String(v))
+  );
   watch(climaxModeEnabled, (v) =>
     localStorage.setItem("bm_climax_mode", String(v))
   );
@@ -533,12 +682,16 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   const isLoggedIn = computed(() => Boolean(session.value?.token));
 
-  // ================= 7. 专辑封面三色流体提取器 =================
+  // ================= 7. 专辑封面 12 级全色阶流体提取器 (12-Grade Cover Tonal Palette) =================
   const coverPalette = ref<[string, string, string]>([
     "#2b8cff",
     "#00c4a7",
     "#6c5ce7",
   ]);
+  const coverColorGrades = ref<CoverColorGrades>(
+    buildTwelveGradePalette(208, 0.78, 0.52, 168)
+  );
+  applyCoverColorGradesCss(coverColorGrades.value);
 
   function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
     r /= 255;
@@ -590,6 +743,9 @@ export const useAppStore = defineStore("breezeApp", () => {
   function extractCoverColors(imgUrl: string) {
     if (!imgUrl) {
       coverPalette.value = ["#2b8cff", "#00c4a7", "#6c5ce7"];
+      const fallbackGrades = buildTwelveGradePalette(208, 0.78, 0.52, 168);
+      coverColorGrades.value = fallbackGrades;
+      applyCoverColorGradesCss(fallbackGrades);
       return;
     }
     const img = new Image();
@@ -652,9 +808,12 @@ export const useAppStore = defineStore("breezeApp", () => {
             hslToRgbCss(secondary.h, secondary.s, secondary.l),
             hslToRgbCss(tertiary.h, tertiary.s, tertiary.l),
           ];
+          const grades = buildTwelveGradePalette(primary.h, primary.s, primary.l, secondary.h);
+          coverColorGrades.value = grades;
+          applyCoverColorGradesCss(grades);
         }
       } catch {
-        // 跨域未携带 CORS 时根据 URL 哈希生成稳定的高颜值三色流光色板
+        // 跨域未携带 CORS 时根据 URL 哈希生成稳定的 12 级高颜值流光色板
         let hash = 0;
         for (let i = 0; i < imgUrl.length; i++) {
           hash = (hash * 31 + imgUrl.charCodeAt(i)) | 0;
@@ -667,6 +826,9 @@ export const useAppStore = defineStore("breezeApp", () => {
           hslToRgbCss(h2, 0.74, 0.52),
           hslToRgbCss(h3, 0.7, 0.54),
         ];
+        const grades = buildTwelveGradePalette(h1, 0.78, 0.52, h2);
+        coverColorGrades.value = grades;
+        applyCoverColorGradesCss(grades);
       }
     };
     img.src = imgUrl;
@@ -1762,7 +1924,7 @@ export const useAppStore = defineStore("breezeApp", () => {
           list.find((p) => p.isLiked && p.trackCount > 0) ||
           list.find((p) => p.trackCount > 0) ||
           list[0];
-        await selectPlaylist(preferred);
+        await selectPlaylist(preferred, false);
       }
     } catch (e: any) {
       notify(`获取歌单失败：${String(e)}`);
@@ -1771,17 +1933,117 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
-  async function selectPlaylist(pl: Playlist) {
+  function pushNavHistory() {
+    const entry: NavigationHistoryEntry = {
+      tab: activeTab.value,
+      discoverSubView: discoverSubView.value,
+      libraryAssetTab: libraryAssetTab.value,
+      libraryDetailMode: libraryDetailMode.value,
+      artistId: activeArtistDetail.value?.artistId,
+      albumId: activeAlbumDetail.value?.albumId,
+      playlistId: selectedPlaylist.value?.id || selectedPlaylist.value?.globalCollectionId,
+      returnToNowPlaying: isNowPlayingOpen.value,
+    };
+    const top = navHistoryStack.value[navHistoryStack.value.length - 1];
+    if (
+      !top ||
+      top.tab !== entry.tab ||
+      top.discoverSubView !== entry.discoverSubView ||
+      top.artistId !== entry.artistId ||
+      top.albumId !== entry.albumId ||
+      top.playlistId !== entry.playlistId ||
+      top.returnToNowPlaying !== entry.returnToNowPlaying
+    ) {
+      navHistoryStack.value.push(entry);
+      if (navHistoryStack.value.length > 24) {
+        navHistoryStack.value.shift();
+      }
+    }
+  }
+
+  function navigateBack() {
+    if (isNowPlayingOpen.value) {
+      isNowPlayingOpen.value = false;
+      return;
+    }
+    const popped = navHistoryStack.value.pop();
+    if (popped) {
+      if (popped.returnToNowPlaying) {
+        activeTab.value = popped.tab;
+        if (popped.discoverSubView) discoverSubView.value = popped.discoverSubView;
+        isNowPlayingOpen.value = true;
+        return;
+      }
+      activeTab.value = popped.tab;
+      if (popped.discoverSubView) discoverSubView.value = popped.discoverSubView;
+      if (popped.libraryAssetTab) libraryAssetTab.value = popped.libraryAssetTab;
+      if (popped.libraryDetailMode) libraryDetailMode.value = popped.libraryDetailMode;
+      scrollStageToTop();
+      return;
+    }
+    if (activeTab.value === "discover" && discoverSubView.value !== "home") {
+      discoverSubView.value = "home";
+      scrollStageToTop();
+      return;
+    }
+    if (
+      activeTab.value === "artist_detail" ||
+      activeTab.value === "album_detail" ||
+      activeTab.value === "playlist_detail" ||
+      activeTab.value === "search"
+    ) {
+      activeTab.value = "discover";
+      discoverSubView.value = "home";
+      scrollStageToTop();
+    }
+  }
+
+  function openSoundMixerFromPlayer() {
+    pushNavHistory();
+    isNowPlayingOpen.value = false;
+    activeTab.value = "tuner";
+    scrollStageToTop();
+  }
+
+  async function selectPlaylist(pl: Playlist, openStandalonePage = true) {
+    if (openStandalonePage) {
+      pushNavHistory();
+      activeTab.value = "playlist_detail";
+      isNowPlayingOpen.value = false;
+      isSearchPaletteOpen.value = false;
+      scrollStageToTop();
+    }
     selectedPlaylist.value = pl;
     libraryDetailMode.value = "playlist";
     isLoadingLibrary.value = true;
     try {
-      const songs = await kugouClient.getPlaylistSongs(
-        pl.globalCollectionId || pl.id
-      );
+      const gid = pl.globalCollectionId || pl.id;
+      const [songs, metaInfo] = await Promise.all([
+        kugouClient.getPlaylistSongs(gid),
+        !pl.isCreatedByMe && gid
+          ? kugouClient.getPlaylistInfo(gid).catch(() => null)
+          : Promise.resolve(null),
+      ]);
       playlistSongs.value = songs;
-      if (pl.trackCount < songs.length) {
-        pl.trackCount = songs.length;
+      if (metaInfo && selectedPlaylist.value) {
+        selectedPlaylist.value = {
+          ...selectedPlaylist.value,
+          title: metaInfo.title || selectedPlaylist.value.title,
+          name: metaInfo.title || selectedPlaylist.value.name,
+          description: metaInfo.description || selectedPlaylist.value.description,
+          intro: metaInfo.intro || metaInfo.description || selectedPlaylist.value.intro,
+          coverUrl: metaInfo.coverUrl || selectedPlaylist.value.coverUrl || songs[0]?.coverUrl || "",
+          creator: metaInfo.creator || selectedPlaylist.value.creator,
+          playCount: metaInfo.playCount || selectedPlaylist.value.playCount,
+          trackCount: Math.max(songs.length, metaInfo.trackCount || 0, selectedPlaylist.value.trackCount || 0),
+        };
+      } else if (selectedPlaylist.value) {
+        if (selectedPlaylist.value.trackCount < songs.length) {
+          selectedPlaylist.value.trackCount = songs.length;
+        }
+        if (!selectedPlaylist.value.coverUrl && songs[0]?.coverUrl) {
+          selectedPlaylist.value.coverUrl = songs[0].coverUrl;
+        }
       }
       if (pl.isLiked || pl.title === "我喜欢") {
         likedSongs.value = songs;
@@ -1791,6 +2053,118 @@ export const useAppStore = defineStore("breezeApp", () => {
     } finally {
       isLoadingLibrary.value = false;
     }
+  }
+
+  async function openPlaylistDetail(pl: Playlist) {
+    await selectPlaylist(pl, true);
+  }
+
+  async function refreshCurrentPlaylistOnly() {
+    const pl = selectedPlaylist.value;
+    if (!pl) return;
+    isLoadingLibrary.value = true;
+    try {
+      const gid = pl.globalCollectionId || pl.id;
+      const [songs, metaInfo] = await Promise.all([
+        kugouClient.getPlaylistSongs(gid),
+        !pl.isCreatedByMe && gid
+          ? kugouClient.getPlaylistInfo(gid).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      playlistSongs.value = songs;
+      if (metaInfo && selectedPlaylist.value) {
+        selectedPlaylist.value = {
+          ...selectedPlaylist.value,
+          title: metaInfo.title || selectedPlaylist.value.title,
+          name: metaInfo.title || selectedPlaylist.value.name,
+          description: metaInfo.description || selectedPlaylist.value.description,
+          intro: metaInfo.intro || metaInfo.description || selectedPlaylist.value.intro,
+          coverUrl: metaInfo.coverUrl || selectedPlaylist.value.coverUrl || songs[0]?.coverUrl || "",
+          trackCount: Math.max(songs.length, metaInfo.trackCount || 0),
+        };
+      } else if (selectedPlaylist.value) {
+        selectedPlaylist.value.trackCount = Math.max(songs.length, selectedPlaylist.value.trackCount || 0);
+        if (!selectedPlaylist.value.coverUrl && songs[0]?.coverUrl) {
+          selectedPlaylist.value.coverUrl = songs[0].coverUrl;
+        }
+      }
+      if (pl.isLiked || pl.title === "我喜欢") {
+        likedSongs.value = songs;
+      }
+      notify(`已刷新歌单「${selectedPlaylist.value?.title || pl.title}」（共 ${songs.length} 首）`);
+    } catch (e: any) {
+      notify(`刷新歌单失败：${String(e)}`);
+    } finally {
+      isLoadingLibrary.value = false;
+    }
+  }
+
+  async function updatePlaylistMeta(listId: number, name: string, intro: string, coverUrl = "") {
+    try {
+      await kugouClient.updateUserPlaylist(listId, name, intro, coverUrl);
+      if (selectedPlaylist.value && selectedPlaylist.value.listId === listId) {
+        selectedPlaylist.value.title = name;
+        selectedPlaylist.value.name = name;
+        selectedPlaylist.value.description = intro;
+        selectedPlaylist.value.intro = intro;
+        if (coverUrl) selectedPlaylist.value.coverUrl = coverUrl;
+      }
+      const target = userPlaylists.value.find((p) => p.listId === listId);
+      if (target) {
+        target.title = name;
+        target.name = name;
+        target.description = intro;
+        target.intro = intro;
+        if (coverUrl) target.coverUrl = coverUrl;
+      }
+      notify(`已保存歌单「${name}」编辑信息并同步`);
+      return true;
+    } catch (e: any) {
+      notify(`编辑歌单失败：${String(e)}`);
+      return false;
+    }
+  }
+
+  async function batchAddSongsToPlaylist(listId: number, songs: Song[]) {
+    if (!songs.length) return false;
+    try {
+      await kugouClient.addSongsToPlaylistBatch(listId, songs);
+      notify(`已将 ${songs.length} 首歌曲批量添加至目标歌单`);
+      await loadUserPlaylists();
+      return true;
+    } catch (e: any) {
+      notify(`批量添加失败：${String(e)}`);
+      return false;
+    }
+  }
+
+  async function batchRemoveSongsFromPlaylist(songsToRemove: Song[]) {
+    const pl = selectedPlaylist.value;
+    if (!pl || !pl.listId || songsToRemove.length === 0) {
+      notify("仅自建云歌单支持批量移除曲目");
+      return false;
+    }
+    let removedCount = 0;
+    const removeHashes = new Set(songsToRemove.map((s) => s.hash.toLowerCase()));
+    for (const s of songsToRemove) {
+      try {
+        await kugouClient.removeSongFromPlaylist(pl.listId, s);
+        removedCount += 1;
+      } catch {
+        // continue
+      }
+    }
+    playlistSongs.value = playlistSongs.value.filter(
+      (s) => !removeHashes.has((s.hash || "").toLowerCase())
+    );
+    if (pl.isLiked) {
+      likedSongs.value = likedSongs.value.filter(
+        (s) => !removeHashes.has((s.hash || "").toLowerCase())
+      );
+    }
+    pl.trackCount = playlistSongs.value.length;
+    notify(`已从「${pl.title}」批量移除 ${removedCount} 首歌曲`);
+    return true;
   }
 
   async function createNewPlaylist(name: string) {
@@ -2149,16 +2523,24 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
+  const artistSongsPage = ref<number>(1);
+  const artistSongsHasMore = ref<boolean>(true);
+  const isLoadingMoreArtistSongs = ref<boolean>(false);
+
   async function openArtistDetail(
     artistId: string,
     fallbackName = "",
     fallbackAvatar = ""
   ) {
-    activeTab.value = "library";
+    pushNavHistory();
+    activeTab.value = "artist_detail";
     libraryDetailMode.value = "artist";
     artistDetailSubTab.value = "songs";
+    artistSongsPage.value = 1;
+    artistSongsHasMore.value = true;
     isNowPlayingOpen.value = false;
     isSearchPaletteOpen.value = false;
+    isMultiArtistModalOpen.value = false;
     scrollStageToTop();
     isLoadingArtist.value = true;
 
@@ -2177,29 +2559,57 @@ export const useAppStore = defineStore("breezeApp", () => {
     };
 
     try {
-      if (artistId && artistId !== "0") {
+      let resolvedId = (artistId || "").trim();
+      if ((!resolvedId || resolvedId === "0") && fallbackName) {
+        const matchedArtists = await kugouClient.searchArtists(fallbackName).catch(() => []);
+        const exact =
+          matchedArtists.find((a) => a.name.toLowerCase() === fallbackName.trim().toLowerCase()) ||
+          matchedArtists[0];
+        if (exact && exact.artistId && exact.artistId !== "0") {
+          resolvedId = exact.artistId;
+          if (!fallbackAvatar && exact.avatarUrl) {
+            fallbackAvatar = exact.avatarUrl;
+          }
+        }
+      }
+
+      if (resolvedId && resolvedId !== "0") {
         const [detail, songs, albums] = await Promise.all([
-          kugouClient.getArtistDetail(artistId).catch(() => null),
-          kugouClient.getArtistSongs(artistId, artistSongsSort.value, 1),
-          kugouClient.getArtistAlbums(artistId, 1, "new").catch(() => []),
+          kugouClient.getArtistDetail(resolvedId).catch(() => null),
+          kugouClient.getArtistSongs(resolvedId, artistSongsSort.value, 1),
+          kugouClient.getArtistAlbums(resolvedId, 1, "new").catch(() => []),
         ]);
         if (detail) {
           detail.isFollowed = followedArtists.value.some(
             (a) => a.artistId === detail.artistId || a.name === detail.name
           );
+          if (!detail.avatarUrl) detail.avatarUrl = fallbackAvatar || songs[0]?.coverUrl || "";
+          if (!detail.songCount || detail.songCount < songs.length) detail.songCount = songs.length;
+          if (!detail.albumCount || detail.albumCount < albums.length) detail.albumCount = albums.length;
           activeArtistDetail.value = detail;
+        } else if (activeArtistDetail.value) {
+          activeArtistDetail.value.artistId = resolvedId;
+          activeArtistDetail.value.songCount = songs.length;
+          activeArtistDetail.value.albumCount = albums.length;
+          if (!activeArtistDetail.value.avatarUrl && songs[0]?.coverUrl) {
+            activeArtistDetail.value.avatarUrl = songs[0].coverUrl;
+          }
         }
         activeArtistSongs.value = songs;
         activeArtistAlbums.value = albums;
+        artistSongsHasMore.value = songs.length >= 25;
       } else if (fallbackName) {
         const [songs, albums] = await Promise.all([
-          kugouClient.searchSongs(fallbackName, 1, 40),
+          kugouClient.searchSongs(fallbackName, 1, 50),
           kugouClient.searchAlbums(fallbackName).catch(() => []),
         ]);
         activeArtistSongs.value = songs;
         activeArtistAlbums.value = albums;
-        if (songs[0]?.coverUrl && activeArtistDetail.value) {
-          activeArtistDetail.value.avatarUrl = songs[0].coverUrl;
+        artistSongsHasMore.value = false;
+        if (activeArtistDetail.value) {
+          if (!activeArtistDetail.value.avatarUrl && songs[0]?.coverUrl) {
+            activeArtistDetail.value.avatarUrl = songs[0].coverUrl;
+          }
           activeArtistDetail.value.songCount = songs.length;
           activeArtistDetail.value.albumCount = albums.length;
         }
@@ -2211,13 +2621,39 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
+  async function loadMoreArtistSongs() {
+    const aid = activeArtistDetail.value?.artistId || activeArtistDetail.value?.singerId;
+    if (!aid || aid === "0" || isLoadingMoreArtistSongs.value || !artistSongsHasMore.value) return;
+    isLoadingMoreArtistSongs.value = true;
+    try {
+      const nextPage = artistSongsPage.value + 1;
+      const more = await kugouClient.getArtistSongs(String(aid), artistSongsSort.value, nextPage);
+      if (more.length === 0) {
+        artistSongsHasMore.value = false;
+      } else {
+        const seen = new Set(activeArtistSongs.value.map((s) => s.hash));
+        const unique = more.filter((s) => !seen.has(s.hash));
+        activeArtistSongs.value = [...activeArtistSongs.value, ...unique];
+        artistSongsPage.value = nextPage;
+        if (more.length < 25 || unique.length === 0) {
+          artistSongsHasMore.value = false;
+        }
+      }
+    } catch {
+      artistSongsHasMore.value = false;
+    } finally {
+      isLoadingMoreArtistSongs.value = false;
+    }
+  }
+
   async function openAlbumDetail(
     albumId: string,
     fallbackName = "",
     fallbackArtist = "",
     fallbackCover = ""
   ) {
-    activeTab.value = "library";
+    pushNavHistory();
+    activeTab.value = "album_detail";
     libraryDetailMode.value = "album";
     isNowPlayingOpen.value = false;
     isSearchPaletteOpen.value = false;
@@ -2269,6 +2705,81 @@ export const useAppStore = defineStore("breezeApp", () => {
     } finally {
       isLoadingAlbum.value = false;
     }
+  }
+
+  async function navigateToSongArtist(song: Song | null | undefined, specificAuthor?: SongAuthor) {
+    if (!song && !specificAuthor) return;
+    if (specificAuthor) {
+      isMultiArtistModalOpen.value = false;
+      await openArtistDetail(specificAuthor.id || "0", specificAuthor.name, specificAuthor.avatar || song?.coverUrl || "");
+      return;
+    }
+    if (!song) return;
+    const authors = song.authors && song.authors.length > 0 ? song.authors : splitSongAuthors(song.artist, song.artistId, song.coverUrl);
+    if (authors.length > 1) {
+      multiArtistCandidates.value = authors;
+      multiArtistSongTitle.value = song.title;
+      isMultiArtistModalOpen.value = true;
+      return;
+    }
+    const target = authors[0] || { id: song.artistId || "0", name: song.artist || "未知歌手", avatar: song.coverUrl };
+    await openArtistDetail(target.id || song.artistId || "0", target.name, target.avatar || song.coverUrl || "");
+  }
+
+  async function navigateToSongAlbum(song: Song | null | undefined) {
+    if (!song) return;
+    let albumId = (song.albumId || "").trim();
+    let albumName = (song.album || "").trim();
+    let artistId = (song.artistId || "").trim();
+    let artistName = (song.artist || "").trim();
+    let coverUrl = song.coverUrl || "";
+
+    if ((!albumId || albumId === "0") && song.hash) {
+      try {
+        const resolved = await kugouClient.resolveSongAlbumMeta(song.hash, song.albumAudioId);
+        if (resolved.albumId && resolved.albumId !== "0") {
+          albumId = resolved.albumId;
+          song.albumId = resolved.albumId;
+        }
+        if (resolved.albumName && !albumName) {
+          albumName = resolved.albumName;
+          song.album = resolved.albumName;
+        }
+        if (resolved.artistId && (!artistId || artistId === "0")) {
+          artistId = resolved.artistId;
+          song.artistId = resolved.artistId;
+        }
+        if (resolved.artistName && !artistName) {
+          artistName = resolved.artistName;
+        }
+        if (resolved.coverUrl && !coverUrl) {
+          coverUrl = resolved.coverUrl;
+        }
+      } catch {
+        // fallback to search inside openAlbumDetail
+      }
+    }
+
+    if ((!albumId || albumId === "0") && !albumName) {
+      notify("该曲目暂无关联专辑信息");
+      return;
+    }
+    await openAlbumDetail(albumId || "0", albumName || song.title, artistName, coverUrl);
+  }
+
+  async function openCommentsModal(song?: Song | null) {
+    const target = song || currentSong.value;
+    if (!target) {
+      notify("请先选择或播放一首歌曲以查看评论");
+      return;
+    }
+    commentsModalSong.value = target;
+    isCommentsModalOpen.value = true;
+    await loadCommentsForSong(target, commentSortType.value);
+  }
+
+  function closeCommentsModal() {
+    isCommentsModalOpen.value = false;
   }
 
   // ================= 10. 多维搜索执行 =================
@@ -2490,11 +3001,12 @@ export const useAppStore = defineStore("breezeApp", () => {
       return;
     }
     expandedFloorCommentId.value = cmt.id;
-    if (floorRepliesMap[cmt.id]?.length || !currentSong.value) return;
+    const targetSong = commentsModalSong.value || currentSong.value;
+    if (floorRepliesMap[cmt.id]?.length || !targetSong) return;
     isLoadingFloorReplies.value = true;
     try {
       floorRepliesMap[cmt.id] = await kugouClient.getCommentFloorReplies(
-        currentSong.value,
+        targetSong,
         cmt.id,
         cmt.specialChildId,
         1
@@ -2507,24 +3019,26 @@ export const useAppStore = defineStore("breezeApp", () => {
   }
 
   async function toggleLikeComment(cmt: SongComment) {
-    if (!currentSong.value) return;
+    const targetSong = commentsModalSong.value || currentSong.value;
+    if (!targetSong) return;
     const nextLike = !cmt.isLiked;
     cmt.isLiked = nextLike;
     cmt.likeCount = Math.max(0, cmt.likeCount + (nextLike ? 1 : -1));
     await kugouClient
-      .likeSongComment(currentSong.value, cmt.id, nextLike)
+      .likeSongComment(targetSong, cmt.id, nextLike)
       .catch(() => {});
   }
 
   async function submitSongComment(content: string, replyToId?: string) {
-    if (!currentSong.value) return false;
+    const targetSong = commentsModalSong.value || currentSong.value;
+    if (!targetSong) return false;
     if (!isLoggedIn.value) {
       isLoginModalOpen.value = true;
       return false;
     }
     try {
       const created = await kugouClient.postSongComment(
-        currentSong.value,
+        targetSong,
         content,
         replyToId
       );
@@ -2881,6 +3395,38 @@ export const useAppStore = defineStore("breezeApp", () => {
   return {
     desktopLyricColor,
     desktopLyricFontSize,
+    desktopLyricWidth,
+    desktopLyricX,
+    desktopLyricY,
+    desktopLyricShowTranslation,
+    coverColorGrades,
+    navHistoryStack,
+    canNavigateBack,
+    pushNavHistory,
+    navigateBack,
+    openSoundMixerFromPlayer,
+    isCommentsModalOpen,
+    commentsModalSong,
+    openCommentsModal,
+    closeCommentsModal,
+    isMultiArtistModalOpen,
+    multiArtistCandidates,
+    multiArtistSongTitle,
+    navigateToSongArtist,
+    navigateToSongAlbum,
+    openPlaylistDetail,
+    refreshCurrentPlaylistOnly,
+    updatePlaylistMeta,
+    batchAddSongsToPlaylist,
+    batchRemoveSongsFromPlaylist,
+    artistSongsPage,
+    artistSongsHasMore,
+    isLoadingMoreArtistSongs,
+    loadMoreArtistSongs,
+    focusTodayCompletedCount,
+    focusTodayTotalMinutes,
+    ambientSyncWithMusic,
+    recordCompletedFocusSession,
     skipExistingDownloaded: skipExistingFiles,
     hotKeywords: hotSearchKeywords,
     artistSongSort: artistSongsSort,

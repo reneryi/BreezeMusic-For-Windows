@@ -22,11 +22,13 @@
           <span>{{ store.peqBypass ? "原音直通对比中 (A/B)" : "A/B 原音对比" }}</span>
         </button>
         <button
+          v-if="store.currentSong"
           class="frameless-hover-btn"
-          @click="goToRadioPlaza"
+          title="返回全屏播放页查看实时声效表现"
+          @click="store.isNowPlayingOpen = true"
         >
-          <PlumpIcon name="radio" :size="16" />
-          <span>前往发现页 · 电台广场</span>
+          <PlumpIcon name="disc" :size="16" />
+          <span>返回播放舞台</span>
         </button>
         <button
           class="frameless-hover-btn primary-tint"
@@ -187,6 +189,18 @@
         </div>
 
         <div class="lyric-sliders-row">
+          <div class="cfg-col">
+            <div class="cfg-label">前级增益 (Master Preamp)：{{ store.masterPreampDb > 0 ? `+${store.masterPreampDb}` : store.masterPreampDb }} dB</div>
+            <input
+              v-model.number="store.masterPreampDb"
+              type="range"
+              min="-6"
+              max="6"
+              step="0.5"
+              class="pb-volume-slider full"
+              @input="store.syncDspChain()"
+            />
+          </div>
           <div class="cfg-col">
             <div class="cfg-label">品质因数 Q 值：{{ store.eqQFactor.toFixed(2) }}</div>
             <input
@@ -380,7 +394,7 @@ import PlumpIcon from "../components/PlumpIcon.vue";
 
 const store = useAppStore();
 const selectedViperCategory = ref<string>("全部");
-const viperCategories = ["全部", "官方旗舰", "3D空间", "复古介质", "曲风人声"];
+const viperCategories = ["全部", "官方旗舰", "3D空间", "复古介质", "曲风人声", "器乐发烧", "游戏影院"];
 
 const filteredViperEffects = computed(() => {
   if (selectedViperCategory.value === "全部") return store.viperEffects;
@@ -507,8 +521,5 @@ function resetAllTuning() {
   store.notify("已恢复 64-bit 母带直通原音模式");
 }
 
-function goToRadioPlaza() {
-  store.activeTab = "discover";
-  store.discoverSubView = "radio";
-}
+
 </script>

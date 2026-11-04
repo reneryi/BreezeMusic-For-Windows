@@ -12,15 +12,14 @@ function formatBytes(bytes: number): string {
 }
 
 const canRemoveFromCurrentPlaylist = computed(() => {
-  if (store.activeTab !== "library" || store.libraryDetailMode !== "playlist") {
+  if (
+    store.activeTab !== "playlist_detail" &&
+    (store.activeTab !== "library" || store.libraryDetailMode !== "playlist")
+  ) {
     return false;
   }
-  if (store.libraryAssetTab === "liked") return true;
-  if (
-    store.libraryAssetTab === "created" &&
-    store.selectedPlaylist?.isCreatedByMe &&
-    store.selectedPlaylist?.listId
-  ) {
+  if (store.selectedPlaylist?.isLiked) return true;
+  if (store.selectedPlaylist?.isCreatedByMe && store.selectedPlaylist?.listId) {
     return true;
   }
   return false;
@@ -63,18 +62,26 @@ function handleRemoveFromPlaylist() {
 
 function handleViewArtist() {
   const s = store.contextMenu.song;
-  if (s) {
-    store.openArtistDetail(s.artistId, s.artist, s.coverUrl);
-  }
   store.closeSongContextMenu();
+  if (s) {
+    store.navigateToSongArtist(s);
+  }
 }
 
 function handleViewAlbum() {
   const s = store.contextMenu.song;
-  if (s) {
-    store.openAlbumDetail(s.albumId, s.album || s.title, s.artist, s.coverUrl);
-  }
   store.closeSongContextMenu();
+  if (s) {
+    store.navigateToSongAlbum(s);
+  }
+}
+
+function handleOpenComments() {
+  const s = store.contextMenu.song;
+  store.closeSongContextMenu();
+  if (s) {
+    store.openCommentsModal(s);
+  }
 }
 
 function handlePreviewHdCover() {
@@ -216,6 +223,11 @@ const downloadTierChoices = computed(() => {
       >
         <PlumpIcon name="close" :size="15" color="var(--coral)" />
         <span>从当前歌单移除</span>
+      </button>
+
+      <button class="scm-item" @click="handleOpenComments">
+        <PlumpIcon name="comment" :size="15" />
+        <span>查看歌曲评论</span>
       </button>
 
       <button class="scm-item" @click="handleViewArtist">

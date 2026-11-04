@@ -1,11 +1,20 @@
-use crate::kugou::models::{DeviceIdentity, KugouSession};
+use crate::kugou::models::{DeviceIdentity, KugouSession, Playlist};
 use crate::kugou::signer;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PlaylistCustomMeta {
+    pub title: String,
+    pub description: String,
+    pub cover_url: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +24,10 @@ pub struct PersistedState {
     #[serde(default)]
     pub saved_accounts: Vec<KugouSession>,
     pub preferred_quality: String,
+    #[serde(default)]
+    pub playlist_overrides: BTreeMap<String, PlaylistCustomMeta>,
+    #[serde(default)]
+    pub collected_playlist_cache: BTreeMap<String, Playlist>,
 }
 
 impl Default for PersistedState {
@@ -38,6 +51,8 @@ impl Default for PersistedState {
             session: None,
             saved_accounts: Vec::new(),
             preferred_quality: "flac".to_string(),
+            playlist_overrides: BTreeMap::new(),
+            collected_playlist_cache: BTreeMap::new(),
         }
     }
 }
@@ -169,5 +184,64 @@ impl AppStore {
         }
         self.save();
         self.saved_accounts()
+    }
+
+    pub fn set_playlist_override(&self, key: &str, title: &str, description: &str, cover_url: &str) {
+        if key.trim().is_empty() {
+            return;
+        }
+        {
+            let mut guard = self.state.lock().unwrap();
+            guard.playlist_overrides.insert(
+                key.trim().to_string(),
+                PlaylistCustomMeta {
+                    title: title.trim().to_string(),
+                    description: description.trim().to_string(),
+                    cover_url: cover_url.trim().to_string(),
+                },
+            );
+        }
+        self.save();
+    }
+
+    pub fn get_playlist_override(&self, key: &str) -> Option<PlaylistCustomMeta> {
+        let guard = self.state.lock().unwrap();
+        guard.playlist_overrides.get(key.trim()).cloned()
+    }
+
+    pub fn cache_collected_playlist(&self, playlist: &Playlist) {
+        {
+            let mut guard = self.state.lock().unwrap();
+            for key in [
+                playlist.id.trim(),
+                playlist.global_collection_id.trim(),
+                playlist.list_create_gid.trim(),
+                playlist.list_create_listid.trim(),
+            ] {
+                if !key.is_empty() && key != "0" {
+                    guard
+                        .collected_playlist_cache
+                        .insert(key.to_string(), playlist.clone());
+                }
+            }
+        }
+        self.save();
+    }
+
+    pub fn get_cached_collected_playlist(&self, playlist: &Playlist) -> Option<Playlist> {
+        let guard = self.state.lock().unwrap();
+        for key in [
+            playlist.global_collection_id.trim(),
+            playlist.list_create_gid.trim(),
+            playlist.id.trim(),
+            playlist.list_create_listid.trim(),
+        ] {
+            if !key.is_empty() && key != "0" {
+                if let Some(found) = guard.collected_playlist_cache.get(key) {
+                    return Some(found.clone());
+                }
+            }
+        }
+        None
     }
 }

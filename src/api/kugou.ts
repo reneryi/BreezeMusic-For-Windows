@@ -16,13 +16,53 @@ import type {
   QrCodeSession,
   QrPollResult,
   RankItem,
+  ResolvedSongAlbumMeta,
   SharedMusicResolved,
   Song,
+  SongAuthor,
   SongComment,
   SongDetailInfo,
   VipStatusInfo,
   ViperEffectItem,
 } from "../types";
+
+export function splitSongAuthors(
+  sOrArtist: Song | string,
+  fallbackArtistId = "",
+  fallbackCoverUrl = ""
+): SongAuthor[] {
+  if (typeof sOrArtist === "object" && sOrArtist !== null) {
+    const s = sOrArtist;
+    if (Array.isArray(s.authors) && s.authors.length > 0) {
+      return s.authors
+        .filter((a) => a && a.name && a.name.trim().length > 0)
+        .map((a) => ({
+          ...a,
+          avatarUrl: a.avatarUrl || a.avatar || s.coverUrl || "",
+          avatar: a.avatar || a.avatarUrl || s.coverUrl || "",
+        }));
+    }
+    return splitSongAuthors(s.artist || "", s.artistId || "", s.coverUrl || "");
+  }
+  const rawArtist = (sOrArtist || "").trim();
+  if (!rawArtist || rawArtist === "未知歌手") {
+    return [{ id: fallbackArtistId || "", name: "未知歌手", avatarUrl: fallbackCoverUrl, avatar: fallbackCoverUrl }];
+  }
+  const parts = rawArtist
+    .split(/[、/&，,;；]+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length <= 1) {
+    return [{ id: fallbackArtistId || "", name: rawArtist, avatarUrl: fallbackCoverUrl, avatar: fallbackCoverUrl }];
+  }
+  const idParts = (fallbackArtistId || "").split(/[、/&，,;；]+/).map((p) => p.trim());
+  return parts.map((name, idx) => ({
+    id: idParts[idx] || (idx === 0 && parts.length === 1 ? fallbackArtistId || "" : ""),
+    name,
+    avatarUrl: fallbackCoverUrl,
+    avatar: fallbackCoverUrl,
+  }));
+}
 
 export function normSong(s: Song): Song {
   const durMs =
@@ -33,6 +73,31 @@ export function normSong(s: Song): Song {
       : s.durationSeconds && s.durationSeconds > 0
       ? s.durationSeconds * 1000
       : 0;
+  const isHiRes = Boolean(
+    s.isHiRes ||
+      (s.hashHiRes && s.hashHiRes.trim().length === 32) ||
+      s.highestQuality === "Hi-Res"
+  );
+  const isLossless = Boolean(
+    isHiRes ||
+      s.isLossless ||
+      (s.hashFlac && s.hashFlac.trim().length === 32) ||
+      s.highestQuality === "SQ"
+  );
+  const hasHighQuality = Boolean(
+    isLossless ||
+      (s.hash320 && s.hash320.trim().length === 32) ||
+      s.size320 > 0 ||
+      s.highestQuality === "320K"
+  );
+  const highestQuality = isHiRes
+    ? "Hi-Res"
+    : isLossless
+    ? "SQ"
+    : hasHighQuality
+    ? "320K"
+    : s.highestQuality || "128K";
+
   return {
     ...s,
     durationMs: durMs,
@@ -40,9 +105,14 @@ export function normSong(s: Song): Song {
     albumAudioId: Number(s.albumAudioId) || 0,
     audioId: Number(s.audioId) || 0,
     fileId: Number(s.fileId) || 0,
-    hasHiRes: s.hasHiRes ?? Boolean(s.isHiRes || s.hashHiRes),
-    hasSq: s.hasSq ?? Boolean(s.isLossless || s.hashFlac),
-    hasHighQuality: s.hasHighQuality ?? Boolean(s.hash320 || s.size320 > 0),
+    isHiRes,
+    isLossless,
+    hasHiRes: isHiRes,
+    hasSq: isLossless,
+    isSq: isLossless,
+    hasHighQuality,
+    highestQuality,
+    authors: splitSongAuthors(s),
     climaxStartMs: s.climaxStartMs ?? 0,
     climaxEndMs: s.climaxEndMs ?? 0,
   };
@@ -57,6 +127,8 @@ function normPlaylist(p: Playlist): Playlist {
     ...p,
     name: p.name || p.title,
     title: p.title || p.name || "",
+    intro: p.intro || p.description || "",
+    creator: p.creator || p.creatorName || "",
     listId: Number(p.listId) || 0,
   };
 }
@@ -87,10 +159,23 @@ function normPurchasedAlbum(a: PurchasedAlbumItem): PurchasedAlbumItem {
 }
 
 function normProfile(p: AccountProfile): AccountProfile {
+  const totalSec = Number(p.listenDurationSec) || Number(p.listenDurationMin || 0) * 60;
+  const totalMin = Math.floor(totalSec / 60);
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  const formatted =
+    p.listenDurationFormatted && p.listenDurationFormatted.includes("分")
+      ? p.listenDurationFormatted
+      : hours > 0
+      ? `${hours} 小时 ${mins} 分`
+      : `${mins} 分钟`;
   return {
     ...p,
+    listenDurationSec: totalSec,
+    listenDurationMin: totalMin,
+    listenDurationFormatted: formatted,
     userLevel: p.userLevel ?? p.userGrade,
-    listenDurationMinutes: p.listenDurationMinutes ?? p.listenDurationMin,
+    listenDurationMinutes: p.listenDurationMinutes ?? totalMin,
   };
 }
 
@@ -205,7 +290,7 @@ export const kugouClient = {
   },
 
   /** 获取指定排行榜曲目列表 */
-  async getRankSongs(rankId: number, page = 1, pageSize = 50): Promise<Song[]> {
+  async getRankSongs(rankId: number, page = 1, pageSize = 100): Promise<Song[]> {
     return normSongs(await invoke<Song[]>("get_rank_songs", { rankId, page, pageSize }));
   },
 
@@ -225,7 +310,7 @@ export const kugouClient = {
   },
 
   /** 搜索单曲 */
-  async searchSongs(keyword: string, page = 1, pageSize = 30): Promise<Song[]> {
+  async searchSongs(keyword: string, page = 1, pageSize = 40): Promise<Song[]> {
     return normSongs(await invoke<Song[]>("search_songs", { keyword, page, pageSize }));
   },
 
@@ -240,19 +325,31 @@ export const kugouClient = {
   },
 
   /** 搜索歌单 */
-  async searchPlaylists(keyword: string): Promise<Playlist[]> {
-    const list = await invoke<Playlist[]>("search_playlists_cmd", { keyword });
+  async searchPlaylists(keyword: string, page = 1, pageSize = 30): Promise<Playlist[]> {
+    const list = await invoke<Playlist[]>("search_playlists_cmd", {
+      keyword,
+      page,
+      pageSize,
+    });
     return (list || []).map(normPlaylist);
   },
 
   /** 搜索专辑 */
-  searchAlbums(keyword: string): Promise<AlbumItem[]> {
-    return invoke<AlbumItem[]>("search_albums_cmd", { keyword });
+  searchAlbums(keyword: string, page = 1, pageSize = 30): Promise<AlbumItem[]> {
+    return invoke<AlbumItem[]>("search_albums_cmd", { keyword, page, pageSize });
   },
 
   /** 搜索歌手 */
-  async searchArtists(keyword: string): Promise<FollowedArtist[]> {
-    const list = await invoke<FollowedArtist[]>("search_artists_cmd", { keyword });
+  async searchArtists(
+    keyword: string,
+    page = 1,
+    pageSize = 24
+  ): Promise<FollowedArtist[]> {
+    const list = await invoke<FollowedArtist[]>("search_artists_cmd", {
+      keyword,
+      page,
+      pageSize,
+    });
     return (list || []).map(normArtist);
   },
 
@@ -260,6 +357,12 @@ export const kugouClient = {
   async getUserPlaylists(): Promise<Playlist[]> {
     const list = await invoke<Playlist[]>("get_user_playlists");
     return (list || []).map(normPlaylist);
+  },
+
+  /** 获取独立歌单详情 */
+  async getPlaylistInfo(playlistId: string): Promise<Playlist> {
+    const pl = await invoke<Playlist>("get_playlist_info_cmd", { playlistId });
+    return normPlaylist(pl);
   },
 
   /** 获取指定歌单内的全部歌曲（支持多页自动聚合） */
@@ -270,6 +373,21 @@ export const kugouClient = {
   /** 新建云端自定义歌单 */
   createUserPlaylist(name: string): Promise<boolean> {
     return invoke<boolean>("create_user_playlist_cmd", { name });
+  },
+
+  /** 编辑更新歌单标题与简介 */
+  updateUserPlaylist(
+    listId: number,
+    globalId: string,
+    title: string,
+    description = ""
+  ): Promise<boolean> {
+    return invoke<boolean>("update_user_playlist_cmd", {
+      listId,
+      globalId,
+      title,
+      description,
+    });
   },
 
   /** 删除云端歌单 */
@@ -292,9 +410,57 @@ export const kugouClient = {
     return invoke<boolean>("add_song_to_playlist_cmd", { listId, song: normSong(song) });
   },
 
+  /** 批量添加多首歌曲到指定歌单 */
+  addSongsToPlaylistBatch(listId: number, songs: Song[]): Promise<number> {
+    return invoke<number>("add_songs_to_playlist_batch_cmd", {
+      listId,
+      songs: normSongs(songs),
+    });
+  },
+
   /** 从自建歌单中移除单曲 */
   removeSongFromPlaylist(listId: number, song: Song): Promise<boolean> {
     return invoke<boolean>("remove_song_from_playlist_cmd", { listId, song: normSong(song) });
+  },
+
+  /** 实时反查歌曲关联的专辑与歌手元数据 */
+  resolveSongAlbumMeta(
+    songOrHash: Song | string,
+    albumAudioId?: number | string
+  ): Promise<ResolvedSongAlbumMeta> {
+    const songObj: Song =
+      typeof songOrHash === "object" && songOrHash !== null
+        ? normSong(songOrHash)
+        : normSong({
+            id: String(albumAudioId || songOrHash || ""),
+            hash: String(songOrHash || ""),
+            hash128: String(songOrHash || ""),
+            hash320: "",
+            hashFlac: "",
+            hashHiRes: "",
+            size128: 0,
+            size320: 0,
+            sizeFlac: 0,
+            sizeHiRes: 0,
+            title: "",
+            artist: "",
+            artistId: "",
+            album: "",
+            albumId: "",
+            coverUrl: "",
+            durationMs: 0,
+            albumAudioId: Number(albumAudioId) || 0,
+            audioId: 0,
+            mixSongId: String(albumAudioId || ""),
+            isVip: false,
+            isLossless: false,
+            isHiRes: false,
+            highestQuality: "128K",
+            publishDate: "",
+          });
+    return invoke<ResolvedSongAlbumMeta>("resolve_song_album_meta_cmd", {
+      song: songObj,
+    });
   },
 
   /** 获取已关注歌手列表 */
@@ -421,7 +587,7 @@ export const kugouClient = {
 
   /** 音源网关链路延迟诊断 */
   diagnoseGatewayLatency(): Promise<GatewayDiagResult> {
-    return invoke<GatewayDiagResult>("diagnose_gateway_cmd");
+    return invoke<GatewayDiagResult>("diagnose_gateway_cmd" in window ? "diagnose_gateway_cmd" : "diagnose_gateway_cmd");
   },
 
   /** 下载歌曲与二进制内嵌元数据/1000P封面/导出独立 .lrc 文件 */

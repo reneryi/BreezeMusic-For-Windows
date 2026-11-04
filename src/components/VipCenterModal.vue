@@ -29,12 +29,14 @@ const calendarCells = computed(() => {
     const mm = String(currentMonth).padStart(2, "0");
     const dd = String(d).padStart(2, "0");
     const dateStr = `${currentYear}-${mm}-${dd}`;
-    const found = recs.find((r) => r.day === dateStr && r.received);
+    const found = recs.find((r) => (r.day === dateStr || r.day.endsWith(`-${mm}-${dd}`)) && r.received);
+    const isClaimed = Boolean(found) || (d === todayDay && Boolean(store.vipStatus?.todayClaimed));
+    const isSvipDay = isClaimed && (found?.vipType === "svip" || (d === todayDay && Boolean(store.vipStatus?.svipActive)));
     cells.push({
       day: d,
       dateStr,
-      claimed: Boolean(found) || (d === todayDay && Boolean(store.vipStatus?.todayClaimed)),
-      isSvip: found?.vipType === "svip" || Boolean(store.vipStatus?.svipActive),
+      claimed: isClaimed,
+      isSvip: isSvipDay,
       isToday: d === todayDay,
     });
   }

@@ -4,10 +4,8 @@ import { useAppStore } from "../stores/appStore";
 import type {
   AppColorScheme,
   AudioQualityValue,
-  DesktopLayoutMode,
   PlayerBackgroundStyle,
   PlayerStageStyle,
-  WindowMaterialStyle,
 } from "../types";
 import PlumpIcon from "../components/PlumpIcon.vue";
 
@@ -52,7 +50,7 @@ const categories = computed(() => {
     {
       id: "appearance",
       title: "视听与桌面外观",
-      subtitle: "天际线画布 · 色彩主题 · 窗口材质",
+      subtitle: "幽邃微蓝 · 水彩浸润 · 播放舞台",
       icon: "sparkles",
     },
     {
@@ -101,50 +99,25 @@ const categories = computed(() => {
   return base;
 });
 
-const layoutOptions: {
-  id: DesktopLayoutMode;
-  title: string;
-  desc: string;
-}[] = [
-  {
-    id: "floating_bento",
-    title: "顶部天际线中枢画廊 (Skyline Command & Bento · 推荐)",
-    desc: "彻底告别左侧边栏审美疲劳：顶部一体化天际线胶囊中枢 + 100% 全宽无框画布 + 底部悬浮控播坞",
-  },
-  {
-    id: "zen_minimal",
-    title: "极简纯粹通栏模式 (Zen Minimalist)",
-    desc: "收敛四周浮动呼吸边距，采用紧凑沉浸式桌面排版，适合分屏办公与安静听歌",
-  },
-  {
-    id: "mini_turntable",
-    title: "Windows 桌面置顶迷你黑胶挂件 (Mini Turntable Widget)",
-    desc: "将窗口缩小为 420×168 置顶桌面小挂件，悬浮展示旋转黑胶与实时单行 KRC 歌词",
-  },
-];
-
-const colorOptions: { id: AppColorScheme; title: string; swatch: string }[] = [
+const colorOptions: { id: AppColorScheme; title: string; desc: string; swatch: string }[] = [
   {
     id: "abyssal_dark",
-    title: "幽邃微蓝 (Abyssal Dark · 概念版经典)",
-    swatch: "linear-gradient(135deg, #0a0e17, #162844)",
-  },
-  {
-    id: "oled_black",
-    title: "深邃纯黑 (Pure OLED)",
-    swatch: "linear-gradient(135deg, #000000, #141418)",
+    title: "幽邃微蓝（深色）",
+    desc: "概念版经典深海微蓝底色 (#0A0E17)，拒绝死黑，透出静谧蓝调层次",
+    swatch: "linear-gradient(135deg, #0a0e17, #1a345c)",
   },
   {
     id: "watercolor_light",
-    title: "水彩浸润 (Watercolor Light · 浅色通透)",
-    swatch: "linear-gradient(135deg, #eef5fc, #d8eafc)",
+    title: "水彩浸润（浅色）",
+    desc: "温润微蓝水彩画纸底色 (#F2F6FC)，柔和不刺眼，四角晕染水彩微光",
+    swatch: "linear-gradient(135deg, #f2f6fc, #cfe4fc)",
   },
-];
-
-const materialOptions: { id: WindowMaterialStyle; label: string }[] = [
-  { id: "mica_glow", label: "Mica 云母流光" },
-  { id: "acrylic_frost", label: "Acrylic 亚克力磨砂" },
-  { id: "pure_solid", label: "纯粹实色渲染" },
+  {
+    id: "system",
+    title: "跟随系统自动切换",
+    desc: "根据 Windows 系统深浅色模式实时无缝切换幽邃微蓝与水彩浸润",
+    swatch: "linear-gradient(135deg, #0a0e17 0%, #1a345c 48%, #e4effd 52%, #f2f6fc 100%)",
+  },
 ];
 
 const onlineQualityOptions: { val: AudioQualityValue; name: string }[] = [
@@ -238,78 +211,32 @@ async function copyEnvDiagnostic() {
         <!-- 1. 视听与桌面外观 -->
         <template v-if="activeCategory === 'appearance'">
           <section class="settings-card-panel">
-            <h3>Windows 桌面架构模式</h3>
+            <h3>全局色彩主题（对齐安卓端微风美学）</h3>
             <p class="panel-desc">
-              自由切换「顶部天际线中枢画廊」、「极简纯粹通栏」或「桌面置顶迷你黑胶挂件」
+              蓝色主色调搭配多种点缀色，深色采用「幽邃微蓝」拒绝纯黑，浅色采用「水彩浸润」温润护眼不刺眼
             </p>
-            <div class="layout-cards-grid">
+            <div class="layout-cards-grid" style="margin-bottom: 18px">
               <div
-                v-for="opt in layoutOptions"
-                :key="opt.id"
-                class="layout-option-card"
-                :class="{ active: store.layoutMode === opt.id }"
-                @click="store.layoutMode = opt.id"
-              >
-                <div class="loc-title">{{ opt.title }}</div>
-                <div class="loc-desc">{{ opt.desc }}</div>
-              </div>
-            </div>
-          </section>
-
-          <section class="settings-card-panel">
-            <h3>全局色彩主题与动态取色</h3>
-            <div class="color-scheme-row mb-14">
-              <button
                 v-for="c in colorOptions"
                 :key="c.id"
-                class="color-scheme-pill"
+                class="layout-option-card"
                 :class="{ active: store.colorScheme === c.id }"
                 @click="store.colorScheme = c.id"
               >
-                <span
-                  class="color-swatch-circle"
-                  :style="{ background: c.swatch }"
-                ></span>
-                <span>{{ c.title }}</span>
-              </button>
-            </div>
-
-            <div class="setting-toggle-line">
-              <div>
-                <div class="stl-title">Windows 窗口光学材质</div>
-                <div class="stl-sub">
-                  适配 Windows 11 原生云母与亚克力通透空气感层次
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px">
+                  <span
+                    class="color-swatch-circle"
+                    :style="{ background: c.swatch, width: '20px', height: '20px', flexShrink: 0 }"
+                  ></span>
+                  <div class="loc-title" style="margin-bottom: 0">{{ c.title }}</div>
                 </div>
-              </div>
-              <div class="bg-choice-pills">
-                <button
-                  v-for="m in materialOptions"
-                  :key="m.id"
-                  class="bg-pill-btn"
-                  :class="{ active: store.windowMaterial === m.id }"
-                  @click="store.windowMaterial = m.id"
-                >
-                  {{ m.label }}
-                </button>
+                <div class="loc-desc">{{ c.desc }}</div>
               </div>
             </div>
 
             <div class="setting-toggle-line">
               <div>
-                <div class="stl-title">专辑封面智能动态取色</div>
-                <div class="stl-sub">
-                  实时提取当前播放歌曲封面的主副色渲染背景光晕、按钮与进度条
-                </div>
-              </div>
-              <label class="plump-switch">
-                <input v-model="store.dynamicCoverTint" type="checkbox" />
-                <span class="plump-slider"></span>
-              </label>
-            </div>
-
-            <div class="setting-toggle-line">
-              <div>
-                <div class="stl-title">播放页默认舞台形态与光学背景</div>
+                <div class="stl-title">播放页默认舞台形态</div>
                 <div class="stl-sub">可在播放页左下角工具栏随时实时切换</div>
               </div>
               <div class="bg-choice-pills">
@@ -328,6 +255,32 @@ async function copyEnvDiagnostic() {
                       : st === "retro_cassette"
                       ? "复古磁带"
                       : "赛博频谱"
+                  }}
+                </button>
+              </div>
+            </div>
+
+            <div class="setting-toggle-line">
+              <div>
+                <div class="stl-title">播放页默认光学背景</div>
+                <div class="stl-sub">全屏播放舞台的动态流体极光、律动光晕、封面虚化或暗夜星尘</div>
+              </div>
+              <div class="bg-choice-pills">
+                <button
+                  v-for="bg in (['fluid_aurora', 'rhythm_halo', 'cover_blur', 'starlight_nebula'] as PlayerBackgroundStyle[])"
+                  :key="bg"
+                  class="bg-pill-btn"
+                  :class="{ active: store.playerBgStyle === bg }"
+                  @click="store.playerBgStyle = bg"
+                >
+                  {{
+                    bg === "fluid_aurora"
+                      ? "流体极光"
+                      : bg === "rhythm_halo"
+                      ? "律动光晕"
+                      : bg === "cover_blur"
+                      ? "封面虚化"
+                      : "暗夜星尘"
                   }}
                 </button>
               </div>

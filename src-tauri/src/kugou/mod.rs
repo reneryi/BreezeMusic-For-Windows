@@ -1,4 +1,5 @@
 pub mod api;
+pub mod audio_proxy;
 pub mod cscc;
 pub mod krc;
 pub mod metadata;

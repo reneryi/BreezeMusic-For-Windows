@@ -284,6 +284,8 @@ pub struct PlaybackResult {
     pub is_free_part: bool,
     pub resolved_hash: String,
     pub ext_name: String,
+    #[serde(default)]
+    pub proxy_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -544,3 +546,22 @@ pub struct CacheDiskStats {
     pub total_mb: f64,
     pub cache_dir_path: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UserListeningGradeState {
+    pub synced_official_listen_sec: i64,
+    pub synced_raw_server_dsec: i64,
+    pub pending_diff_sec: i64,
+    pub last_known_grade: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ListeningGradeSyncResult {
+    pub profile: AccountProfile,
+    pub reported_diff_sec: i64,
+    pub cloud_confirmed: bool,
+    pub message: String,
+}
+

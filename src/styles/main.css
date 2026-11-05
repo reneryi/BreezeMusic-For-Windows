@@ -7,64 +7,62 @@
  * 3. 全局 120fps 欠阻尼弹簧动效 (cubic-bezier(0.22, 1.35, 0.36, 1))。
  * ========================================================================= */
 
-:root {
-  --bg-base: #080c15;
-  --bg-surface: rgba(17, 25, 42, 0.78);
-  --bg-card: rgba(24, 35, 56, 0.72);
-  --bg-card-hover: rgba(35, 50, 78, 0.88);
-  --bg-elevated: rgba(38, 54, 84, 0.92);
-  --bg-pill: rgba(44, 62, 96, 0.56);
-  --bg-pill-hover: rgba(58, 80, 122, 0.78);
+:root,
+.scheme-abyssal_dark {
+  /* 安卓端 Color.kt / Theme.kt 1:1 幽邃微蓝 (Abyssal Dark) 配色体系 */
+  --bg-base: #0a0e17;
+  --bg-surface: rgba(18, 25, 39, 0.88);
+  --bg-card: #141c2b;
+  --bg-card-hover: #1c263b;
+  --bg-elevated: #222e46;
+  --bg-pill: rgba(43, 140, 255, 0.14);
+  --bg-pill-hover: rgba(43, 140, 255, 0.24);
 
   --primary: #2b8cff;
-  --cyan: #00e5ff;
-  --mint: #00e5a3;
+  --primary-soft: rgba(43, 140, 255, 0.16);
+  --cyan: #00c4a7;
+  --mint: #26debf;
   --coral: #ff6b5b;
   --violet: #9688ff;
   --gold: #ffd54f;
 
   --text-primary: #f4f7fb;
-  --text-secondary: #9cb0c9;
-  --text-muted: #647894;
+  --text-secondary: #9aa7bd;
+  --text-muted: #5a677d;
 
-  --shadow-soft: 0 12px 32px rgba(0, 0, 0, 0.26);
-  --shadow-elevated: 0 20px 48px rgba(0, 0, 0, 0.42);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --shadow-soft: 0 12px 32px rgba(2, 6, 18, 0.36);
+  --shadow-elevated: 0 20px 48px rgba(2, 6, 18, 0.52);
   --shadow-glow: 0 10px 28px rgba(43, 140, 255, 0.28);
 }
 
-/* 深邃纯黑 OLED 主题 */
-.scheme-oled_black {
-  --bg-base: #000000;
-  --bg-surface: rgba(14, 15, 20, 0.9);
-  --bg-card: rgba(20, 22, 28, 0.88);
-  --bg-card-hover: rgba(30, 33, 42, 0.95);
-  --bg-elevated: rgba(36, 40, 50, 0.96);
-  --bg-pill: rgba(42, 46, 58, 0.72);
-}
-
-/* 水彩浸润浅色主题（全面满足 WCAG AAA/AA 高对比度可读性标准） */
+/* 水彩浸润浅色主题（严格对齐安卓端 LightBgBase #F2F6FC 水彩纸底 + 高对比度可读性） */
 .scheme-watercolor_light,
 .scheme-light {
-  --bg-base: #edf3fa;
-  --bg-surface: rgba(255, 255, 255, 0.94);
-  --bg-card: rgba(255, 255, 255, 0.96);
-  --bg-card-hover: #e4effd;
+  --bg-base: #f2f6fc;
+  --bg-surface: rgba(255, 255, 255, 0.90);
+  --bg-card: rgba(255, 255, 255, 0.94);
+  --bg-card-hover: #e5effd;
   --bg-elevated: #ffffff;
-  --bg-pill: rgba(203, 221, 245, 0.9);
-  --bg-pill-hover: rgba(178, 205, 240, 1);
+  --bg-pill: rgba(26, 115, 232, 0.10);
+  --bg-pill-hover: rgba(26, 115, 232, 0.18);
 
-  --primary: #155eef;
-  --cyan: #0369a1;
-  --mint: #047857;
-  --coral: #be123c;
-  --violet: #5b21b6;
-  --gold: #b45309;
+  --primary: #1a73e8;
+  --primary-soft: rgba(26, 115, 232, 0.12);
+  --cyan: #00897b;
+  --mint: #00a884;
+  --coral: #e53935;
+  --violet: #6c5ce7;
+  --gold: #b87900;
 
-  --text-primary: #090d16;
-  --text-secondary: #1e293b;
-  --text-muted: #475569;
-  --shadow-soft: 0 10px 28px rgba(15, 23, 42, 0.09);
-  --shadow-elevated: 0 18px 44px rgba(15, 23, 42, 0.16);
+  --text-primary: #121824;
+  --text-secondary: #5e6b82;
+  --text-muted: #93a1b8;
+
+  --border-subtle: rgba(26, 115, 232, 0.09);
+  --shadow-soft: 0 10px 28px rgba(26, 55, 110, 0.07);
+  --shadow-elevated: 0 18px 44px rgba(26, 55, 110, 0.13);
+  --shadow-glow: 0 10px 28px rgba(26, 115, 232, 0.22);
 }
 
 /* 全局清除原生滚动条与默认线框 */
@@ -123,36 +121,23 @@ button {
   cursor: pointer;
 }
 
-/* ================= 根容器与无框材质体系 ================= */
+/* ================= 根容器与明暗双主题光影体系 ================= */
 .app-root {
   width: 100vw;
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: radial-gradient(
-      circle at 14% 12%,
-      color-mix(in srgb, var(--dyn-c1, #2b8cff) 24%, transparent) 0%,
-      transparent 48%
-    ),
-    radial-gradient(
-      circle at 86% 84%,
-      color-mix(in srgb, var(--dyn-c2, #00c4a7) 20%, transparent) 0%,
-      transparent 52%
-    ),
-    radial-gradient(
-      circle at 52% 45%,
-      color-mix(in srgb, var(--dyn-c3, #6c5ce7) 12%, transparent) 0%,
-      transparent 60%
-    ),
+  /* 幽邃微蓝 (Abyssal Dark)：非纯黑，四角与中心微透深海蓝呼吸光晕 */
+  background:
+    radial-gradient(circle at 12% 8%, rgba(22, 40, 68, 0.85) 0%, transparent 46%),
+    radial-gradient(circle at 88% 18%, rgba(26, 52, 92, 0.58) 0%, transparent 50%),
+    radial-gradient(circle at 75% 86%, rgba(16, 32, 56, 0.82) 0%, transparent 54%),
+    radial-gradient(circle at 22% 82%, rgba(20, 42, 74, 0.52) 0%, transparent 48%),
     var(--bg-base);
   border-radius: 8px;
   overflow: hidden;
   position: relative;
-  transition: background 0.65s ease;
-}
-
-.material-pure_solid.app-root {
-  background: var(--bg-base);
+  transition: background 0.45s ease, color 0.25s ease;
 }
 
 /* ================= 顶部天际线中枢 (Skyline Header) ================= */
@@ -6285,7 +6270,7 @@ body {
   transform: translateY(-50%);
   height: 4.5px;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--primary), #ff6b6b);
+  background: linear-gradient(90deg, var(--primary), var(--cyan));
   z-index: 2;
   display: flex;
   align-items: center;
@@ -6341,19 +6326,19 @@ body {
   height: 44px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(135deg, #ff6b6b, #ff4757);
+  background: linear-gradient(135deg, var(--primary), #1d6fe6);
   color: #ffffff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 6px 18px rgba(255, 71, 87, 0.42);
+  box-shadow: 0 6px 18px rgba(43, 140, 255, 0.38);
   transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s ease;
 }
 
 .pb-play-hero-circle:hover {
   transform: scale(1.08);
-  box-shadow: 0 8px 22px rgba(255, 71, 87, 0.56);
+  box-shadow: 0 8px 22px rgba(43, 140, 255, 0.52);
 }
 
 .pb-right-zone {
@@ -10089,20 +10074,14 @@ body.lib-dragging-cursor * {
    14. 浅色日间主题 (.scheme-watercolor_light / .scheme-light) 全景高对比度深度适配
    ============================================================================ */
 
-/* 14.1 浅色主题根背景与悬浮胶囊清晰质感 */
+/* 14.1 浅色主题根背景与悬浮胶囊清晰质感（复刻安卓端 Theme.kt 4 角水彩浸润柔和笔触） */
 .scheme-watercolor_light.app-root,
 .scheme-light.app-root {
   background:
-    radial-gradient(
-      circle at 14% 12%,
-      color-mix(in srgb, var(--dyn-c1, #155eef) 12%, transparent) 0%,
-      transparent 48%
-    ),
-    radial-gradient(
-      circle at 86% 84%,
-      color-mix(in srgb, var(--dyn-c2, #0369a1) 10%, transparent) 0%,
-      transparent 52%
-    ),
+    radial-gradient(circle at 8% 10%, rgba(100, 181, 246, 0.24) 0%, transparent 45%),
+    radial-gradient(circle at 92% 14%, rgba(179, 157, 219, 0.20) 0%, transparent 46%),
+    radial-gradient(circle at 84% 88%, rgba(77, 208, 225, 0.17) 0%, transparent 48%),
+    radial-gradient(circle at 14% 86%, rgba(255, 204, 188, 0.21) 0%, transparent 45%),
     var(--bg-base);
 }
 

@@ -89,10 +89,9 @@ const bgStyles: { id: PlayerBackgroundStyle; label: string }[] = [
   { id: "rhythm_halo", label: "律动光晕" },
   { id: "cover_blur", label: "封面虚化" },
   { id: "starlight_nebula", label: "暗夜星尘" },
-  { id: "deep_oled", label: "深邃纯黑" },
 ];
 
-// 对齐 Android 端 2x3 双行三列六大四字主题名
+// 对齐 Android 端五大四字主题名（移除初期动态取色）
 const lyricThemes: {
   id: LyricThemeId;
   label: string;
@@ -104,7 +103,6 @@ const lyricThemes: {
   { id: "amber_gold", label: "鎏金琥珀", c1: "#ffd54f", c2: "#f59e0b" },
   { id: "neon_coral", label: "霓虹珊瑚", c1: "#ff6b8b", c2: "#ff6b5b" },
   { id: "emerald_mint", label: "翡翠薄荷", c1: "#00e5a3", c2: "#00b894" },
-  { id: "dynamic_cover", label: "封面随动", c1: "#3898ff", c2: "#00c4a7" },
 ];
 
 const filterTopologyOptions: Array<{ id: PeqFilterTopology; label: string }> = [
@@ -116,12 +114,6 @@ const filterTopologyOptions: Array<{ id: PeqFilterTopology; label: string }> = [
 ];
 
 const activeLyricColors = computed(() => {
-  if (store.lyricTheme === "dynamic_cover") {
-    return {
-      c1: store.coverPalette[0],
-      c2: store.coverPalette[1],
-    };
-  }
   const found = lyricThemes.find((t) => t.id === store.lyricTheme);
   return found
     ? { c1: found.c1, c2: found.c2 }
@@ -402,22 +394,6 @@ async function handleSendComment() {
     :style="{
       '--lyric-c1': activeLyricColors.c1,
       '--lyric-c2': activeLyricColors.c2,
-      '--dyn-c1': store.coverColorGrades.c1,
-      '--dyn-c2': store.coverColorGrades.c2,
-      '--dyn-c3': store.coverColorGrades.c3,
-      '--dyn-c4': store.coverColorGrades.c4,
-      '--dyn-c5': store.coverColorGrades.c5,
-      '--dyn-c6': store.coverColorGrades.c6,
-      '--dyn-c7': store.coverColorGrades.c7,
-      '--dyn-c8': store.coverColorGrades.c8,
-      '--dyn-c9': store.coverColorGrades.c9,
-      '--dyn-c10': store.coverColorGrades.c10,
-      '--dyn-c11': store.coverColorGrades.c11,
-      '--dyn-c12': store.coverColorGrades.c12,
-      '--dyn-c13': store.coverColorGrades.c13,
-      '--dyn-c14': store.coverColorGrades.c14,
-      '--dyn-c15': store.coverColorGrades.c15,
-      '--dyn-c16': store.coverColorGrades.c16,
       '--halo-scale': 1 + (avgEnergy / 100) * 0.24,
       '--bass-scale': 1 + (store.rhythmTelemetry?.bassEnergy || 0) * 0.32,
       '--mid-scale': 1 + (store.rhythmTelemetry?.midVocalEnergy || 0) * 0.24,
@@ -425,7 +401,7 @@ async function handleSendComment() {
       '--momentum': store.playMomentum,
     }"
   >
-    <!-- ==================== 1. 五款高定动态光学背景层（含 playMomentum 连续相位过渡 & 3频段声波遥测） ==================== -->
+    <!-- ==================== 1. 四款高定动态光学背景层（含 playMomentum 连续相位过渡 & 3频段声波遥测） ==================== -->
     <div
       v-if="store.playerBgStyle === 'cover_blur' && store.currentSong?.coverUrl"
       class="np-bg-cover-blur"
@@ -438,15 +414,15 @@ async function handleSendComment() {
     >
       <div
         class="aurora-blob b1"
-        :style="{ background: store.coverPalette[0] }"
+        style="background: #2b8cff"
       ></div>
       <div
         class="aurora-blob b2"
-        :style="{ background: store.coverPalette[1] }"
+        style="background: #00c4a7"
       ></div>
       <div
         class="aurora-blob b3"
-        :style="{ background: store.coverPalette[2] }"
+        style="background: #6c5ce7"
       ></div>
     </div>
 
@@ -527,7 +503,7 @@ async function handleSendComment() {
               class="gallery-art-frame"
               :class="{ breathing: store.isPlaying }"
               :style="{
-                boxShadow: `0 24px 56px rgba(0, 0, 0, 0.52), -8px -6px 28px color-mix(in srgb, ${store.coverPalette[0]} 35%, transparent), 8px 8px 28px color-mix(in srgb, ${store.coverPalette[1]} 32%, transparent)`,
+                boxShadow: `0 24px 56px rgba(0, 0, 0, 0.52), -8px -6px 28px color-mix(in srgb, var(--primary) 35%, transparent), 8px 8px 28px color-mix(in srgb, var(--accent-cyan) 32%, transparent)`,
               }"
             >
               <img
@@ -1051,7 +1027,7 @@ async function handleSendComment() {
           <div class="cfg-label mt-14">当前专辑封面 16 级全色阶流体取色矩阵 (24-bin HSV 直方图 + CIE L* 色调映射)</div>
           <div style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin-top: 6px">
             <div
-              v-for="(hex, key) in store.coverColorGrades"
+              v-for="(hex, key) in ({ c1: '#2B8CFF', c2: '#00C4A7', c3: '#26DEBF', c4: '#FF6B5B', c5: '#9688FF', c6: '#FFD54F', c7: '#1A73E8', c8: '#6C5CE7' })"
               :key="key"
               :style="{
                 height: '26px',

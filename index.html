@@ -3,7 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>BreezeMusic · 微风音乐 (Windows 概念版)</title>
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem("breeze_color_scheme") || "abyssal_dark";
+          var isDark =
+            raw === "system"
+              ? window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+              : raw !== "watercolor_light";
+          document.documentElement.dataset.theme = isDark ? "abyssal_dark" : "watercolor_light";
+          document.documentElement.style.colorScheme = isDark ? "dark" : "light";
+          document.documentElement.style.backgroundColor = isDark ? "#0A0E17" : "#F2F6FC";
+        } catch (_e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

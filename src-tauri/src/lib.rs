@@ -3,10 +3,10 @@ pub mod kugou;
 use kugou::api::KugouApiService;
 use kugou::models::{
     AccountProfile, AlbumItem, CacheDiskStats, DownloadTaskResult, FmChannel, FollowedArtist,
-    GatewayDiagResult, KugouSession, LyricData, PhoneLoginOutcome, PlaybackResult, Playlist,
-    PurchasedAlbumItem, PurchasedSongItem, QrCodeSession, QrPollResult, RankItem,
-    ResolvedSongAlbumMeta, SharedMusicResolved, Song, SongComment, SongDetailInfo, VipStatusInfo,
-    ViperEffectItem,
+    GatewayDiagResult, KugouSession, ListeningGradeSyncResult, LyricData, PhoneLoginOutcome,
+    PlaybackResult, Playlist, PurchasedAlbumItem, PurchasedSongItem, QrCodeSession, QrPollResult,
+    RankItem, ResolvedSongAlbumMeta, SharedMusicResolved, Song, SongComment, SongDetailInfo,
+    VipStatusInfo, ViperEffectItem,
 };
 use kugou::store::AppStore;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -94,6 +94,25 @@ async fn get_account_profile(
         .api
         .fetch_full_profile_with_report(reported_d_sec, reported_diff_sec)
         .await
+}
+
+#[tauri::command]
+async fn sync_listening_grade_cmd(
+    state: State<'_, AppState>,
+    force_report: Option<bool>,
+) -> Result<ListeningGradeSyncResult, String> {
+    state
+        .api
+        .sync_listening_grade(force_report.unwrap_or(false))
+        .await
+}
+
+#[tauri::command]
+async fn record_listening_seconds_cmd(
+    state: State<'_, AppState>,
+    seconds: i64,
+) -> Result<i64, String> {
+    state.api.record_listening_seconds(seconds)
 }
 
 #[tauri::command]
@@ -748,6 +767,8 @@ pub fn run() {
             check_qr_login,
             logout_account,
             get_account_profile,
+            sync_listening_grade_cmd,
+            record_listening_seconds_cmd,
             get_vip_status,
             claim_daily_vip,
             get_daily_recommend,

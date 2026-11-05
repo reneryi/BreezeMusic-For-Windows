@@ -8,6 +8,7 @@ import type {
   FollowedArtist,
   GatewayDiagResult,
   KugouSession,
+  ListeningGradeSyncResult,
   LyricData,
   PhoneLoginOutcome,
   PlaybackResult,
@@ -273,6 +274,27 @@ export const kugouClient = {
       reportedDiffSec: reportedDiffSec ?? null,
     });
     return normProfile(p);
+  },
+
+  /** 双水位线听歌等级与累计时长云端同步（对齐 Android ListeningGradeManager） */
+  async syncListeningGrade(
+    forceReport = false
+  ): Promise<ListeningGradeSyncResult> {
+    const res = await invoke<ListeningGradeSyncResult>(
+      "sync_listening_grade_cmd",
+      { forceReport }
+    );
+    return {
+      ...res,
+      profile: normProfile(res.profile),
+    };
+  },
+
+  /** 记录增量真实听歌秒数至本地双水位线状态机 */
+  recordListeningSeconds(seconds: number): Promise<number> {
+    return invoke<number>("record_listening_seconds_cmd", {
+      seconds: Math.max(0, Math.floor(seconds)),
+    });
   },
 
   /** 查询酷狗概念版 VIP 状态与当月签到日历记录 */
@@ -691,6 +713,7 @@ export const kugouClient = {
     });
     return {
       ...res,
+      proxyUrl: res.proxyUrl || "",
       backupUrls: Array.isArray(res.backupUrls) ? res.backupUrls : [],
       matchedQuality: res.matchedQuality || res.actualQuality,
     };
@@ -703,6 +726,7 @@ export const kugouClient = {
     });
     return {
       ...res,
+      proxyUrl: res.proxyUrl || "",
       backupUrls: Array.isArray(res.backupUrls) ? res.backupUrls : [],
       matchedQuality: res.matchedQuality || res.actualQuality,
     };

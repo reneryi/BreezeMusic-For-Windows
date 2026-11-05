@@ -1,18 +1,15 @@
 import { defineStore } from "pinia";
 import { ref, computed, watch, reactive } from "vue";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { kugouClient, splitSongAuthors } from "../api/kugou";
 import type {
   AccountProfile,
   AcousticFieldSettings,
-  CoverColorGrades,
   NavigationHistoryEntry,
   SongAuthor,
   AlbumItem,
   AppColorScheme,
   AudioQualityValue,
-  DesktopLayoutMode,
   DiscoverSubView,
   DownloadHistoryRecord,
   FmChannel,
@@ -41,102 +38,12 @@ import type {
   SongDetailInfo,
   VipStatusInfo,
   ViperEffectItem,
-  WindowMaterialStyle,
 } from "../types";
 
 export type MainTab = MainNavTab;
 
 function clampVal(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
-}
-
-function hslToRgbTuple(h: number, s: number, l: number): [number, number, number] {
-  const hue = ((h % 360) + 360) % 360;
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
-  const m = l - c / 2;
-  let r1 = 0, g1 = 0, b1 = 0;
-  if (hue < 60) { r1 = c; g1 = x; b1 = 0; }
-  else if (hue < 120) { r1 = x; g1 = c; b1 = 0; }
-  else if (hue < 180) { r1 = 0; g1 = c; b1 = x; }
-  else if (hue < 240) { r1 = 0; g1 = x; b1 = c; }
-  else if (hue < 300) { r1 = x; g1 = 0; b1 = c; }
-  else { r1 = c; g1 = 0; b1 = x; }
-  return [
-    Math.round(clampVal((r1 + m) * 255, 0, 255)),
-    Math.round(clampVal((g1 + m) * 255, 0, 255)),
-    Math.round(clampVal((b1 + m) * 255, 0, 255))
-  ];
-}
-
-function rgbToHex(r: number, g: number, b: number): string {
-  return "#" + [r, g, b].map((v) => clampVal(Math.round(v), 0, 255).toString(16).padStart(2, "0")).join("");
-}
-
-function buildTwelveGradePalette(h: number, s: number, l: number, secondaryHue?: number): CoverColorGrades {
-  const baseHue = ((h % 360) + 360) % 360;
-  const secHue = secondaryHue !== undefined ? (((secondaryHue % 360) + 360) % 360) : ((baseHue + 32) % 360);
-  const sat = clampVal(s, 0.34, 0.88);
-  const g = (hue: number, sVal: number, lVal: number) => {
-    const [r, gr, b] = hslToRgbTuple(hue, clampVal(sVal, 0.12, 0.96), clampVal(lVal, 0.04, 0.97));
-    return rgbToHex(r, gr, b);
-  };
-  return {
-    c1: g(baseHue, sat * 0.65, 0.05),
-    c2: g(baseHue, sat * 0.70, 0.09),
-    c3: g(baseHue, sat * 0.76, 0.14),
-    c4: g((baseHue + secHue) * 0.5, sat * 0.80, 0.20),
-    c5: g(baseHue, sat * 0.85, 0.27),
-    c6: g(baseHue, sat * 0.90, 0.35),
-    c7: g(secHue, sat * 0.92, 0.43),
-    c8: g(baseHue, sat * 0.94, clampVal(l, 0.48, 0.55)),
-    c9: g(secHue, sat * 0.92, 0.58),
-    c10: g(baseHue, sat * 0.88, 0.65),
-    c11: g(secHue, sat * 0.82, 0.72),
-    c12: g(baseHue, sat * 0.74, 0.79),
-    c13: g((baseHue + secHue) * 0.5, sat * 0.64, 0.85),
-    c14: g(baseHue, sat * 0.50, 0.90),
-    c15: g(baseHue, sat * 0.36, 0.94),
-    c16: g(baseHue, sat * 0.22, 0.97)
-  };
-}
-
-function applyCoverColorGradesCss(grades: CoverColorGrades) {
-  if (typeof document === "undefined") return;
-  const root = document.documentElement;
-  root.style.setProperty("--dyn-c1", grades.c1);
-  root.style.setProperty("--dyn-c2", grades.c2);
-  root.style.setProperty("--dyn-c3", grades.c3);
-  root.style.setProperty("--dyn-c4", grades.c4);
-  root.style.setProperty("--dyn-c5", grades.c5);
-  root.style.setProperty("--dyn-c6", grades.c6);
-  root.style.setProperty("--dyn-c7", grades.c7);
-  root.style.setProperty("--dyn-c8", grades.c8);
-  root.style.setProperty("--dyn-c9", grades.c9);
-  root.style.setProperty("--dyn-c10", grades.c10);
-  root.style.setProperty("--dyn-c11", grades.c11);
-  root.style.setProperty("--dyn-c12", grades.c12);
-  if (grades.c13) root.style.setProperty("--dyn-c13", grades.c13);
-  if (grades.c14) root.style.setProperty("--dyn-c14", grades.c14);
-  if (grades.c15) root.style.setProperty("--dyn-c15", grades.c15);
-  if (grades.c16) root.style.setProperty("--dyn-c16", grades.c16);
-  // 16 阶 Material You 风格 Tonal 映射 (--tone-0 .. --tone-100)
-  root.style.setProperty("--tone-0", grades.c1);
-  root.style.setProperty("--tone-4", grades.c2);
-  root.style.setProperty("--tone-8", grades.c3);
-  root.style.setProperty("--tone-12", grades.c4);
-  root.style.setProperty("--tone-17", grades.c5);
-  root.style.setProperty("--tone-22", grades.c6);
-  root.style.setProperty("--tone-30", grades.c7);
-  root.style.setProperty("--tone-40", grades.c8);
-  root.style.setProperty("--tone-50", grades.c9);
-  root.style.setProperty("--tone-60", grades.c10);
-  root.style.setProperty("--tone-70", grades.c11);
-  root.style.setProperty("--tone-80", grades.c12);
-  root.style.setProperty("--tone-87", grades.c13 || grades.c12);
-  root.style.setProperty("--tone-92", grades.c14 || grades.c12);
-  root.style.setProperty("--tone-96", grades.c15 || grades.c12);
-  root.style.setProperty("--tone-100", grades.c16 || grades.c12);
 }
 
 export const useAppStore = defineStore("breezeApp", () => {
@@ -146,6 +53,7 @@ export const useAppStore = defineStore("breezeApp", () => {
   const isNowPlayingOpen = ref(false);
   const isLoginModalOpen = ref(false);
   const isVipCenterOpen = ref(false);
+  const isAccountManagerOpen = ref(false);
   const isFocusPodOpen = ref(false);
   const isLyricPosterOpen = ref(false);
   const isCommentsModalOpen = ref(false);
@@ -427,21 +335,46 @@ export const useAppStore = defineStore("breezeApp", () => {
   });
 
   // ================= 5. 全局设置与播放/歌词/DSP 配置 =================
-  const layoutMode = ref<DesktopLayoutMode>(
-    (localStorage.getItem("bm_layout_mode") as DesktopLayoutMode) ||
-      "floating_bento"
+  // 明暗双主题（幽邃微蓝 abyssal_dark / 水彩浸润 watercolor_light / 跟随系统 system）
+  const rawSavedScheme = localStorage.getItem("bm_color_scheme") || "abyssal_dark";
+  const initialColorScheme: AppColorScheme =
+    rawSavedScheme === "watercolor_light" || rawSavedScheme === "light"
+      ? "watercolor_light"
+      : rawSavedScheme === "system"
+      ? "system"
+      : "abyssal_dark";
+  const colorScheme = ref<AppColorScheme>(initialColorScheme);
+
+  const systemPrefersDark = ref<boolean>(
+    typeof window !== "undefined" && window.matchMedia
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : true
   );
-  const windowMaterial = ref<WindowMaterialStyle>(
-    (localStorage.getItem("bm_win_material") as WindowMaterialStyle) ||
-      "mica_glow"
-  );
-  const colorScheme = ref<AppColorScheme>(
-    (localStorage.getItem("bm_color_scheme") as AppColorScheme) ||
-      "abyssal_dark"
-  );
-  const dynamicCoverTint = ref<boolean>(
-    localStorage.getItem("bm_dynamic_tint") !== "false"
-  );
+  if (typeof window !== "undefined" && window.matchMedia) {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener?.("change", (ev) => {
+      systemPrefersDark.value = ev.matches;
+    });
+  }
+
+  const resolvedColorScheme = computed<"abyssal_dark" | "watercolor_light">(() => {
+    if (colorScheme.value === "system") {
+      return systemPrefersDark.value ? "abyssal_dark" : "watercolor_light";
+    }
+    return colorScheme.value === "watercolor_light" ? "watercolor_light" : "abyssal_dark";
+  });
+
+  const isDarkTheme = computed(() => resolvedColorScheme.value === "abyssal_dark");
+
+  function syncDocumentThemeAttr() {
+    if (typeof document === "undefined") return;
+    const isLight = resolvedColorScheme.value === "watercolor_light";
+    document.documentElement.dataset.theme = isLight ? "watercolor_light" : "abyssal_dark";
+    document.documentElement.style.colorScheme = isLight ? "light" : "dark";
+    document.documentElement.style.backgroundColor = isLight ? "#f2f6fc" : "#0a0e17";
+  }
+  syncDocumentThemeAttr();
+
   const autoClaimVipOnStartup = ref<boolean>(
     localStorage.getItem("bm_auto_claim_vip") !== "false"
   );
@@ -457,12 +390,17 @@ export const useAppStore = defineStore("breezeApp", () => {
     (localStorage.getItem("bm_stage_style") as PlayerStageStyle) ||
       "vinyl_turntable"
   );
+  const rawSavedBgStyle = localStorage.getItem("bm_bg_style") || "fluid_aurora";
   const playerBgStyle = ref<PlayerBackgroundStyle>(
-    (localStorage.getItem("bm_bg_style") as PlayerBackgroundStyle) ||
-      "fluid_aurora"
+    rawSavedBgStyle === "deep_oled"
+      ? "fluid_aurora"
+      : (rawSavedBgStyle as PlayerBackgroundStyle)
   );
+  const rawSavedLyricTheme = localStorage.getItem("bm_lyric_theme") || "ice_blue";
   const lyricTheme = ref<LyricThemeId>(
-    (localStorage.getItem("bm_lyric_theme") as LyricThemeId) || "ice_blue"
+    rawSavedLyricTheme === "dynamic_cover"
+      ? "ice_blue"
+      : (rawSavedLyricTheme as LyricThemeId)
   );
   const lyricFontSize = ref<number>(
     Number(localStorage.getItem("bm_lyric_font_size")) || 24
@@ -579,49 +517,13 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
-  // 窗口尺寸记忆：解决从迷你黑胶挂件恢复主窗口时破坏最大化状态或用户自定义窗口尺寸的问题
-  let savedNormalBounds = { width: 1260, height: 820, wasMaximized: false };
-
-  watch(layoutMode, async (mode, oldMode) => {
-    localStorage.setItem("bm_layout_mode", mode);
-    try {
-      const win = getCurrentWindow();
-      if (mode === "mini_turntable") {
-        const isMax = await win.isMaximized();
-        savedNormalBounds.wasMaximized = isMax;
-        if (isMax) {
-          await win.unmaximize();
-        } else {
-          const factor = await win.scaleFactor();
-          const pSize = await win.innerSize();
-          if (pSize.width / factor >= 700) {
-            savedNormalBounds.width = Math.round(pSize.width / factor);
-            savedNormalBounds.height = Math.round(pSize.height / factor);
-          }
-        }
-        await win.setSize(new LogicalSize(420, 168));
-        await win.setAlwaysOnTop(true);
-      } else if (oldMode === "mini_turntable") {
-        await win.setAlwaysOnTop(false);
-        await win.setSize(
-          new LogicalSize(
-            Math.max(960, savedNormalBounds.width),
-            Math.max(640, savedNormalBounds.height)
-          )
-        );
-        if (savedNormalBounds.wasMaximized) {
-          await win.maximize();
-        }
-      }
-    } catch {
-      // 浏览器预览环境跳过窗口尺寸调用
-    }
+  watch(colorScheme, (v) => {
+    localStorage.setItem("bm_color_scheme", v);
+    syncDocumentThemeAttr();
   });
-  watch(windowMaterial, (v) => localStorage.setItem("bm_win_material", v));
-  watch(colorScheme, (v) => localStorage.setItem("bm_color_scheme", v));
-  watch(dynamicCoverTint, (v) =>
-    localStorage.setItem("bm_dynamic_tint", String(v))
-  );
+  watch(resolvedColorScheme, () => {
+    syncDocumentThemeAttr();
+  });
   watch(autoClaimVipOnStartup, (v) =>
     localStorage.setItem("bm_auto_claim_vip", String(v))
   );
@@ -842,158 +744,7 @@ export const useAppStore = defineStore("breezeApp", () => {
   const isDiagnosingGateway = ref(false);
 
   const isLoggedIn = computed(() => Boolean(session.value?.token));
-
-  // ================= 7. 专辑封面 12 级全色阶流体提取器 (12-Grade Cover Tonal Palette) =================
-  const coverPalette = ref<[string, string, string]>([
-    "#2b8cff",
-    "#00c4a7",
-    "#6c5ce7",
-  ]);
-  const coverColorGrades = ref<CoverColorGrades>(
-    buildTwelveGradePalette(208, 0.78, 0.52, 168)
-  );
-  applyCoverColorGradesCss(coverColorGrades.value);
-
-  function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
-    r /= 255;
-    g /= 255;
-    b /= 255;
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    let h = 0;
-    let s = 0;
-    const l = (max + min) / 2;
-    if (max !== min) {
-      const d = max - min;
-      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-      switch (max) {
-        case r:
-          h = (g - b) / d + (g < b ? 6 : 0);
-          break;
-        case g:
-          h = (b - r) / d + 2;
-          break;
-        case b:
-          h = (r - g) / d + 4;
-          break;
-      }
-      h /= 6;
-    }
-    return [h * 360, s, l];
-  }
-
-  function hslToRgbCss(h: number, s: number, l: number): string {
-    const c = (1 - Math.abs(2 * l - 1)) * s;
-    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-    const m = l - c / 2;
-    let r = 0,
-      g = 0,
-      b = 0;
-    const hue = ((h % 360) + 360) % 360;
-    if (hue < 60) [r, g, b] = [c, x, 0];
-    else if (hue < 120) [r, g, b] = [x, c, 0];
-    else if (hue < 180) [r, g, b] = [0, c, x];
-    else if (hue < 240) [r, g, b] = [0, x, c];
-    else if (hue < 300) [r, g, b] = [x, 0, c];
-    else [r, g, b] = [c, 0, x];
-    return `rgb(${Math.round((r + m) * 255)}, ${Math.round(
-      (g + m) * 255
-    )}, ${Math.round((b + m) * 255)})`;
-  }
-
-  function extractCoverColors(imgUrl: string) {
-    if (!imgUrl) {
-      coverPalette.value = ["#2b8cff", "#00c4a7", "#6c5ce7"];
-      const fallbackGrades = buildTwelveGradePalette(208, 0.78, 0.52, 168);
-      coverColorGrades.value = fallbackGrades;
-      applyCoverColorGradesCss(fallbackGrades);
-      return;
-    }
-    const img = new Image();
-    img.crossOrigin = "Anonymous";
-    img.onload = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = 32;
-        canvas.height = 32;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0, 32, 32);
-        const data = ctx.getImageData(0, 0, 32, 32).data;
-        // 24-bin 色相直方图特征提取 + CIE L* 明度/饱和度标准化 (对齐 Android NowPlayingTurntableAndCover.kt & CoverTonalPalette)
-        const bins = Array.from({ length: 24 }, () => ({
-          weight: 0,
-          hSum: 0,
-          sSum: 0,
-          lSum: 0,
-        }));
-        for (let i = 0; i < data.length; i += 8) {
-          const r = data[i];
-          const g = data[i + 1];
-          const b = data[i + 2];
-          const [h, s, l] = rgbToHsl(r, g, b);
-          if (l > 0.08 && l < 0.92 && s > 0.12) {
-            const binIdx = Math.floor(h / 15) % 24;
-            const w = (0.35 + s * 0.65) * (1 - Math.abs(l - 0.5) * 1.1);
-            bins[binIdx].weight += w;
-            bins[binIdx].hSum += h * w;
-            bins[binIdx].sSum += s * w;
-            bins[binIdx].lSum += l * w;
-          }
-        }
-        const ranked = bins
-          .map((b, idx) => ({
-            idx,
-            weight: b.weight,
-            h: b.weight > 0 ? b.hSum / b.weight : idx * 15,
-            s: b.weight > 0 ? Math.min(0.88, Math.max(0.55, b.sSum / b.weight)) : 0.72,
-            l: b.weight > 0 ? Math.min(0.66, Math.max(0.46, b.lSum / b.weight)) : 0.56,
-          }))
-          .filter((b) => b.weight > 0)
-          .sort((a, b) => b.weight - a.weight);
-
-        if (ranked.length >= 1) {
-          const primary = ranked[0];
-          const secondary =
-            ranked.find((b) => Math.abs(b.h - primary.h) > 35 && Math.abs(b.h - primary.h) < 325) ||
-            { h: (primary.h + 48) % 360, s: primary.s * 0.92, l: primary.l };
-          const tertiary =
-            ranked.find(
-              (b) =>
-                Math.abs(b.h - primary.h) > 65 &&
-                Math.abs(b.h - secondary.h) > 35
-            ) || { h: (primary.h + 135) % 360, s: primary.s * 0.88, l: primary.l * 0.95 };
-
-          coverPalette.value = [
-            hslToRgbCss(primary.h, primary.s, primary.l),
-            hslToRgbCss(secondary.h, secondary.s, secondary.l),
-            hslToRgbCss(tertiary.h, tertiary.s, tertiary.l),
-          ];
-          const grades = buildTwelveGradePalette(primary.h, primary.s, primary.l, secondary.h);
-          coverColorGrades.value = grades;
-          applyCoverColorGradesCss(grades);
-        }
-      } catch {
-        // 跨域未携带 CORS 时根据 URL 哈希生成稳定的 12 级高颜值流光色板
-        let hash = 0;
-        for (let i = 0; i < imgUrl.length; i++) {
-          hash = (hash * 31 + imgUrl.charCodeAt(i)) | 0;
-        }
-        const h1 = Math.abs(hash) % 360;
-        const h2 = (h1 + 52) % 360;
-        const h3 = (h1 + 140) % 360;
-        coverPalette.value = [
-          hslToRgbCss(h1, 0.78, 0.56),
-          hslToRgbCss(h2, 0.74, 0.52),
-          hslToRgbCss(h3, 0.7, 0.54),
-        ];
-        const grades = buildTwelveGradePalette(h1, 0.78, 0.52, h2);
-        coverColorGrades.value = grades;
-        applyCoverColorGradesCss(grades);
-      }
-    };
-    img.src = imgUrl;
-  }
+  const isSyncingListeningGrade = ref(false);
 
   // ================= 8. 64-bit 风格母带级 WebAudio DSP 引擎 + 播放连续动量 =================
   const audio = new Audio();
@@ -1744,11 +1495,15 @@ export const useAppStore = defineStore("breezeApp", () => {
     notify("已重置全部记忆槽与均衡器参数");
   }
 
-  // 真实播放秒数累加器（仅在 isPlaying=true 时每秒累加，杜绝暂停挂机虚增时长，对齐 Android ListeningGradeManager）
+  // 真实播放秒数累加器与播放卡死看门狗（对齐 Android ListeningGradeManager 双水位线与流媒体防卡死容灾）
   let currentTrackPlayedAccumMs = 0;
   let unReportedDiffSec = 0;
+  let lastWatchdogPosSec = -1;
+  let watchdogStallTicks = 0;
+  let lastWatchdogRecoverWallMs = 0;
+
   window.setInterval(() => {
-    if (isPlaying.value && currentSong.value) {
+    if (isPlaying.value && currentSong.value && !audio.paused && !audio.ended) {
       currentTrackPlayedAccumMs += 1000;
       unReportedDiffSec += 1;
       if (profile.value) {
@@ -1759,23 +1514,62 @@ export const useAppStore = defineStore("breezeApp", () => {
         profile.value.listenDurationFormatted =
           h > 0 ? `${h} 小时 ${m} 分` : `${m} 分钟`;
       }
-      // 每满 60 秒真实播放自动触发一次 CSCC 心跳与云端等级时长同步
+      // 每满 10 秒持久化增量秒数至本地双水位线状态机，防止未满 60 秒关闭软件丢失进度
+      if (unReportedDiffSec > 0 && unReportedDiffSec % 10 === 0 && isLoggedIn.value) {
+        kugouClient.recordListeningSeconds(10).catch(() => {});
+      }
+      // 每满 60 秒真实播放自动触发一次 CSCC 心跳与云端双水位线等级时长同步
       if (unReportedDiffSec >= 60 && isLoggedIn.value) {
         const diffToReport = unReportedDiffSec;
         unReportedDiffSec = 0;
         kugouClient
           .reportPlaybackTelemetry(currentSong.value, false, diffToReport * 1000)
           .then(() => {
-            const totalSec = profile.value?.listenDurationSec || undefined;
             kugouClient
-              .getAccountProfile(totalSec, diffToReport)
-              .then((p) => {
-                if (p) profile.value = p;
+              .syncListeningGrade(false)
+              .then((res) => {
+                if (res?.profile) profile.value = res.profile;
               })
               .catch(() => {});
           })
           .catch(() => {});
       }
+
+      // 播放中途停滞看门狗 (PlaybackStallWatchdog)：检测 isPlaying=true 但 currentTime 连续 4 秒停滞
+      const curSec = audio.currentTime || 0;
+      const realDurMs =
+        audio.duration && isFinite(audio.duration) && audio.duration > 5
+          ? audio.duration * 1000
+          : durationMs.value;
+      if (curSec > 1 && realDurMs > 10000 && curSec * 1000 < realDurMs - 2500) {
+        if (Math.abs(curSec - lastWatchdogPosSec) < 0.04) {
+          watchdogStallTicks += 1;
+          if (
+            watchdogStallTicks >= 4 &&
+            Date.now() - lastWatchdogRecoverWallMs > 8000
+          ) {
+            watchdogStallTicks = 0;
+            lastWatchdogRecoverWallMs = Date.now();
+            const resumeMs = Math.floor(curSec * 1000);
+            console.warn(
+              `[PlaybackStallWatchdog] 检测到播放中途停滞于 ${curSec.toFixed(1)}s，正在无缝重连恢复...`
+            );
+            if (currentCandidateIdx + 1 < currentCandidateUrls.length) {
+              currentCandidateIdx += 1;
+              audio.src = currentCandidateUrls[currentCandidateIdx];
+              audio.currentTime = curSec;
+              audio.play().catch(() => {});
+            } else {
+              loadAndPlayCurrentSong(resumeMs);
+            }
+          }
+        } else {
+          lastWatchdogPosSec = curSec;
+          watchdogStallTicks = 0;
+        }
+      }
+    } else {
+      watchdogStallTicks = 0;
     }
   }, 1000);
 
@@ -1797,15 +1591,19 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
 
     // 跨曲平滑淡出与无缝切歌过渡 (crossfadeSeconds: 1 ~ 8s)
+    // 严格要求 audio.duration 已解析且有效，避免因元数据时长偏差导致提前静音或跳歌
     if (
       crossfadeSeconds.value > 0 &&
       !climaxModeEnabled.value &&
       isPlaying.value &&
-      durationMs.value > 15000 &&
+      audio.duration &&
+      isFinite(audio.duration) &&
+      audio.duration > 30 &&
       playQueue.value.length > 0
     ) {
+      const realDurMs = Math.floor(audio.duration * 1000);
       const fadeWinMs = crossfadeSeconds.value * 1000;
-      const remainMs = durationMs.value - posMs;
+      const remainMs = realDurMs - posMs;
       if (remainMs > 0 && remainMs <= fadeWinMs && !isCrossfadeTransitioning) {
         const envelope = Math.max(0.03, remainMs / fadeWinMs);
         audio.volume = Math.max(0, Math.min(1, volume.value * envelope));
@@ -1838,6 +1636,7 @@ export const useAppStore = defineStore("breezeApp", () => {
   audio.addEventListener("canplay", () => {
     isBuffering.value = false;
   });
+  let hasRetriedFallbackQuality = false;
   audio.addEventListener("error", () => {
     const reqId = activePlayRequestId;
     if (!currentSong.value || currentCandidateUrls.length === 0) {
@@ -1849,7 +1648,7 @@ export const useAppStore = defineStore("breezeApp", () => {
       currentCandidateIdx += 1;
       const nextUrl = currentCandidateUrls[currentCandidateIdx];
       console.warn(
-        `[Audio Failover] 主节点加载失败，自动切换备用 CDN 节点 (${currentCandidateIdx + 1}/${currentCandidateUrls.length}):`,
+        `[Audio Failover] 主节点加载失败，自动切换备用节点 (${currentCandidateIdx + 1}/${currentCandidateUrls.length}):`,
         nextUrl
       );
       audio.src = nextUrl;
@@ -1863,8 +1662,8 @@ export const useAppStore = defineStore("breezeApp", () => {
       });
       return;
     }
-    // 若所有节点在 crossOrigin="anonymous" 下均因 CDN 缺少 CORS 头失败，则自动降级移除 crossOrigin 重试一次
-    if (!hasRetriedWithoutCors && audioCtx === null) {
+    // 若所有节点在 crossOrigin="anonymous" 下均因缺少 CORS 头失败，则自动降级移除 crossOrigin 重试一次
+    if (!hasRetriedWithoutCors) {
       hasRetriedWithoutCors = true;
       currentCandidateIdx = 0;
       audio.removeAttribute("crossorigin");
@@ -1873,6 +1672,38 @@ export const useAppStore = defineStore("breezeApp", () => {
         audio.currentTime = resumePosSec;
       }
       audio.play().catch(() => {});
+      return;
+    }
+    // 若当前高码率音源流损坏，自动平滑降级一档音质并在原进度续播
+    if (!hasRetriedFallbackQuality && currentSong.value) {
+      hasRetriedFallbackQuality = true;
+      const fallbackOrder: AudioQualityValue[] = ["high", "flac", "320", "128"];
+      const curIdx = fallbackOrder.indexOf(preferredQuality.value);
+      const fallbackQ = fallbackOrder[Math.min(fallbackOrder.length - 1, Math.max(0, curIdx) + 1)] || "320";
+      const songSnapshot = currentSong.value;
+      const resumeMs = Math.floor(resumePosSec * 1000);
+      kugouClient
+        .resolveSongUrl(songSnapshot, fallbackQ)
+        .then((pb) => {
+          if (reqId !== activePlayRequestId) return;
+          currentPlaybackInfo.value = pb;
+          const nextCandidates = [pb.proxyUrl, pb.url, ...(pb.backupUrls || [])].filter(
+            (u, idx, arr): u is string => Boolean(u) && arr.indexOf(u) === idx
+          );
+          if (nextCandidates.length > 0) {
+            currentCandidateUrls = nextCandidates;
+            currentCandidateIdx = 0;
+            audio.src = nextCandidates[0];
+            if (resumeMs > 0) {
+              audio.currentTime = resumeMs / 1000;
+            }
+            audio.play().catch(() => {});
+          }
+        })
+        .catch(() => {
+          isBuffering.value = false;
+          notify("当前音源直链节点连接失败，请尝试切换其他曲目");
+        });
       return;
     }
     isBuffering.value = false;
@@ -1885,27 +1716,22 @@ export const useAppStore = defineStore("breezeApp", () => {
       unReportedDiffSec = 0;
       currentTrackPlayedAccumMs = 0;
       if (remainingSec > 0) {
+        const remMod10 = remainingSec % 10;
+        if (remMod10 > 0 && isLoggedIn.value) {
+          kugouClient.recordListeningSeconds(remMod10).catch(() => {});
+        }
         kugouClient
           .reportPlaybackTelemetry(currentSong.value, false, remainingSec * 1000)
           .then((settled) => {
             if (settled && isLoggedIn.value) {
-              const totalDSec = profile.value?.listenDurationSec || undefined;
               setTimeout(() => {
                 kugouClient
-                  .getAccountProfile(totalDSec, remainingSec)
-                  .then((p) => {
-                    if (p) profile.value = p;
+                  .syncListeningGrade(false)
+                  .then((res) => {
+                    if (res?.profile) profile.value = res.profile;
                   })
                   .catch(() => {});
-              }, 2500);
-              setTimeout(() => {
-                kugouClient
-                  .getAccountProfile(totalDSec, 0)
-                  .then((p) => {
-                    if (p) profile.value = p;
-                  })
-                  .catch(() => {});
-              }, 12500);
+              }, 2200);
             }
           })
           .catch(() => {});
@@ -2059,7 +1885,6 @@ export const useAppStore = defineStore("breezeApp", () => {
           if (restoredSong) {
             durationMs.value = restoredSong.durationMs || 210000;
             currentPositionMs.value = Math.max(0, savedPosMs);
-            extractCoverColors(restoredSong.coverUrl);
             loadLyricForSong(restoredSong);
             if (autoResumeOnStartup.value) {
               setTimeout(() => {
@@ -2078,6 +1903,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     loadNewSongExpress("CHINESE");
     loadRankList();
     loadFmChannels();
+    loadRecentHistory();
     kugouClient
       .getSearchHot()
       .then((kws) => {
@@ -2108,6 +1934,43 @@ export const useAppStore = defineStore("breezeApp", () => {
       loadPurchasedAssets();
     } catch (e) {
       console.warn("refreshAccountAndVip error:", e);
+    }
+  }
+
+  async function syncListeningGradeCloud(forceReport = true) {
+    if (!isLoggedIn.value) {
+      isLoginModalOpen.value = true;
+      return;
+    }
+    if (isSyncingListeningGrade.value) return;
+    isSyncingListeningGrade.value = true;
+    try {
+      const remMod10 = unReportedDiffSec % 10;
+      if (remMod10 > 0) {
+        await kugouClient.recordListeningSeconds(remMod10).catch(() => {});
+      }
+      if (unReportedDiffSec > 0 && currentSong.value) {
+        const diffSec = unReportedDiffSec;
+        unReportedDiffSec = 0;
+        await kugouClient
+          .reportPlaybackTelemetry(currentSong.value, false, diffSec * 1000)
+          .catch(() => {});
+      }
+      const [syncRes, vip] = await Promise.all([
+        kugouClient.syncListeningGrade(forceReport),
+        kugouClient.getVipStatus().catch(() => null),
+      ]);
+      if (syncRes?.profile) {
+        profile.value = syncRes.profile;
+      }
+      if (vip) {
+        vipStatus.value = vip;
+      }
+      notify(syncRes?.message || "已同步云端听歌等级与累计时长");
+    } catch (e: any) {
+      notify(`同步听歌等级失败：${String(e)}`);
+    } finally {
+      isSyncingListeningGrade.value = false;
     }
   }
 
@@ -2204,7 +2067,6 @@ export const useAppStore = defineStore("breezeApp", () => {
         currentIndex.value = 0;
         const first = recommendSongs.value[0];
         durationMs.value = first.durationMs || 210000;
-        extractCoverColors(first.coverUrl);
       }
     } catch (e) {
       console.warn("loadDailyRecommend error:", e);
@@ -2446,9 +2308,11 @@ export const useAppStore = defineStore("breezeApp", () => {
   }
 
   async function loadRecentHistory() {
-    if (!isLoggedIn.value) return;
     try {
-      recentHistorySongs.value = await kugouClient.getRecentHistory();
+      const list = await kugouClient.getRecentHistory();
+      if (list.length > 0 || recentHistorySongs.value.length === 0) {
+        recentHistorySongs.value = list;
+      }
     } catch (e) {
       console.warn("loadRecentHistory error:", e);
     }
@@ -2678,11 +2542,162 @@ export const useAppStore = defineStore("breezeApp", () => {
     await selectPlaylist(pl, true);
   }
 
+  async function openLikedSongsDetail() {
+    if (!isLoggedIn.value) {
+      isLoginModalOpen.value = true;
+      return;
+    }
+    const likedPl = likedPlaylistMeta.value;
+    if (likedPl && (likedPl.globalCollectionId || likedPl.id)) {
+      if (likedSongs.value.length > 0) {
+        playlistSwrCache.set(likedPl.globalCollectionId || likedPl.id, {
+          playlist: {
+            ...likedPl,
+            title: "我喜欢的音乐",
+            name: "我喜欢的音乐",
+            isLiked: true,
+            trackCount: Math.max(likedSongs.value.length, likedPl.trackCount || 0),
+            coverUrl: likedSongs.value[0]?.coverUrl || likedPl.coverUrl || "",
+          },
+          songs: [...likedSongs.value],
+        });
+      }
+      await selectPlaylist(
+        {
+          ...likedPl,
+          title: "我喜欢的音乐",
+          name: "我喜欢的音乐",
+          isLiked: true,
+          trackCount: Math.max(likedSongs.value.length, likedPl.trackCount || 0),
+          coverUrl: likedSongs.value[0]?.coverUrl || likedPl.coverUrl || "",
+        },
+        true
+      );
+      return;
+    }
+    pushNavHistory();
+    selectedPlaylist.value = {
+      id: "__liked_music__",
+      listId: 0,
+      globalCollectionId: "",
+      title: "我喜欢的音乐",
+      name: "我喜欢的音乐",
+      description: "你在酷狗概念版标记红心的全部珍藏单曲，支持云端实时双向同步与无损畅听。",
+      intro: "你在酷狗概念版标记红心的全部珍藏单曲，支持云端实时双向同步与无损畅听。",
+      coverUrl: likedSongs.value[0]?.coverUrl || "",
+      trackCount: likedSongs.value.length,
+      playCount: 0,
+      creatorName: profile.value?.nickname || session.value?.nickname || "我",
+      creator: profile.value?.nickname || session.value?.nickname || "我",
+      isLiked: true,
+      isCreatedByMe: true,
+      isFavorite: false,
+    };
+    playlistSongs.value = [...likedSongs.value];
+    activeTab.value = "playlist_detail";
+    isNowPlayingOpen.value = false;
+    isSearchPaletteOpen.value = false;
+    scrollStageToTop();
+  }
+
+  async function openRecentHistoryDetail() {
+    pushNavHistory();
+    selectedPlaylist.value = {
+      id: "__recent_history__",
+      listId: 0,
+      globalCollectionId: "__recent_history__",
+      title: "最近播放",
+      name: "最近播放",
+      description: "自动持久化保存本地与酷狗概念版云端双端最近聆听足迹，重启软件不丢失。",
+      intro: "自动持久化保存本地与酷狗概念版云端双端最近聆听足迹，重启软件不丢失。",
+      coverUrl: recentHistorySongs.value[0]?.coverUrl || "",
+      trackCount: recentHistorySongs.value.length,
+      playCount: 0,
+      creatorName: profile.value?.nickname || session.value?.nickname || "微风乐迷",
+      creator: profile.value?.nickname || session.value?.nickname || "微风乐迷",
+      isLiked: false,
+      isCreatedByMe: false,
+      isFavorite: false,
+    };
+    playlistSongs.value = [...recentHistorySongs.value];
+    activeTab.value = "playlist_detail";
+    isNowPlayingOpen.value = false;
+    isSearchPaletteOpen.value = false;
+    scrollStageToTop();
+    await loadRecentHistory();
+    if (selectedPlaylist.value?.id === "__recent_history__") {
+      playlistSongs.value = [...recentHistorySongs.value];
+      selectedPlaylist.value.trackCount = recentHistorySongs.value.length;
+      if (!selectedPlaylist.value.coverUrl && recentHistorySongs.value[0]?.coverUrl) {
+        selectedPlaylist.value.coverUrl = recentHistorySongs.value[0].coverUrl;
+      }
+    }
+  }
+
+  async function openPurchasedSongsDetail() {
+    pushNavHistory();
+    const songs = purchasedSongs.value.map((p) => p.song);
+    selectedPlaylist.value = {
+      id: "__purchased_songs__",
+      listId: 0,
+      globalCollectionId: "__purchased_songs__",
+      title: "已购单曲合集",
+      name: "已购单曲合集",
+      description: "你在酷狗音乐已付费购买的数字单曲与无损珍藏曲目。",
+      intro: "你在酷狗音乐已付费购买的数字单曲与无损珍藏曲目。",
+      coverUrl: songs[0]?.coverUrl || purchasedAlbums.value[0]?.coverUrl || "",
+      trackCount: songs.length,
+      playCount: 0,
+      creatorName: profile.value?.nickname || session.value?.nickname || "我",
+      creator: profile.value?.nickname || session.value?.nickname || "我",
+      isLiked: false,
+      isCreatedByMe: false,
+      isFavorite: false,
+    };
+    playlistSongs.value = [...songs];
+    activeTab.value = "playlist_detail";
+    isNowPlayingOpen.value = false;
+    isSearchPaletteOpen.value = false;
+    scrollStageToTop();
+    await loadPurchasedAssets();
+    if (selectedPlaylist.value?.id === "__purchased_songs__") {
+      const updated = purchasedSongs.value.map((p) => p.song);
+      playlistSongs.value = updated;
+      selectedPlaylist.value.trackCount = updated.length;
+      if (!selectedPlaylist.value.coverUrl && updated[0]?.coverUrl) {
+        selectedPlaylist.value.coverUrl = updated[0].coverUrl;
+      }
+    }
+  }
+
   async function refreshCurrentPlaylistOnly() {
     const pl = selectedPlaylist.value;
     if (!pl) return;
     isLoadingLibrary.value = true;
     try {
+      if (pl.id === "__recent_history__") {
+        await loadRecentHistory();
+        playlistSongs.value = [...recentHistorySongs.value];
+        if (selectedPlaylist.value) {
+          selectedPlaylist.value.trackCount = recentHistorySongs.value.length;
+          selectedPlaylist.value.coverUrl =
+            recentHistorySongs.value[0]?.coverUrl || selectedPlaylist.value.coverUrl;
+        }
+        notify(`已刷新「最近播放」（共 ${recentHistorySongs.value.length} 首）`);
+        return;
+      }
+      if (pl.id === "__purchased_songs__") {
+        await loadPurchasedAssets();
+        const songs = purchasedSongs.value.map((p) => p.song);
+        playlistSongs.value = songs;
+        if (selectedPlaylist.value) {
+          selectedPlaylist.value.trackCount = songs.length;
+          selectedPlaylist.value.coverUrl =
+            songs[0]?.coverUrl || selectedPlaylist.value.coverUrl;
+        }
+        notify(`已刷新「已购单曲合集」（共 ${songs.length} 首）`);
+        return;
+      }
       const gid = pl.globalCollectionId || pl.id;
       const [songs, metaInfo] = await Promise.all([
         kugouClient.getPlaylistSongs(gid),
@@ -2707,7 +2722,7 @@ export const useAppStore = defineStore("breezeApp", () => {
           selectedPlaylist.value.coverUrl = songs[0].coverUrl;
         }
       }
-      if (pl.isLiked || pl.title === "我喜欢") {
+      if (pl.isLiked || pl.title === "我喜欢" || pl.title === "我喜欢的音乐") {
         likedSongs.value = songs;
       }
       notify(`已刷新歌单「${selectedPlaylist.value?.title || pl.title}」（共 ${songs.length} 首）`);
@@ -2720,7 +2735,11 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   async function updatePlaylistMeta(listId: number, name: string, intro: string, coverUrl = "") {
     try {
-      await kugouClient.updateUserPlaylist(listId, name, intro, coverUrl);
+      const target =
+        userPlaylists.value.find((p) => p.listId === listId) ||
+        (selectedPlaylist.value?.listId === listId ? selectedPlaylist.value : null);
+      const globalId = target?.globalCollectionId || target?.id || "";
+      await kugouClient.updateUserPlaylist(listId, globalId, name, intro);
       if (selectedPlaylist.value && selectedPlaylist.value.listId === listId) {
         selectedPlaylist.value.title = name;
         selectedPlaylist.value.name = name;
@@ -2728,7 +2747,6 @@ export const useAppStore = defineStore("breezeApp", () => {
         selectedPlaylist.value.intro = intro;
         if (coverUrl) selectedPlaylist.value.coverUrl = coverUrl;
       }
-      const target = userPlaylists.value.find((p) => p.listId === listId);
       if (target) {
         target.title = name;
         target.name = name;
@@ -3541,7 +3559,6 @@ export const useAppStore = defineStore("breezeApp", () => {
     currentPlaybackInfo.value = null;
     currentTrackPlayedAccumMs = 0;
     durationMs.value = song.durationMs || 0;
-    extractCoverColors(song.coverUrl);
     syncWindowsMediaSession(song);
 
     loadLyricForSong(song);
@@ -3558,12 +3575,16 @@ export const useAppStore = defineStore("breezeApp", () => {
       if (reqId !== activePlayRequestId) return;
 
       currentPlaybackInfo.value = pb;
-      const candidates = [pb.url, ...(pb.backupUrls || [])].filter(
-        (u, idx, arr) => Boolean(u) && arr.indexOf(u) === idx
+      // 优先使用 Rust 本地 HTTP Range 边听边存流媒体代理 (proxyUrl)，彻底杜绝酷狗 CDN 长连接静默断流
+      const candidates = [pb.proxyUrl, pb.url, ...(pb.backupUrls || [])].filter(
+        (u, idx, arr): u is string => Boolean(u) && arr.indexOf(u) === idx
       );
       currentCandidateUrls = candidates;
       currentCandidateIdx = 0;
       hasRetriedWithoutCors = false;
+      hasRetriedFallbackQuality = false;
+      lastWatchdogPosSec = -1;
+      watchdogStallTicks = 0;
       if (!audio.crossOrigin) {
         audio.crossOrigin = "anonymous";
       }
@@ -4192,7 +4213,6 @@ export const useAppStore = defineStore("breezeApp", () => {
     desktopLyricX,
     desktopLyricY,
     desktopLyricShowTranslation,
-    coverColorGrades,
     navHistoryStack,
     canNavigateBack,
     pushNavHistory,
@@ -4208,6 +4228,10 @@ export const useAppStore = defineStore("breezeApp", () => {
     navigateToSongArtist,
     navigateToSongAlbum,
     openPlaylistDetail,
+    openLikedSongsDetail,
+    openRecentHistoryDetail,
+    openPurchasedSongsDetail,
+    syncListeningGradeCloud,
     refreshCurrentPlaylistOnly,
     updatePlaylistMeta,
     batchAddSongsToPlaylist,
@@ -4232,6 +4256,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     isNowPlayingOpen,
     isLoginModalOpen,
     isVipCenterOpen,
+    isAccountManagerOpen,
     isFocusPodOpen,
     isLyricPosterOpen,
     desktopLyricEnabled,
@@ -4259,10 +4284,10 @@ export const useAppStore = defineStore("breezeApp", () => {
     activeFmChannel,
     fmStationSongs,
     isLoadingFmStation,
-    layoutMode,
-    windowMaterial,
     colorScheme,
-    dynamicCoverTint,
+    resolvedColorScheme,
+    isDarkTheme,
+    isSyncingListeningGrade,
     autoClaimVipOnStartup,
     autoResumeOnStartup,
     closeToTray,
@@ -4364,7 +4389,6 @@ export const useAppStore = defineStore("breezeApp", () => {
     searchResultsAlbums,
     searchResultsArtists,
     isSearching,
-    coverPalette,
     playQueue,
     recentPlayQueues,
     currentIndex,

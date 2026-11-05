@@ -21,6 +21,12 @@ import DiscoverView from "./views/DiscoverView.vue";
 const FocusPodModal = defineAsyncComponent(
   () => import("./components/FocusPodModal.vue")
 );
+const VipCenterModal = defineAsyncComponent(
+  () => import("./components/VipCenterModal.vue")
+);
+const AccountManagerModal = defineAsyncComponent(
+  () => import("./components/AccountManagerModal.vue")
+);
 const LyricPosterModal = defineAsyncComponent(
   () => import("./components/LyricPosterModal.vue")
 );
@@ -265,6 +271,10 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
       store.isFocusPodOpen = false;
       return;
     }
+    if (store.isAccountManagerOpen) {
+      store.isAccountManagerOpen = false;
+      return;
+    }
     if (store.isVipCenterOpen) {
       store.isVipCenterOpen = false;
       return;
@@ -341,16 +351,7 @@ onBeforeUnmount(() => {
   <div
     v-else
     class="app-root"
-    :class="[
-      `layout-${store.layoutMode}`,
-      `scheme-${store.colorScheme}`,
-      `material-${store.windowMaterial}`,
-    ]"
-    :style="{
-      '--dyn-c1': store.dynamicCoverTint ? store.coverPalette[0] : '#2b8cff',
-      '--dyn-c2': store.dynamicCoverTint ? store.coverPalette[1] : '#00c4a7',
-      '--dyn-c3': store.dynamicCoverTint ? store.coverPalette[2] : '#6c5ce7',
-    }"
+    :class="[`scheme-${store.resolvedColorScheme}`]"
     @click="
       store.isSearchPaletteOpen = false;
       store.isGlobalQueueOpen = false;
@@ -365,342 +366,288 @@ onBeforeUnmount(() => {
       </div>
     </transition>
 
-    <!-- 形态 C：Windows 桌面置顶迷你黑胶挂件模式 -->
-    <template v-if="store.layoutMode === 'mini_turntable'">
-      <div class="mini-widget-shell" data-tauri-drag-region>
+    <!-- 全屏沉浸式背景渲染 + 顶层悬浮胶囊导航与主画布 -->
+    <TitleBar />
+
+    <div class="skyline-workspace">
+      <main
+        ref="stageViewportRef"
+        class="skyline-stage-viewport"
+        :class="{
+          'viewport-locked-nowplaying': store.isNowPlayingOpen,
+        }"
+      >
+        <!-- 左上角时段语句：置于页面内容流顶部，无多余左上角返回按钮，下滑浏览时随页面自然向上消失 -->
         <div
-          class="mini-widget-vinyl"
-          :class="{ spinning: store.isPlaying }"
+          v-if="!store.isNowPlayingOpen"
+          class="inflow-top-greeting-row"
           data-tauri-drag-region
         >
-          <img
-            v-if="store.currentSong?.coverUrl"
-            :src="store.currentSong.coverUrl"
-            class="mini-widget-cover"
+          <div class="inflow-greeting-statement" data-tauri-drag-region>
+            <span class="inflow-greeting-dot"></span>
+            <span class="inflow-greeting-text" data-tauri-drag-region>{{ greetingSubtitle }}</span>
+          </div>
+        </div>
+
+        <transition name="view-morph" mode="out-in" @before-enter="resetStageViewportScroll">
+          <NowPlayingView
+            v-if="store.isNowPlayingOpen"
+            key="now-playing"
           />
-          <PlumpIcon v-else name="disc" :size="28" color="#00e5ff" />
-        </div>
+          <DiscoverView
+            v-else-if="store.activeTab === 'discover'"
+            key="discover"
+          />
+          <LibraryView
+            v-else-if="store.activeTab === 'library'"
+            key="library"
+          />
+          <RadioView
+            v-else-if="store.activeTab === 'radio' || store.activeTab === 'tuner'"
+            key="tuner"
+          />
+          <PlaylistDetailView
+            v-else-if="store.activeTab === 'playlist_detail'"
+            key="playlist-detail"
+          />
+          <ArtistDetailView
+            v-else-if="store.activeTab === 'artist_detail'"
+            key="artist-detail"
+          />
+          <AlbumDetailView
+            v-else-if="store.activeTab === 'album_detail'"
+            key="album-detail"
+          />
+          <SearchPlaceholderView
+            v-else-if="store.activeTab === 'search'"
+            key="search"
+          />
+          <SettingsPlaceholderView v-else key="settings" />
+        </transition>
+      </main>
+    </div>
 
-        <div class="mini-widget-body" data-tauri-drag-region>
-          <div class="mini-widget-title" data-tauri-drag-region>
-            {{ store.currentSong?.title || "BreezeMusic 迷你挂件" }}
-          </div>
-          <div class="mini-widget-lyric" data-tauri-drag-region>
-            {{ currentLyricPair.main }}
-          </div>
-
-          <div class="mini-widget-controls">
-            <button class="dock-icon-btn" @click="store.playPrev()">
-              <PlumpIcon name="prev" :size="16" />
+    <!-- 浏览器预览回退桌面歌词舱（Tauri 桌面端由独立透明置顶窗口 desktop_lyric 渲染，避免双实例重叠） -->
+    <transition name="pop-spring">
+      <div
+        v-if="store.desktopLyricEnabled && !isTauriRuntime"
+        ref="desktopLyricRef"
+        class="floating-desktop-lyric-bar"
+        :class="{
+          locked: store.desktopLyricLocked,
+          dragging: isDraggingDesktopLyric,
+        }"
+        :style="desktopLyricPositionStyle"
+        @mousedown="onDesktopLyricMouseDown"
+      >
+        <div v-if="!store.desktopLyricLocked" class="fdl-top-toolbar">
+          <span class="fdl-song-chip" title="按住歌词栏任意空白处即可在屏幕内自由拖动">
+            ✥ {{ store.currentSong?.title || "微风桌面歌词" }} ({{ store.desktopLyricWidth }}px)
+          </span>
+          <div class="fdl-btn-cluster">
+            <button class="fdl-icon-btn" title="上一曲" @click.stop="store.playPrev()">
+              <PlumpIcon name="prev" :size="13" />
+            </button>
+            <button class="fdl-icon-btn" title="播放 / 暂停" @click.stop="store.togglePlayPause()">
+              <PlumpIcon :name="store.isPlaying ? 'pause' : 'play'" :size="13" />
+            </button>
+            <button class="fdl-icon-btn" title="下一曲" @click.stop="store.playNext(false)">
+              <PlumpIcon name="next" :size="13" />
             </button>
             <button
-              class="dock-play-main-btn mini"
-              @click="store.togglePlayPause()"
+              class="fdl-icon-btn"
+              title="缩短桌面歌词规定长度 (-30px)"
+              @click.stop="store.desktopLyricWidth = Math.max(340, (store.desktopLyricWidth || 440) - 30)"
             >
-              <PlumpIcon
-                :name="store.isPlaying ? 'pause' : 'play'"
-                :size="16"
-                color="#ffffff"
-              />
-            </button>
-            <button class="dock-icon-btn" @click="store.playNext(false)">
-              <PlumpIcon name="next" :size="16" />
+              W-
             </button>
             <button
-              class="mini-expand-btn"
-              title="还原顶部天际线大窗口模式"
-              @click="store.layoutMode = 'floating_bento'"
+              class="fdl-icon-btn"
+              title="加长桌面歌词规定长度 (+30px)"
+              @click.stop="store.desktopLyricWidth = Math.min(720, (store.desktopLyricWidth || 440) + 30)"
             >
-              <span>展开主窗口</span>
+              W+
             </button>
-          </div>
-        </div>
-      </div>
-    </template>
-
-    <!-- 形态 A & B：全屏沉浸式背景渲染 + 顶层悬浮胶囊导航与右上角融合卡片 -->
-    <template v-else>
-      <TitleBar />
-
-      <div class="skyline-workspace">
-        <main
-          ref="stageViewportRef"
-          class="skyline-stage-viewport"
-          :class="{
-            'viewport-locked-library': store.activeTab === 'library' && !store.isNowPlayingOpen,
-            'viewport-locked-nowplaying': store.isNowPlayingOpen,
-          }"
-        >
-          <!-- 左上角时段语句：置于页面内容流顶部，无多余左上角返回按钮，下滑浏览时随页面自然向上消失 -->
-          <div
-            v-if="!store.isNowPlayingOpen"
-            class="inflow-top-greeting-row"
-            data-tauri-drag-region
-          >
-            <div class="inflow-greeting-statement" data-tauri-drag-region>
-              <span class="inflow-greeting-dot"></span>
-              <span class="inflow-greeting-text" data-tauri-drag-region>{{ greetingSubtitle }}</span>
-            </div>
-          </div>
-
-          <transition name="view-morph" mode="out-in" @before-enter="resetStageViewportScroll">
-            <NowPlayingView
-              v-if="store.isNowPlayingOpen"
-              key="now-playing"
-            />
-            <DiscoverView
-              v-else-if="store.activeTab === 'discover'"
-              key="discover"
-            />
-            <LibraryView
-              v-else-if="store.activeTab === 'library'"
-              key="library"
-            />
-            <RadioView
-              v-else-if="store.activeTab === 'radio' || store.activeTab === 'tuner'"
-              key="tuner"
-            />
-            <PlaylistDetailView
-              v-else-if="store.activeTab === 'playlist_detail'"
-              key="playlist-detail"
-            />
-            <ArtistDetailView
-              v-else-if="store.activeTab === 'artist_detail'"
-              key="artist-detail"
-            />
-            <AlbumDetailView
-              v-else-if="store.activeTab === 'album_detail'"
-              key="album-detail"
-            />
-            <SearchPlaceholderView
-              v-else-if="store.activeTab === 'search'"
-              key="search"
-            />
-            <SettingsPlaceholderView v-else key="settings" />
-          </transition>
-        </main>
-      </div>
-
-      <!-- 浏览器预览回退桌面歌词舱（Tauri 桌面端由独立透明置顶窗口 desktop_lyric 渲染，避免双实例重叠） -->
-      <transition name="pop-spring">
-        <div
-          v-if="store.desktopLyricEnabled && !isTauriRuntime"
-          ref="desktopLyricRef"
-          class="floating-desktop-lyric-bar"
-          :class="{
-            locked: store.desktopLyricLocked,
-            dragging: isDraggingDesktopLyric,
-          }"
-          :style="desktopLyricPositionStyle"
-          @mousedown="onDesktopLyricMouseDown"
-        >
-          <div v-if="!store.desktopLyricLocked" class="fdl-top-toolbar">
-            <span class="fdl-song-chip" title="按住歌词栏任意空白处即可在屏幕内自由拖动">
-              ✥ {{ store.currentSong?.title || "微风桌面歌词" }} ({{ store.desktopLyricWidth }}px)
-            </span>
-            <div class="fdl-btn-cluster">
-              <button class="fdl-icon-btn" title="上一曲" @click.stop="store.playPrev()">
-                <PlumpIcon name="prev" :size="13" />
-              </button>
-              <button class="fdl-icon-btn" title="播放 / 暂停" @click.stop="store.togglePlayPause()">
-                <PlumpIcon :name="store.isPlaying ? 'pause' : 'play'" :size="13" />
-              </button>
-              <button class="fdl-icon-btn" title="下一曲" @click.stop="store.playNext(false)">
-                <PlumpIcon name="next" :size="13" />
-              </button>
-              <button
-                class="fdl-icon-btn"
-                title="缩短桌面歌词规定长度 (-30px)"
-                @click.stop="store.desktopLyricWidth = Math.max(340, (store.desktopLyricWidth || 440) - 30)"
-              >
-                W-
-              </button>
-              <button
-                class="fdl-icon-btn"
-                title="加长桌面歌词规定长度 (+30px)"
-                @click.stop="store.desktopLyricWidth = Math.min(720, (store.desktopLyricWidth || 440) + 30)"
-              >
-                W+
-              </button>
-              <button
-                class="fdl-icon-btn"
-                title="字号缩小"
-                @click.stop="store.desktopLyricFontSize = Math.max(18, (store.desktopLyricFontSize || 24) - 2)"
-              >
-                A-
-              </button>
-              <button
-                class="fdl-icon-btn"
-                title="字号放大"
-                @click.stop="store.desktopLyricFontSize = Math.min(36, (store.desktopLyricFontSize || 24) + 2)"
-              >
-                A+
-              </button>
-              <button
-                class="fdl-icon-btn"
-                title="切换桌面歌词流光配色"
-                @click.stop="
-                  store.desktopLyricColor = ['#00e5ff', '#ffd54f', '#ff6b8b', '#00e5a3', '#b388ff'][
-                    (['#00e5ff', '#ffd54f', '#ff6b8b', '#00e5a3', '#b388ff'].indexOf(store.desktopLyricColor) + 1) % 5
-                  ]
-                "
-              >
-                🎨
-              </button>
-              <button
-                class="fdl-btn"
-                title="锁定桌面歌词防误触"
-                @click.stop="store.desktopLyricLocked = true"
-              >
-                <PlumpIcon name="lock" :size="13" />
-                <span>锁定</span>
-              </button>
-              <button
-                class="fdl-btn"
-                title="关闭桌面歌词"
-                @click.stop="store.desktopLyricEnabled = false"
-              >
-                <PlumpIcon name="close" :size="13" />
-              </button>
-            </div>
-          </div>
-
-          <div v-else class="fdl-locked-unlock-pill">
+            <button
+              class="fdl-icon-btn"
+              title="字号缩小"
+              @click.stop="store.desktopLyricFontSize = Math.max(18, (store.desktopLyricFontSize || 24) - 2)"
+            >
+              A-
+            </button>
+            <button
+              class="fdl-icon-btn"
+              title="字号放大"
+              @click.stop="store.desktopLyricFontSize = Math.min(36, (store.desktopLyricFontSize || 24) + 2)"
+            >
+              A+
+            </button>
+            <button
+              class="fdl-icon-btn"
+              title="切换桌面歌词流光配色"
+              @click.stop="
+                store.desktopLyricColor = ['#00e5ff', '#ffd54f', '#ff6b8b', '#00e5a3', '#b388ff'][
+                  (['#00e5ff', '#ffd54f', '#ff6b8b', '#00e5a3', '#b388ff'].indexOf(store.desktopLyricColor) + 1) % 5
+                ]
+              "
+            >
+              🎨
+            </button>
             <button
               class="fdl-btn"
-              title="点击解锁桌面歌词"
-              @click.stop="store.desktopLyricLocked = false"
+              title="锁定桌面歌词防误触"
+              @click.stop="store.desktopLyricLocked = true"
             >
-              <PlumpIcon name="unlock" :size="12" />
-              <span>已锁 · 点击解锁</span>
+              <PlumpIcon name="lock" :size="13" />
+              <span>锁定</span>
+            </button>
+            <button
+              class="fdl-btn"
+              title="关闭桌面歌词"
+              @click.stop="store.desktopLyricEnabled = false"
+            >
+              <PlumpIcon name="close" :size="13" />
             </button>
           </div>
+        </div>
 
-          <div class="fdl-lines">
-            <div
-              v-if="store.lyricWordByWord && currentLyricPair.words.length > 0"
-              class="fdl-main krc-words-row"
+        <div v-else class="fdl-locked-unlock-pill">
+          <button
+            class="fdl-btn"
+            title="点击解锁桌面歌词"
+            @click.stop="store.desktopLyricLocked = false"
+          >
+            <PlumpIcon name="unlock" :size="12" />
+            <span>已锁 · 点击解锁</span>
+          </button>
+        </div>
+
+        <div class="fdl-lines">
+          <div
+            v-if="store.lyricWordByWord && currentLyricPair.words.length > 0"
+            class="fdl-main krc-words-row"
+          >
+            <span
+              v-for="(w, wIdx) in currentLyricPair.words"
+              :key="wIdx"
+              class="fdl-krc-word"
+              :style="{
+                '--fill-pct': `${desktopWordFillPercent(
+                  currentLyricPair.lineStartMs,
+                  w.startTimeMs,
+                  w.durationMs
+                )}%`,
+              }"
             >
-              <span
-                v-for="(w, wIdx) in currentLyricPair.words"
-                :key="wIdx"
-                class="fdl-krc-word"
-                :style="{
-                  '--fill-pct': `${desktopWordFillPercent(
-                    currentLyricPair.lineStartMs,
-                    w.startTimeMs,
-                    w.durationMs
-                  )}%`,
-                }"
-              >
-                {{ w.text }}
-              </span>
-            </div>
-            <div v-else class="fdl-main">{{ currentLyricPair.main }}</div>
-            <div v-if="currentLyricPair.sub" class="fdl-sub">
-              {{ currentLyricPair.sub }}
-            </div>
+              {{ w.text }}
+            </span>
+          </div>
+          <div v-else class="fdl-main">{{ currentLyricPair.main }}</div>
+          <div v-if="currentLyricPair.sub" class="fdl-sub">
+            {{ currentLyricPair.sub }}
           </div>
         </div>
-      </transition>
+      </div>
+    </transition>
 
-      <PlayerBar />
+    <PlayerBar />
 
-      <!-- 全局模态层 -->
-      <LoginModal />
-      <FocusPodModal />
-      <LyricPosterModal />
-      <SongContextMenu />
-      <CommentsModal />
-      <MultiArtistModal />
+    <!-- 全局模态层 -->
+    <LoginModal />
+    <VipCenterModal />
+    <AccountManagerModal />
+    <FocusPodModal />
+    <LyricPosterModal />
+    <SongContextMenu />
+    <CommentsModal />
+    <MultiArtistModal />
 
-      <!-- 全局 1000P 超清专辑封面预览与保存弹窗 -->
-      <transition name="fade">
-        <div
-          v-if="store.hdArtworkPreviewUrl"
-          class="modal-backdrop"
-          @click.self="store.hdArtworkPreviewUrl = null"
-        >
-          <div class="hd-cover-modal glass-popover" @click.stop>
-            <img :src="store.hdArtworkPreviewUrl" class="hd-cover-large" alt="HD Cover" />
-            <div class="hd-cover-actions">
-              <a
-                :href="store.hdArtworkPreviewUrl"
-                target="_blank"
-                download
-                class="primary-btn"
-              >
-                <PlumpIcon name="download" :size="16" color="#ffffff" />
-                <span>打开 / 保存 1000×1000 超清原图</span>
-              </a>
-              <button
-                class="tonal-pill-btn"
-                @click="store.hdArtworkPreviewUrl = null"
-              >
-                关闭预览
-              </button>
-            </div>
+    <!-- 全局 1000P 超清专辑封面预览与保存弹窗 -->
+    <transition name="fade">
+      <div
+        v-if="store.hdArtworkPreviewUrl"
+        class="modal-backdrop"
+        @click.self="store.hdArtworkPreviewUrl = null"
+      >
+        <div class="hd-cover-modal glass-popover" @click.stop>
+          <img :src="store.hdArtworkPreviewUrl" class="hd-cover-large" alt="HD Cover" />
+          <div class="hd-cover-actions">
+            <a
+              :href="store.hdArtworkPreviewUrl"
+              target="_blank"
+              download
+              class="primary-btn"
+            >
+              <PlumpIcon name="download" :size="16" color="#ffffff" />
+              <span>打开 / 保存 1000×1000 超清原图</span>
+            </a>
+            <button
+              class="tonal-pill-btn"
+              @click="store.hdArtworkPreviewUrl = null"
+            >
+              关闭预览
+            </button>
           </div>
         </div>
-      </transition>
+      </div>
+    </transition>
 
-      <!-- 全局歌曲分享与口令生成弹窗 -->
-      <transition name="fade">
-        <div
-          v-if="store.shareModalSong"
-          class="modal-backdrop"
-          @click.self="store.shareModalSong = null"
-        >
-          <div class="compact-dialog glass-popover" @click.stop>
-            <div class="modal-top-bar">
-              <h3>分享歌曲与微风口令</h3>
-              <button class="icon-close-btn" @click="store.shareModalSong = null">
-                <PlumpIcon name="close" :size="15" />
-              </button>
-            </div>
-            <div class="share-song-card-preview">
-              <img
-                v-if="store.shareModalSong.coverUrl"
-                :src="store.shareModalSong.coverUrl"
-                class="share-song-cover"
-              />
-              <div class="share-song-meta">
-                <div class="share-song-title">{{ store.shareModalSong.title }}</div>
-                <div class="share-song-artist">{{ store.shareModalSong.artist }}</div>
-                <div class="share-song-hash">Hash: {{ store.shareModalSong.hash }}</div>
-              </div>
-            </div>
-            <p class="dialog-sub">
-              复制微风音乐口令给好友，对方在「我的 → 导入歌单」粘贴即可直连播放；或一键生成 2K 艺术歌词海报：
-            </p>
-            <div class="dialog-actions">
-              <button
-                class="tonal-pill-btn"
-                @click="
-                  if (store.shareModalSong) {
-                    store.playSongFromList(store.shareModalSong);
-                  }
-                  store.shareModalSong = null;
-                  store.isLyricPosterOpen = true;
-                "
-              >
-                <PlumpIcon name="poster" :size="15" />
-                <span>生成 2K 歌词海报</span>
-              </button>
-              <button
-                class="primary-btn"
-                @click="
-                  copyShareCommand(store.shareModalSong);
-                  store.shareModalSong = null;
-                "
-              >
-                <PlumpIcon name="copy" :size="15" color="#ffffff" />
-                <span>复制分享口令</span>
-              </button>
+    <!-- 全局歌曲分享与口令生成弹窗 -->
+    <transition name="fade">
+      <div
+        v-if="store.shareModalSong"
+        class="modal-backdrop"
+        @click.self="store.shareModalSong = null"
+      >
+        <div class="compact-dialog glass-popover" @click.stop>
+          <div class="modal-top-bar">
+            <h3>分享歌曲与微风口令</h3>
+            <button class="icon-close-btn" @click="store.shareModalSong = null">
+              <PlumpIcon name="close" :size="15" />
+            </button>
+          </div>
+          <div class="share-song-card-preview">
+            <img
+              v-if="store.shareModalSong.coverUrl"
+              :src="store.shareModalSong.coverUrl"
+              class="share-song-cover"
+            />
+            <div class="share-song-meta">
+              <div class="share-song-title">{{ store.shareModalSong.title }}</div>
+              <div class="share-song-artist">{{ store.shareModalSong.artist }}</div>
+              <div class="share-song-hash">Hash: {{ store.shareModalSong.hash }}</div>
             </div>
           </div>
+          <p class="dialog-sub">
+            复制微风音乐口令给好友，对方在「我的 → 导入歌单」粘贴即可直连播放；或一键生成 2K 艺术歌词海报：
+          </p>
+          <div class="dialog-actions">
+            <button
+              class="tonal-pill-btn"
+              @click="
+                if (store.shareModalSong) {
+                  store.playSongFromList(store.shareModalSong);
+                }
+                store.shareModalSong = null;
+                store.isLyricPosterOpen = true;
+              "
+            >
+              <PlumpIcon name="poster" :size="15" />
+              <span>生成 2K 歌词海报</span>
+            </button>
+            <button
+              class="primary-btn"
+              @click="
+                copyShareCommand(store.shareModalSong);
+                store.shareModalSong = null;
+              "
+            >
+              <PlumpIcon name="copy" :size="15" color="#ffffff" />
+              <span>复制分享口令</span>
+            </button>
+          </div>
         </div>
-      </transition>
-    </template>
+      </div>
+    </transition>
   </div>
 </template>

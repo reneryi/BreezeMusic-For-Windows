@@ -137,6 +137,16 @@ impl KugouTransport {
         let mut tracker_router = base_headers.clone();
         tracker_router.insert("x-router".to_string(), "tracker.kugou.com".to_string());
 
+        let mut userinfo_router = base_headers.clone();
+        userinfo_router.insert("x-router".to_string(), "userinfo.user.kugou.com".to_string());
+
+        let mut userinfoservice_router = base_headers.clone();
+        userinfoservice_router
+            .insert("x-router".to_string(), "userinfoservice.kugou.com".to_string());
+
+        let mut relation_router = base_headers.clone();
+        relation_router.insert("x-router".to_string(), "relation.user.kugou.com".to_string());
+
         match host_name {
             "login.user.kugou.com" => vec![
                 ("http://login.user.kugou.com".to_string(), base_headers.clone()),
@@ -151,6 +161,18 @@ impl KugouTransport {
             "login-user.kugou.com" => vec![
                 (raw_host.to_string(), base_headers.clone()),
                 ("https://gateway.kugou.com".to_string(), qr_router),
+            ],
+            "userinfo.user.kugou.com" => vec![
+                (raw_host.to_string(), base_headers.clone()),
+                ("https://gateway.kugou.com".to_string(), userinfo_router),
+            ],
+            "userinfoservice.kugou.com" => vec![
+                (raw_host.to_string(), base_headers.clone()),
+                ("https://gateway.kugou.com".to_string(), userinfoservice_router),
+            ],
+            "relation.user.kugou.com" => vec![
+                (raw_host.to_string(), base_headers.clone()),
+                ("https://gateway.kugou.com".to_string(), relation_router),
             ],
             "gateway.kugou.com" => vec![
                 (raw_host.to_string(), base_headers.clone()),

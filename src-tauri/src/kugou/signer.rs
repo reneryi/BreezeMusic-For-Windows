@@ -18,6 +18,8 @@ type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 /// 酷狗概念版 (Lite) 专属协议常量 — 对齐 MakcRe/KuGouMusicApi 与 BreezeMusic Android KugouSigner.kt
 pub const APP_ID: u32 = 3116;
 pub const CLIENT_VERSION: u32 = 11440;
+pub const STANDARD_APP_ID: u32 = 1005;
+pub const STANDARD_CLIENT_VERSION: u32 = 20489;
 pub const ANDROID_SALT: &str = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA";
 pub const WEB_SALT: &str = "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt";
 pub const STANDARD_SALT: &str = "OIlwieks28dk2k092lksi2UIkp";
@@ -79,6 +81,15 @@ pub fn random_hex(len: usize) -> String {
 /// - Web: MD5(WEB_SALT + sorted("key=val") + body + WEB_SALT)
 pub fn signature(params: &BTreeMap<String, String>, body: &str, web: bool) -> String {
     let salt = if web { WEB_SALT } else { ANDROID_SALT };
+    signature_with_salt(params, body, salt, web)
+}
+
+pub fn signature_with_salt(
+    params: &BTreeMap<String, String>,
+    body: &str,
+    salt: &str,
+    web: bool,
+) -> String {
     let ordered = if web {
         let mut pairs: Vec<String> = params.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
         pairs.sort();
@@ -195,6 +206,10 @@ pub fn decrypt_login_params(hex_cipher: &str, temp_key: &str) -> Result<String, 
 /// 对齐 KugouSigner.rsa(text, useStandardKey)
 pub fn rsa_raw_zero_pad_hex(text: &str) -> Result<String, String> {
     rsa_raw_zero_pad_with_key_hex(text, false)
+}
+
+pub fn rsa_raw_zero_pad_hex_standard(text: &str) -> Result<String, String> {
+    rsa_raw_zero_pad_with_key_hex(text, true)
 }
 
 pub fn rsa_raw_zero_pad_with_key_hex(text: &str, use_standard_key: bool) -> Result<String, String> {

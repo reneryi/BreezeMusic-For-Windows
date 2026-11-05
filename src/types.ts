@@ -86,22 +86,11 @@ export type SoundEffectPreset =
   | "concert_hall"
   | "vocal_warm";
 
-/** 全局桌面布局风格（方案二默认：floating_bento 顶部天际线中枢画廊） */
-export type DesktopLayoutMode =
-  | "floating_bento"
-  | "zen_minimal"
-  | "mini_turntable";
-
-/** Windows 窗口背景材质 */
-export type WindowMaterialStyle = "mica_glow" | "acrylic_frost" | "pure_solid";
-
-/** 全局色彩外观主题 */
+/** 全局色彩外观主题（对齐 Android 端：幽邃微蓝 / 水彩浸润 / 跟随系统自动切换） */
 export type AppColorScheme =
   | "abyssal_dark"
-  | "oled_black"
   | "watercolor_light"
-  | "light"
-  | "dark";
+  | "system";
 
 /** 播放页四款高定舞台样式 */
 export type PlayerStageStyle =
@@ -110,22 +99,20 @@ export type PlayerStageStyle =
   | "cyber_spectrum"
   | "gallery_poster";
 
-/** 播放页五款高定背景（对齐 Android 端 PlayerBackgroundStyle） */
+/** 播放页高定背景（对齐 Android 端 PlayerBackgroundStyle） */
 export type PlayerBackgroundStyle =
   | "cover_blur"
   | "fluid_aurora"
   | "rhythm_halo"
-  | "starlight_nebula"
-  | "deep_oled";
+  | "starlight_nebula";
 
-/** 歌词页六款四字流光主题（对齐 Android 端 LyricHighlightTheme 2x3 网格） */
+/** 歌词页五款流光主题（剥离初期不需要的封面动态取色） */
 export type LyricThemeId =
   | "ice_blue"
   | "aurora_purple"
   | "amber_gold"
   | "neon_coral"
-  | "emerald_mint"
-  | "dynamic_cover";
+  | "emerald_mint";
 
 export type LyricAlignment = "left" | "center" | "right";
 
@@ -286,6 +273,7 @@ export interface Song {
 
 export interface PlaybackResult {
   url: string;
+  proxyUrl?: string;
   backupUrls?: string[];
   actualQuality: string;
   matchedQuality?: string;
@@ -302,6 +290,17 @@ export interface PlaybackResult {
   isFreePart: boolean;
   resolvedHash: string;
   extName: string;
+}
+
+export interface ListeningGradeSyncResult {
+  profile: AccountProfile;
+  syncedOfficialListenSec: number;
+  syncedRawServerDsec: number;
+  pendingDiffSec: number;
+  displayListenSec: number;
+  displayListenFormatted: string;
+  creditedSec: number;
+  message: string;
 }
 
 export interface Playlist {
@@ -531,44 +530,6 @@ export interface CacheDiskStats {
   lyricAndUrlMb: number;
   totalMb: number;
   cacheDirPath: string;
-}
-
-/** 16级封面动态取色分级调色板 (Upgraded 16-Grade CIE L* Cover Tonal Palette) */
-export interface CoverColorGrades {
-  c1: string;
-  c2: string;
-  c3: string;
-  c4: string;
-  c5: string;
-  c6: string;
-  c7: string;
-  c8: string;
-  c9: string;
-  c10: string;
-  c11: string;
-  c12: string;
-  c13?: string;
-  c14?: string;
-  c15?: string;
-  c16?: string;
-  tones?: Record<number, string>;
-  seedHex?: string;
-  secondaryHex?: string;
-  tertiaryHex?: string;
-  hue?: number;
-  saturation?: number;
-  c1Primary?: string;
-  c2Secondary?: string;
-  c3Tertiary?: string;
-  c4AccentBright?: string;
-  c5AccentSoft?: string;
-  c6ContainerDark?: string;
-  c7ContainerLight?: string;
-  c8SurfaceDeep?: string;
-  c9SurfaceElevated?: string;
-  c10GlowHalo?: string;
-  c11TextOnDark?: string;
-  c12TextOnLight?: string;
 }
 
 /** 母带级声场调音工作台参数（对齐 Android AcousticFieldTuningTab） */

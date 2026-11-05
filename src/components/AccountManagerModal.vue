@@ -11,23 +11,49 @@ const levelNum = computed(() => {
   return store.profile?.userGrade || store.profile?.userLevel || 1;
 });
 
+const nextLevelNum = computed(() => {
+  const ng = store.profile?.nextGrade;
+  return ng && ng > levelNum.value ? ng : levelNum.value + 1;
+});
+
 const listenHoursText = computed(() => {
-  const sec = store.profile?.listenDurationSec || 0;
-  const totalMin = Math.max(store.profile?.listenDurationMin || 0, Math.floor(sec / 60));
+  const sec = store.profile?.listenDurationSec ?? 0;
+  const totalMin = sec > 0 ? Math.floor(sec / 60) : (store.profile?.listenDurationMin ?? 0);
   const hours = Math.floor(totalMin / 60);
   const mins = totalMin % 60;
-  if (hours > 0) return `${hours} 小时 ${mins} 分钟`;
+  if (hours > 0) return `${hours} 小时 ${mins} 分钟（${totalMin.toLocaleString()} 分钟）`;
   return `${mins} 分钟`;
 });
 
 const nextLevelRemainText = computed(() => {
-  const diff = store.profile?.nextLevelRemainMin || 0;
-  if (diff > 0) {
-    const h = Math.floor(diff / 60);
-    const m = diff % 60;
-    return h > 0 ? `距离 Lv.${levelNum.value + 1} 还需 ${h} 小时 ${m} 分` : `距离 Lv.${levelNum.value + 1} 还需 ${m} 分钟`;
+  const cur = store.profile?.userScore || 0;
+  const next = store.profile?.nextLevelScore || 0;
+  const remScore = store.profile?.nextLevelRemainScore ?? Math.max(0, next - cur);
+  const speed = store.profile?.gradeSpeed || 1;
+  if (cur > 0 && next > 0) {
+    const speedStr = Number.isInteger(speed) ? `${speed}.0x` : `${speed.toFixed(1)}x`;
+    return `成长值 ${cur.toLocaleString()} / ${next.toLocaleString()} · 距 Lv.${nextLevelNum.value} 差 ${remScore.toLocaleString()} 分（加速 ${speedStr}）`;
   }
-  return "双水位线云端实时同步已就绪";
+  return "云端听歌等级与累计时长实时校准";
+});
+
+const accountExtraMetaText = computed(() => {
+  const p = store.profile;
+  if (!p) return "";
+  const parts: string[] = [];
+  if (p.musicAgeYears && p.musicAgeYears > 0) {
+    parts.push(`乐龄 ${p.musicAgeYears} 年`);
+  }
+  const region = [p.province, p.city].filter(Boolean).join(" ");
+  if (region) {
+    parts.push(region);
+  } else if (p.ipLocation) {
+    parts.push(`IP 属地 ${p.ipLocation}`);
+  }
+  if ((p.follows || 0) > 0 || (p.fans || 0) > 0 || (p.visitors || 0) > 0) {
+    parts.push(`关注 ${p.follows || 0} · 粉丝 ${p.fans || 0} · 访客 ${p.visitors || 0}`);
+  }
+  return parts.join("  |  ");
 });
 
 function openAddAccount() {
@@ -104,9 +130,15 @@ async function handleLogout() {
                 </span>
               </div>
               <div class="acct-uid-line">
-                UID: {{ currentUid }} · 听歌累计 <strong>{{ listenHoursText }}</strong>
+                UID: {{ currentUid }} · 云端累计听歌 <strong>{{ listenHoursText }}</strong>
+              </div>
+              <div v-if="accountExtraMetaText" class="acct-progress-hint">
+                {{ accountExtraMetaText }}
               </div>
               <div class="acct-progress-hint">{{ nextLevelRemainText }}</div>
+              <div v-if="store.profile?.signature" class="acct-bio-line">
+                “{{ store.profile.signature }}”
+              </div>
             </div>
           </div>
 
@@ -327,6 +359,17 @@ async function handleLogout() {
 .acct-progress-hint {
   font-size: 11.5px;
   color: var(--text-muted);
+}
+
+.acct-bio-line {
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--text-sub);
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .acct-current-actions {

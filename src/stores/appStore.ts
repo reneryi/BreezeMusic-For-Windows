@@ -1495,17 +1495,55 @@ export const useAppStore = defineStore("breezeApp", () => {
     notify("已重置全部记忆槽与均衡器参数");
   }
 
-  // 真实播放秒数累加器与播放卡死看门狗（对齐 Android ListeningGradeManager 双水位线与流媒体防卡死容灾）
+  // 真实播放秒数累加器与播放卡死看门狗（对齐 MakcRe/KuGouMusicApi user_listen_report.js & user_grade_info.js）
+  let activeTelemetrySong: Song | null = null;
   let currentTrackPlayedAccumMs = 0;
-  let unReportedDiffSec = 0;
+  let unPersistedListenSec = 0;
+  let unSyncedGradeSec = 0;
   let lastWatchdogPosSec = -1;
   let watchdogStallTicks = 0;
   let lastWatchdogRecoverWallMs = 0;
 
+  function settleActiveTrackTelemetry() {
+    const prevSong = activeTelemetrySong;
+    const playedMs = currentTrackPlayedAccumMs;
+    const remSec = unPersistedListenSec;
+    activeTelemetrySong = null;
+    currentTrackPlayedAccumMs = 0;
+    unPersistedListenSec = 0;
+    unSyncedGradeSec = 0;
+
+    if (!isLoggedIn.value) return;
+
+    const flushPromise =
+      remSec > 0
+        ? kugouClient.recordListeningSeconds(remSec).catch(() => {})
+        : Promise.resolve();
+
+    if (prevSong && playedMs >= 10000) {
+      flushPromise.finally(() => {
+        kugouClient
+          .reportPlaybackTelemetry(prevSong, false, playedMs)
+          .then(() => {
+            setTimeout(() => {
+              kugouClient
+                .syncListeningGrade(false)
+                .then((res) => {
+                  if (res?.profile) profile.value = res.profile;
+                })
+                .catch(() => {});
+            }, 2000);
+          })
+          .catch(() => {});
+      });
+    }
+  }
+
   window.setInterval(() => {
     if (isPlaying.value && currentSong.value && !audio.paused && !audio.ended) {
       currentTrackPlayedAccumMs += 1000;
-      unReportedDiffSec += 1;
+      unPersistedListenSec += 1;
+      unSyncedGradeSec += 1;
       if (profile.value) {
         profile.value.listenDurationSec = (profile.value.listenDurationSec || 0) + 1;
         profile.value.listenDurationMin = Math.floor(profile.value.listenDurationSec / 60);
@@ -1514,23 +1552,19 @@ export const useAppStore = defineStore("breezeApp", () => {
         profile.value.listenDurationFormatted =
           h > 0 ? `${h} 小时 ${m} 分` : `${m} 分钟`;
       }
-      // 每满 10 秒持久化增量秒数至本地双水位线状态机，防止未满 60 秒关闭软件丢失进度
-      if (unReportedDiffSec > 0 && unReportedDiffSec % 10 === 0 && isLoggedIn.value) {
-        kugouClient.recordListeningSeconds(10).catch(() => {});
+      // 每满 10 秒持久化增量秒数至本地缓冲，杜绝重复叠加与关闭丢失
+      if (unPersistedListenSec >= 10 && isLoggedIn.value) {
+        const secToSave = unPersistedListenSec;
+        unPersistedListenSec = 0;
+        kugouClient.recordListeningSeconds(secToSave).catch(() => {});
       }
-      // 每满 60 秒真实播放自动触发一次 CSCC 心跳与云端双水位线等级时长同步
-      if (unReportedDiffSec >= 60 && isLoggedIn.value) {
-        const diffToReport = unReportedDiffSec;
-        unReportedDiffSec = 0;
+      // 每满 60 秒真实播放仅触发一次 /v2/get_grade_info 增量时长同步（绝不在曲中伪造 CSCC 完播事件）
+      if (unSyncedGradeSec >= 60 && isLoggedIn.value) {
+        unSyncedGradeSec = 0;
         kugouClient
-          .reportPlaybackTelemetry(currentSong.value, false, diffToReport * 1000)
-          .then(() => {
-            kugouClient
-              .syncListeningGrade(false)
-              .then((res) => {
-                if (res?.profile) profile.value = res.profile;
-              })
-              .catch(() => {});
+          .syncListeningGrade(false)
+          .then((res) => {
+            if (res?.profile) profile.value = res.profile;
           })
           .catch(() => {});
       }
@@ -1710,33 +1744,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     notify("当前音源直链节点连接失败，正在尝试重新加载或切换音质");
   });
   audio.addEventListener("ended", () => {
-    // 仅上报尚未被 60s 心跳消费的剩余真实播放秒数 unReportedDiffSec，杜绝重复虚增时长
-    if (currentSong.value) {
-      const remainingSec = unReportedDiffSec;
-      unReportedDiffSec = 0;
-      currentTrackPlayedAccumMs = 0;
-      if (remainingSec > 0) {
-        const remMod10 = remainingSec % 10;
-        if (remMod10 > 0 && isLoggedIn.value) {
-          kugouClient.recordListeningSeconds(remMod10).catch(() => {});
-        }
-        kugouClient
-          .reportPlaybackTelemetry(currentSong.value, false, remainingSec * 1000)
-          .then((settled) => {
-            if (settled && isLoggedIn.value) {
-              setTimeout(() => {
-                kugouClient
-                  .syncListeningGrade(false)
-                  .then((res) => {
-                    if (res?.profile) profile.value = res.profile;
-                  })
-                  .catch(() => {});
-              }, 2200);
-            }
-          })
-          .catch(() => {});
-      }
-    }
+    settleActiveTrackTelemetry();
 
     if (
       sleepTimerMinutes.value === -1 ||
@@ -1945,16 +1953,11 @@ export const useAppStore = defineStore("breezeApp", () => {
     if (isSyncingListeningGrade.value) return;
     isSyncingListeningGrade.value = true;
     try {
-      const remMod10 = unReportedDiffSec % 10;
-      if (remMod10 > 0) {
-        await kugouClient.recordListeningSeconds(remMod10).catch(() => {});
-      }
-      if (unReportedDiffSec > 0 && currentSong.value) {
-        const diffSec = unReportedDiffSec;
-        unReportedDiffSec = 0;
-        await kugouClient
-          .reportPlaybackTelemetry(currentSong.value, false, diffSec * 1000)
-          .catch(() => {});
+      if (unPersistedListenSec > 0) {
+        const remSec = unPersistedListenSec;
+        unPersistedListenSec = 0;
+        unSyncedGradeSec = 0;
+        await kugouClient.recordListeningSeconds(remSec).catch(() => {});
       }
       const [syncRes, vip] = await Promise.all([
         kugouClient.syncListeningGrade(forceReport),
@@ -1966,7 +1969,7 @@ export const useAppStore = defineStore("breezeApp", () => {
       if (vip) {
         vipStatus.value = vip;
       }
-      notify(syncRes?.message || "已同步云端听歌等级与累计时长");
+      notify(syncRes?.message || "已校准云端听歌等级与累计时长");
     } catch (e: any) {
       notify(`同步听歌等级失败：${String(e)}`);
     } finally {
@@ -3485,32 +3488,8 @@ export const useAppStore = defineStore("breezeApp", () => {
       await audioCtx.resume();
     }
 
-    // 切歌前仅上报上一首尚未被 60s 心跳消费的剩余真实播放秒数 unReportedDiffSec
-    if (currentSong.value && unReportedDiffSec >= 5) {
-      const prevSong = currentSong.value;
-      const remSec = unReportedDiffSec;
-      unReportedDiffSec = 0;
-      currentTrackPlayedAccumMs = 0;
-      kugouClient
-        .reportPlaybackTelemetry(prevSong, false, remSec * 1000)
-        .then((settled) => {
-          if (settled && isLoggedIn.value) {
-            const totalDSec = profile.value?.listenDurationSec || undefined;
-            setTimeout(() => {
-              kugouClient
-                .getAccountProfile(totalDSec, remSec)
-                .then((p) => {
-                  if (p) profile.value = p;
-                })
-                .catch(() => {});
-            }, 2500);
-          }
-        })
-        .catch(() => {});
-    } else {
-      unReportedDiffSec = 0;
-      currentTrackPlayedAccumMs = 0;
-    }
+    // 切歌前结算上一首曲目的真实播放时长与 CSCC 完播/切歌事件
+    settleActiveTrackTelemetry();
 
     if (list && list.length > 0) {
       playQueue.value = [...list];
@@ -3592,6 +3571,8 @@ export const useAppStore = defineStore("breezeApp", () => {
       currentSongPlayStartWallMs = Date.now();
 
       // 触发 CSCC start 与听歌足迹上报
+      activeTelemetrySong = song;
+      currentTrackPlayedAccumMs = 0;
       kugouClient.reportPlaybackTelemetry(song, true, 0).catch(() => {});
 
       const startAtMs =
@@ -3861,7 +3842,16 @@ export const useAppStore = defineStore("breezeApp", () => {
     const len = playQueue.value.length;
     if (len === 0) return;
 
+    if (!fromAutoEnded) {
+      settleActiveTrackTelemetry();
+    }
+
     if (fromAutoEnded && playMode.value === "repeat_one") {
+      if (currentSong.value) {
+        activeTelemetrySong = currentSong.value;
+        currentTrackPlayedAccumMs = 0;
+        kugouClient.reportPlaybackTelemetry(currentSong.value, true, 0).catch(() => {});
+      }
       audio.currentTime = 0;
       await audio.play();
       return;
@@ -3882,6 +3872,7 @@ export const useAppStore = defineStore("breezeApp", () => {
   async function playPrev() {
     const len = playQueue.value.length;
     if (len === 0) return;
+    settleActiveTrackTelemetry();
     currentIndex.value = (currentIndex.value - 1 + len) % len;
     await loadAndPlayCurrentSong(0);
   }
@@ -3910,6 +3901,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     const removed = playQueue.value[index];
     playQueue.value.splice(index, 1);
     if (playQueue.value.length === 0) {
+      settleActiveTrackTelemetry();
       audio.pause();
       currentIndex.value = -1;
       return;
@@ -3917,6 +3909,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     if (index < currentIndex.value) {
       currentIndex.value -= 1;
     } else if (index === currentIndex.value) {
+      settleActiveTrackTelemetry();
       currentIndex.value = currentIndex.value % playQueue.value.length;
       loadAndPlayCurrentSong(0);
     }
@@ -3926,6 +3919,7 @@ export const useAppStore = defineStore("breezeApp", () => {
   }
 
   function clearPlayQueue() {
+    settleActiveTrackTelemetry();
     audio.pause();
     playQueue.value = [];
     currentIndex.value = -1;

@@ -104,6 +104,14 @@ pub fn signature_with_salt(
     md5_hex(&format!("{}{}{}{}", salt, ordered, body, salt))
 }
 
+/// 设备注册专用签名算法 (对齐 helper.js signatureRegisterParams):
+/// 提取所有参数 value 按字典序排序拼接，前后包裹 "1014" 取 MD5
+pub fn signature_register_params(params: &BTreeMap<String, String>) -> String {
+    let mut values: Vec<&str> = params.values().map(|s| s.as_str()).collect();
+    values.sort_unstable();
+    md5_hex(&format!("1014{}1014", values.join("")))
+}
+
 /// 登录与验证接口的 paramsKey: MD5(3116 + ANDROID_SALT + 11440 + time + extra)
 pub fn params_key(time: i64, extra: &str) -> String {
     md5_hex(&format!(

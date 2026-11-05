@@ -9,13 +9,10 @@ use crate::kugou::models::{
     QrCodeSession, QrPollResult, QuotedReplyHop, RankItem, ResolvedSongAlbumMeta,
     SharedMusicResolved, Song, SongAuthor, SongComment, SongDetailInfo, VipDayRecord, VipStatusInfo, ViperEffectItem,
 };
-use crate::kugou::signer::{
-    self, ANDROID_SALT, APP_ID, CLIENT_VERSION, STANDARD_APP_ID, STANDARD_CLIENT_VERSION,
-    STANDARD_SALT,
-};
+use crate::kugou::signer::{self, ANDROID_SALT, APP_ID, CLIENT_VERSION};
 use crate::kugou::store::{is_same_music_track, merge_song_entries, AppStore};
 use crate::kugou::transport::KugouTransport;
-use chrono::{FixedOffset, Utc};
+use chrono::{FixedOffset, NaiveDateTime, TimeZone, Utc};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -63,50 +60,114 @@ impl KugouApiService {
         }
     }
 
-    /// 1. 设备风控注册 (对齐 register_dev.js -> /risk/v2/r_register_dev)
+    fn is_legacy_local_dfid(dfid: &str) -> bool {
+        let trimmed = dfid.trim();
+        trimmed.len() == 24
+            && trimmed.starts_with('2')
+            && trimmed
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    }
+
+    /// 1. 设备风控注册 (严格对齐 MakcRe/KuGouMusicApi module/register_dev.js -> /risk/v2/r_register_dev)
     pub async fn register_device(&self, force_refresh: bool) -> Result<String, String> {
         let dev = self.store.device();
-        if !force_refresh && dev.dfid_registered && !dev.dfid.is_empty() && dev.dfid != "-" {
+        if !force_refresh
+            && dev.dfid_registered
+            && !dev.dfid.is_empty()
+            && dev.dfid != "-"
+            && !Self::is_legacy_local_dfid(&dev.dfid)
+        {
             return Ok(dev.dfid);
         }
 
         let session = self.store.session();
         let active_uid = session
             .as_ref()
-            .map(|s| s.user_id.as_str())
+            .map(|s| s.user_id.trim())
+            .filter(|s| !s.is_empty())
             .unwrap_or("0");
         let active_token = session
             .as_ref()
             .map(|s| s.token.as_str())
             .unwrap_or("");
 
+        let clean_guid: String = dev
+            .guid
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect();
+        let uuid_str = if clean_guid.is_empty() {
+            signer::md5_hex(&dev.mid)
+        } else {
+            clean_guid
+        };
+
         let data_plain = json!({
-            "mid": dev.mid,
-            "uuid": dev.guid,
-            "appid": "1014",
-            "userid": active_uid
+            "availableRamSize": 4_983_533_568_i64,
+            "availableRomSize": 48_114_719_i64,
+            "availableSDSize": 48_114_717_i64,
+            "basebandVer": "",
+            "batteryLevel": 100,
+            "batteryStatus": 3,
+            "brand": "Redmi",
+            "buildSerial": "unknown",
+            "device": "marble",
+            "imei": uuid_str,
+            "imsi": "",
+            "manufacturer": "Xiaomi",
+            "uuid": uuid_str,
+            "accelerometer": false,
+            "accelerometerValue": "",
+            "gravity": false,
+            "gravityValue": "",
+            "gyroscope": false,
+            "gyroscopeValue": "",
+            "light": false,
+            "lightValue": "",
+            "magnetic": false,
+            "magneticValue": "",
+            "orientation": false,
+            "orientationValue": "",
+            "pressure": false,
+            "pressureValue": "",
+            "step_counter": false,
+            "step_counterValue": "",
+            "temperature": false,
+            "temperatureValue": ""
         })
         .to_string();
 
         if let Ok((aes_key, aes_cipher)) = signer::playlist_aes_encrypt(&data_plain) {
-            let p_inner = json!({
-                "aes": aes_key,
-                "uid": active_uid,
-                "token": active_token
-            })
+            let p_inner = if active_uid == "0" {
+                json!({
+                    "aes": aes_key,
+                    "uid": 0,
+                    "token": active_token
+                })
+            } else {
+                json!({
+                    "aes": aes_key,
+                    "uid": active_uid,
+                    "token": active_token
+                })
+            }
             .to_string();
 
             if let Ok(p_rsa) = signer::rsa_pkcs1_hex(&p_inner) {
+                let mut reg_dev = dev.clone();
+                reg_dev.dfid = "-".to_string();
+
                 let mut query = HashMap::new();
                 query.insert("part".to_string(), "1".to_string());
-                query.insert("plat".to_string(), "1".to_string());
-                query.insert("p".to_string(), p_rsa.to_uppercase());
+                query.insert("platid".to_string(), "1".to_string());
+                query.insert("p".to_string(), p_rsa);
 
                 if let Ok(raw_bytes) = self
                     .transport
                     .request_raw_bytes(
                         "/risk/v2/r_register_dev",
-                        &dev,
+                        &reg_dev,
                         session.as_ref(),
                         query,
                         Some(aes_cipher),
@@ -130,9 +191,10 @@ impl KugouApiService {
                         if let Some(root) = parsed_val {
                             let data_obj = root.get("data").unwrap_or(&root);
                             if let Some(dfid) = data_obj.get("dfid").and_then(|v| v.as_str()) {
-                                if !dfid.trim().is_empty() && dfid != "-" {
-                                    self.store.save_dfid(dfid);
-                                    return Ok(dfid.to_string());
+                                let clean_dfid = dfid.trim();
+                                if !clean_dfid.is_empty() && clean_dfid != "-" {
+                                    self.store.save_dfid(clean_dfid);
+                                    return Ok(clean_dfid.to_string());
                                 }
                             }
                         }
@@ -141,16 +203,11 @@ impl KugouApiService {
             }
         }
 
-        let fallback_dfid = if !dev.dfid.is_empty() && dev.dfid != "-" {
-            dev.dfid
+        if !dev.dfid.is_empty() && dev.dfid != "-" {
+            Ok(dev.dfid)
         } else {
-            format!(
-                "2{}",
-                &signer::md5_hex(&format!("kugou_lite_{}_{}", dev.guid, dev.mid))[..23]
-            )
-        };
-        self.store.save_dfid(&fallback_dfid);
-        Ok(fallback_dfid)
+            Ok("-".to_string())
+        }
     }
 
     /// 2. 发送手机短信验证码 (对齐 MakcRe/KuGouMusicApi captcha_sent.js -> /v7/send_mobile_code)
@@ -665,52 +722,108 @@ impl KugouApiService {
         Ok(session)
     }
 
-    /// 对齐 Android 端 MusicRepository.resolveStandardClientLocalDiffSec(userId, rawServerSeconds):
-    /// 双水位线状态机（synced_official_listen_sec / synced_raw_server_dsec / pending_diff_sec）
-    fn resolve_standard_client_local_diff_sec(&self, user_id: &str, raw_server_seconds: i64) -> i64 {
-        let uid = user_id.trim();
-        if uid.is_empty() {
-            return 0;
-        }
-        let mut st = self.store.get_grade_state(uid);
-        let safe_raw = raw_server_seconds.max(0);
-        let mut dirty = false;
+    fn val_f64_opt(obj: &Value, key: &str) -> Option<f64> {
+        let v = obj.get(key)?;
+        v.as_f64()
+            .or_else(|| v.as_i64().map(|n| n as f64))
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+    }
 
-        if st.synced_official_listen_sec <= 0 {
-            st.synced_official_listen_sec = safe_raw;
-            st.synced_raw_server_dsec = safe_raw;
-            dirty = true;
-        } else {
-            let prev_raw = if st.synced_raw_server_dsec > 0 {
-                st.synced_raw_server_dsec
-            } else {
-                st.synced_official_listen_sec
-            };
-            let raw_delta = (safe_raw - prev_raw).max(0);
-            if raw_delta > 0 {
-                let candidate_official = (st.synced_official_listen_sec + raw_delta).max(safe_raw);
-                if candidate_official > st.synced_official_listen_sec {
-                    let official_gain = candidate_official - st.synced_official_listen_sec;
-                    st.synced_official_listen_sec = candidate_official;
-                    st.pending_diff_sec = (st.pending_diff_sec - official_gain).max(0);
-                }
-                st.synced_raw_server_dsec = safe_raw;
-                dirty = true;
-            } else if safe_raw > st.synced_official_listen_sec {
-                let official_gain = safe_raw - st.synced_official_listen_sec;
-                st.synced_official_listen_sec = safe_raw;
-                st.synced_raw_server_dsec = safe_raw;
-                st.pending_diff_sec = (st.pending_diff_sec - official_gain).max(0);
-                dirty = true;
+    fn is_vip_time_active(end_time: &str, now_utc_ts: i64) -> bool {
+        let trimmed = end_time.trim();
+        if trimmed.is_empty() {
+            return true;
+        }
+        let china_tz = FixedOffset::east_opt(8 * 3600).unwrap();
+        if let Ok(ndt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S") {
+            if let Some(dt) = china_tz.from_local_datetime(&ndt).single() {
+                return dt.timestamp() + 60 >= now_utc_ts;
             }
         }
+        true
+    }
+
+    /// 权威云端基线校准状态机（对齐 MakcRe/KuGouMusicApi module/user_grade_info.js）：
+    /// - 以服务端返回的真实 d_sec 为唯一权威基线，自动自愈历史旧版被积分污染的 gradeStates (schema_ver < 2)
+    /// - 仅保留最多 600 秒尚未入账的本地实时增量缓冲（pending_diff_sec + inflight_diff_sec），彻底杜绝单调棘轮锁死虚高
+    fn reconcile_grade_state(
+        &self,
+        user_id: &str,
+        raw_server_dsec: i64,
+        server_grade: i32,
+        now_sec: i64,
+    ) -> (i64, i64, i32) {
+        const GRADE_STATE_SCHEMA_VER: u32 = 2;
+
+        let uid = user_id.trim();
+        if uid.is_empty() {
+            return (0, 0, server_grade.max(0));
+        }
+
+        let mut st = self.store.get_grade_state(uid);
+        let safe_raw = raw_server_dsec.max(0);
+        let mut dirty = false;
+
+        if st.schema_ver < GRADE_STATE_SCHEMA_VER {
+            st.schema_ver = GRADE_STATE_SCHEMA_VER;
+            st.synced_raw_server_dsec = safe_raw;
+            st.synced_official_listen_sec = safe_raw;
+            st.pending_diff_sec = 0;
+            st.inflight_diff_sec = 0;
+            st.inflight_at_sec = 0;
+            dirty = true;
+        } else {
+            if st.inflight_diff_sec > 0 && (now_sec - st.inflight_at_sec).abs() > 180 {
+                st.inflight_diff_sec = 0;
+                st.inflight_at_sec = 0;
+                dirty = true;
+            }
+
+            if safe_raw > 0 {
+                if st.synced_raw_server_dsec <= 0
+                    || (st.synced_raw_server_dsec - safe_raw).abs() > 1_800
+                {
+                    st.synced_raw_server_dsec = safe_raw;
+                    st.synced_official_listen_sec = safe_raw;
+                    st.inflight_diff_sec = 0;
+                    st.inflight_at_sec = 0;
+                    st.pending_diff_sec = st.pending_diff_sec.clamp(0, 600);
+                    dirty = true;
+                } else if safe_raw > st.synced_raw_server_dsec {
+                    let gain = safe_raw - st.synced_raw_server_dsec;
+                    let used_inflight = gain.min(st.inflight_diff_sec.max(0));
+                    st.inflight_diff_sec = (st.inflight_diff_sec - used_inflight).max(0);
+                    if st.inflight_diff_sec == 0 {
+                        st.inflight_at_sec = 0;
+                    }
+                    let rem_gain = gain - used_inflight;
+                    if rem_gain > 0 {
+                        st.pending_diff_sec = (st.pending_diff_sec - rem_gain).max(0);
+                    }
+                    st.synced_raw_server_dsec = safe_raw;
+                    st.synced_official_listen_sec = safe_raw;
+                    dirty = true;
+                }
+            }
+        }
+
+        if server_grade > 0 && st.last_known_grade != server_grade {
+            st.last_known_grade = server_grade;
+            dirty = true;
+        }
+        let resolved_grade = if server_grade > 0 {
+            server_grade
+        } else {
+            st.last_known_grade.max(0)
+        };
 
         if dirty {
             self.store.set_grade_state(uid, st.clone());
         }
 
-        let target_total_sec = st.synced_official_listen_sec.max(safe_raw) + st.pending_diff_sec.max(0);
-        (target_total_sec - safe_raw).max(0)
+        let pending_only = st.pending_diff_sec.clamp(0, 600);
+        let unsettled_total = (st.pending_diff_sec.max(0) + st.inflight_diff_sec.max(0)).clamp(0, 600);
+        (unsettled_total, pending_only, resolved_grade)
     }
 
     pub fn record_listening_seconds(&self, seconds: i64) -> Result<i64, String> {
@@ -720,10 +833,25 @@ impl KugouApiService {
         if session.user_id.trim().is_empty() || seconds <= 0 {
             return Ok(0);
         }
-        Ok(self.store.add_pending_listen_sec(&session.user_id, seconds))
+        let mut st = self.store.get_grade_state(&session.user_id);
+        if st.schema_ver < 2 {
+            st.schema_ver = 2;
+            st.synced_official_listen_sec = 0;
+            st.synced_raw_server_dsec = 0;
+            st.pending_diff_sec = 0;
+            st.inflight_diff_sec = 0;
+            st.inflight_at_sec = 0;
+        }
+        st.pending_diff_sec = (st.pending_diff_sec.max(0) + seconds.clamp(1, 300)).clamp(0, 3600);
+        let next_pending = st.pending_diff_sec;
+        self.store.set_grade_state(&session.user_id, st);
+        Ok(next_pending)
     }
 
-    pub async fn sync_listening_grade(&self, force_report: bool) -> Result<ListeningGradeSyncResult, String> {
+    pub async fn sync_listening_grade(
+        &self,
+        _force_report: bool,
+    ) -> Result<ListeningGradeSyncResult, String> {
         let Some(session) = self.store.session() else {
             return Err("请先登录账号".to_string());
         };
@@ -731,71 +859,69 @@ impl KugouApiService {
         let mut st = self.store.get_grade_state(&session.user_id);
         let pending_diff = st.pending_diff_sec.max(0);
 
-        if pending_diff <= 0 && !force_report {
+        if pending_diff <= 0 || initial_profile.raw_server_dsec <= 0 {
             return Ok(ListeningGradeSyncResult {
+                message: format!(
+                    "已校准云端听歌等级与时长 · Lv.{}（累计 {}）",
+                    initial_profile.user_grade, initial_profile.listen_duration_formatted
+                ),
                 profile: initial_profile,
                 reported_diff_sec: 0,
                 cloud_confirmed: true,
-                message: "云端听歌等级与累计时长已是最新状态".to_string(),
             });
         }
 
-        let report_diff = if pending_diff > 0 {
-            pending_diff.clamp(1, 3600)
-        } else {
-            60
-        };
-        let base_d_sec = initial_profile
-            .raw_server_dsec
-            .max(st.synced_official_listen_sec)
-            .max(initial_profile.listen_duration_sec - pending_diff)
-            .max(60);
+        // 严格对齐 user_grade_info.js：d_sec 必须使用服务端真实基线 raw_server_dsec，diff_sec 为真实新增秒数
+        let report_diff = pending_diff.clamp(1, 300);
+        let base_d_sec = initial_profile.raw_server_dsec;
+        let now_sec = Utc::now().timestamp();
 
-        let updated_profile = self
+        st.pending_diff_sec = (st.pending_diff_sec - report_diff).max(0);
+        st.inflight_diff_sec = (st.inflight_diff_sec.max(0) + report_diff).clamp(0, 600);
+        st.inflight_at_sec = now_sec;
+        self.store.set_grade_state(&session.user_id, st.clone());
+
+        match self
             .fetch_full_profile_with_report(Some(base_d_sec), Some(report_diff))
-            .await?;
-
-        st = self.store.get_grade_state(&session.user_id);
-        let new_official = updated_profile
-            .raw_server_dsec
-            .max(st.synced_official_listen_sec + if pending_diff > 0 { report_diff } else { 0 });
-        st.synced_official_listen_sec = new_official;
-        if updated_profile.raw_server_dsec > st.synced_raw_server_dsec {
-            st.synced_raw_server_dsec = updated_profile.raw_server_dsec;
+            .await
+        {
+            Ok(updated_profile) => Ok(ListeningGradeSyncResult {
+                message: if report_diff >= 60 {
+                    format!(
+                        "已上报 {} 分钟新增听歌时长 · 当前 Lv.{}（累计 {}）",
+                        report_diff / 60,
+                        updated_profile.user_grade,
+                        updated_profile.listen_duration_formatted
+                    )
+                } else {
+                    format!(
+                        "已上报 {} 秒新增听歌时长 · 当前 Lv.{}（累计 {}）",
+                        report_diff,
+                        updated_profile.user_grade,
+                        updated_profile.listen_duration_formatted
+                    )
+                },
+                profile: updated_profile,
+                reported_diff_sec: report_diff,
+                cloud_confirmed: true,
+            }),
+            Err(e) => {
+                // 上报失败时退回 pending_diff_sec，等待下次同步
+                let mut rollback = self.store.get_grade_state(&session.user_id);
+                rollback.inflight_diff_sec = (rollback.inflight_diff_sec - report_diff).max(0);
+                rollback.pending_diff_sec = (rollback.pending_diff_sec + report_diff).clamp(0, 3600);
+                self.store.set_grade_state(&session.user_id, rollback);
+                Err(e)
+            }
         }
-        if pending_diff > 0 {
-            st.pending_diff_sec = (st.pending_diff_sec - report_diff).max(0);
-        }
-        if updated_profile.user_grade > 0 {
-            st.last_known_grade = updated_profile.user_grade;
-        }
-        self.store.set_grade_state(&session.user_id, st);
-
-        let final_profile = self.fetch_full_profile_with_report(None, None).await.unwrap_or(updated_profile);
-
-        Ok(ListeningGradeSyncResult {
-            message: if pending_diff > 0 {
-                format!(
-                    "已同步 {} 分钟听歌时长至云端 · 当前 Lv.{} ({})",
-                    (report_diff / 60).max(1),
-                    final_profile.user_grade,
-                    final_profile.listen_duration_formatted
-                )
-            } else {
-                format!(
-                    "云端等级与听歌时长同步完成 · Lv.{} ({})",
-                    final_profile.user_grade, final_profile.listen_duration_formatted
-                )
-            },
-            profile: final_profile,
-            reported_diff_sec: if pending_diff > 0 { report_diff } else { 0 },
-            cloud_confirmed: true,
-        })
     }
 
-    /// 6. 获取当前登录账号详细资料、权威听歌时长 (d_sec) 与 VIP 状态
-    /// 严格对齐 Android 端 MusicRepository.userGradeInfo:
-    /// 聚合 /v3/get_my_info + /v1/get_my_userinfo + /v4/get_grade_info + /v2/get_grade_info
+    /// 6. 获取当前登录账号完整资料、权威云端听歌时长 (d_sec)、等级积分进度与概念版 VIP 状态
+    /// 严格对齐 MakcRe/KuGouMusicApi:
+    /// - module/user_detail.js        -> POST /v3/get_my_info (usercenter.kugou.com)
+    /// - module/user_info.js          -> POST /v1/get_my_userinfo (relation.user.kugou.com)
+    /// - module/user_grade_info.js    -> POST /v2/get_grade_info (userinfo.user.kugou.com, lite 3116/10597)
+    /// - module/youth_union_vip.js    -> GET  /v1/get_union_vip (kugouvip.kugou.com)
     pub async fn fetch_full_profile(&self) -> Result<AccountProfile, String> {
         self.fetch_full_profile_with_report(None, None).await
     }
@@ -808,31 +934,39 @@ impl KugouApiService {
         let Some(mut session) = self.store.session() else {
             return Err("当前未登录".to_string());
         };
-        let dev = self.store.device();
+        let mut dev = self.store.device();
+        if !dev.dfid_registered
+            || dev.dfid.is_empty()
+            || dev.dfid == "-"
+            || Self::is_legacy_local_dfid(&dev.dfid)
+        {
+            if let Ok(real_dfid) = self.register_device(false).await {
+                if !real_dfid.is_empty() && real_dfid != "-" {
+                    dev.dfid = real_dfid;
+                    dev.dfid_registered = true;
+                }
+            }
+        }
+
         let now_sec = Utc::now().timestamp();
         let now_ms = Utc::now().timestamp_millis();
         let uid_num = session.user_id.parse::<i64>().unwrap_or(0);
-
-        let mut max_d_sec: i64 = 0;
-        let mut max_duration_min: i64 = 0;
-        let mut max_grade: i32 = 0;
-        let mut max_score: i64 = 0;
-        let mut max_next_score: i64 = 0;
-        let mut max_base_score: i64 = 0;
-        let mut remain_sec_server: i64 = 0;
 
         let req_d_sec = reported_d_sec.unwrap_or(0).max(0);
         let req_diff_sec = reported_diff_sec.unwrap_or(0).max(0);
         let is_report = req_d_sec > 0 && req_diff_sec > 0;
 
-        // 通道 A: /v3/get_my_info
-        let p_plain = json!({
-            "token": session.token,
-            "clienttime": now_sec
-        })
-        .to_string();
+        let session_ref = &session;
+        let dev_ref = &dev;
 
-        if let Ok(p_rsa) = signer::rsa_raw_zero_pad_hex(&p_plain) {
+        // 并发请求四大概念版权威接口，杜绝跨平台 1005 (error_code: 20018) 无效串行阻塞
+        let fut_my_info = async {
+            let p_plain = json!({
+                "token": session_ref.token,
+                "clienttime": now_sec
+            })
+            .to_string();
+            let p_rsa = signer::rsa_raw_zero_pad_hex(&p_plain).ok()?;
             let mut query = HashMap::new();
             query.insert("plat".to_string(), "1".to_string());
             let body = json!({
@@ -844,12 +978,12 @@ impl KugouApiService {
             let mut headers = HashMap::new();
             headers.insert("x-router".to_string(), "usercenter.kugou.com".to_string());
 
-            if let Ok(resp) = self
+            let resp = self
                 .transport
                 .call(
                     "/v3/get_my_info",
-                    &dev,
-                    Some(&session),
+                    dev_ref,
+                    Some(session_ref),
                     query,
                     Some(body),
                     "https://gateway.kugou.com",
@@ -860,49 +994,25 @@ impl KugouApiService {
                     true,
                 )
                 .await
-            {
-                if resp.is_success() {
-                    let d = resp.data();
-                    let nick = Self::val_str(d, "nickname");
-                    if !nick.is_empty() {
-                        session.nickname = nick;
-                    }
-                    let pic = Self::val_str(d, "pic");
-                    if !pic.is_empty() {
-                        session.avatar_url = signer::normalize_image_url(Some(&pic));
-                    }
-                    self.store.set_session(Some(session.clone()));
-
-                    for k in ["r_duration", "duration", "listen_duration", "user_duration", "total_duration", "listen_time"] {
-                        if let Some(m) = Self::val_i64(d, k) {
-                            max_duration_min = max_duration_min.max(m);
-                        }
-                    }
-                    for k in ["user_grade", "p_grade", "grade", "level"] {
-                        if let Some(g) = Self::val_i64(d, k) {
-                            max_grade = max_grade.max(g as i32);
-                        }
-                    }
-                    for k in ["p_current_point", "score", "user_score"] {
-                        if let Some(sc) = Self::val_i64(d, k) {
-                            max_score = max_score.max(sc);
-                        }
-                    }
-                }
+                .ok()?;
+            if resp.is_success() {
+                Some(resp.data().clone())
+            } else {
+                None
             }
-        }
+        };
 
-        // 通道 A2: /v1/get_my_userinfo (对齐 Android 端 MusicRepository.userGradeInfo 通道2)
-        let p_ms_plain = json!({
-            "clienttime": now_ms,
-            "token": session.token
-        })
-        .to_string();
-        if let Ok(p_ms_rsa) = signer::rsa_raw_zero_pad_hex(&p_ms_plain) {
+        let fut_rel_info = async {
+            let p_ms_plain = json!({
+                "clienttime": now_ms,
+                "token": session_ref.token
+            })
+            .to_string();
+            let p_ms_rsa = signer::rsa_raw_zero_pad_hex(&p_ms_plain).ok()?;
             let rel_body = json!({
                 "p": p_ms_rsa.to_uppercase(),
                 "appid": APP_ID,
-                "mid": dev.mid,
+                "mid": dev_ref.mid,
                 "clientver": CLIENT_VERSION,
                 "source": 0,
                 "clienttime": now_ms,
@@ -912,12 +1022,12 @@ impl KugouApiService {
             });
             let mut rel_headers = HashMap::new();
             rel_headers.insert("x-router".to_string(), "relation.user.kugou.com".to_string());
-            if let Ok(rel_resp) = self
+            let rel_resp = self
                 .transport
                 .call(
                     "/v1/get_my_userinfo",
-                    &dev,
-                    Some(&session),
+                    dev_ref,
+                    Some(session_ref),
                     HashMap::new(),
                     Some(rel_body),
                     "https://gateway.kugou.com",
@@ -928,47 +1038,137 @@ impl KugouApiService {
                     false,
                 )
                 .await
-            {
-                let d_rel = rel_resp.data().get("data").unwrap_or_else(|| rel_resp.data());
-                for k in ["r_duration", "duration", "listen_duration", "user_duration", "total_duration"] {
-                    if let Some(m) = Self::val_i64(d_rel, k) {
-                        max_duration_min = max_duration_min.max(m);
-                    }
+                .ok()?;
+            if rel_resp.is_success() {
+                Some(
+                    rel_resp
+                        .data()
+                        .get("data")
+                        .unwrap_or_else(|| rel_resp.data())
+                        .clone(),
+                )
+            } else {
+                None
+            }
+        };
+
+        let fut_grade = async {
+            // 主通道：严格对齐 MakcRe/KuGouMusicApi/module/user_grade_info.js (Lite v2: appid=3116, clientver=10597)
+            let v2_client_ver = 10597_u32;
+            let v2_key = signer::md5_hex(&format!(
+                "{}{}{}{}",
+                APP_ID, ANDROID_SALT, v2_client_ver, now_sec
+            ));
+            let clean_uuid: String = dev_ref
+                .guid
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect();
+            let v2_uuid = if clean_uuid.is_empty() {
+                "-".to_string()
+            } else {
+                clean_uuid
+            };
+
+            let v2_inner = if is_report {
+                let report_md5 = signer::md5_hex(&format!("{}{}00", req_d_sec, req_diff_sec));
+                json!({
+                    "token": session_ref.token,
+                    "md5": report_md5
+                })
+                .to_string()
+            } else {
+                format!("{{\"clienttime\":{},\"userid\":{}}}", now_sec, uid_num)
+            };
+
+            if let Ok(v2_p) = signer::rsa_raw_zero_pad_hex(&v2_inner) {
+                let mut v2_body = json!({
+                    "mid": dev_ref.mid,
+                    "type": 1,
+                    "uuid": v2_uuid,
+                    "userid": uid_num,
+                    "p": v2_p.to_uppercase(),
+                    "appid": APP_ID.to_string(),
+                    "clientver": v2_client_ver.to_string(),
+                    "clienttime": now_sec,
+                    "key": v2_key
+                });
+                if is_report {
+                    v2_body["d_sec"] = json!(req_d_sec);
+                    v2_body["diff_sec"] = json!(req_diff_sec);
+                    v2_body["y_type"] = json!(0);
+                    v2_body["m_type"] = json!(0);
                 }
-                for k in ["user_grade", "p_grade", "grade"] {
-                    if let Some(g) = Self::val_i64(d_rel, k) {
-                        max_grade = max_grade.max(g as i32);
+                let mut v2_query = HashMap::new();
+                v2_query.insert(
+                    "dfid".to_string(),
+                    if dev_ref.dfid.is_empty() {
+                        "-".to_string()
+                    } else {
+                        dev_ref.dfid.clone()
+                    },
+                );
+                let mut v2_headers = HashMap::new();
+                v2_headers.insert(
+                    "Content-Type".to_string(),
+                    "text/plain; charset=ISO-8859-1".to_string(),
+                );
+                v2_headers.insert(
+                    "User-Agent".to_string(),
+                    format!(
+                        "Android15-1070-{}-201-0-get_user_grade_info-wifi",
+                        v2_client_ver
+                    ),
+                );
+                v2_headers.insert("KG-THash".to_string(), signer::random_hex(7));
+                v2_headers.insert("KG-Rec".to_string(), "1".to_string());
+                v2_headers.insert("KG-RC".to_string(), "1".to_string());
+
+                if let Ok(v2_resp) = self
+                    .transport
+                    .call(
+                        "/v2/get_grade_info",
+                        dev_ref,
+                        Some(session_ref),
+                        v2_query,
+                        Some(v2_body),
+                        "http://userinfo.user.kugou.com",
+                        "POST",
+                        false,
+                        v2_headers,
+                        false,
+                        false,
+                    )
+                    .await
+                {
+                    if v2_resp.is_success() {
+                        let d_root = v2_resp.data();
+                        let d_inner = d_root.get("data").unwrap_or(d_root);
+                        if Self::val_i64(d_inner, "d_sec").is_some()
+                            || Self::val_i64(d_inner, "p_grade").is_some()
+                        {
+                            return Some(d_inner.clone());
+                        }
                     }
                 }
             }
-        }
 
-        // 通道 B: /v4/get_grade_info 双端协议栈（概念版 Lite 3116 + 正式版 Standard 1005）
-        let md5_val = signer::md5_hex(&format!("{}{}11", req_d_sec, req_diff_sec));
-        let aes_seed = signer::random_hex(16);
-        let seed_md5 = signer::md5_hex(&aes_seed);
-        let params_plain = json!({
-            "userid": uid_num,
-            "token": session.token,
-            "user_type": 29,
-            "user_y_type": 1,
-            "md5": md5_val
-        })
-        .to_string();
-
-        for (target_app_id, target_client_ver, target_salt, is_lite) in [
-            (APP_ID, CLIENT_VERSION, ANDROID_SALT, true),
-            (STANDARD_APP_ID, STANDARD_CLIENT_VERSION, STANDARD_SALT, false),
-        ] {
+            // 备用容灾通道：仅在 v2 网关波动时使用概念版 Lite 3116 /v4/get_grade_info
+            let md5_val = signer::md5_hex(&format!("{}{}11", req_d_sec, req_diff_sec));
+            let aes_seed = signer::random_hex(16);
+            let seed_md5 = signer::md5_hex(&aes_seed);
+            let params_plain = json!({
+                "userid": uid_num,
+                "token": session_ref.token,
+                "user_type": 29,
+                "user_y_type": 1,
+                "md5": md5_val
+            })
+            .to_string();
             let pk_plain = json!({ "clienttime_ms": now_ms, "key": aes_seed }).to_string();
-            let pk_res = if is_lite {
-                signer::rsa_raw_zero_pad_hex(&pk_plain)
-            } else {
-                signer::rsa_raw_zero_pad_hex_standard(&pk_plain)
-            };
             if let (Ok(params_enc), Ok(pk_v4)) = (
                 signer::aes_cbc_encrypt_hex(&params_plain, &seed_md5[0..32], &seed_md5[16..32]),
-                pk_res,
+                signer::rsa_raw_zero_pad_hex(&pk_plain),
             ) {
                 let v4_body = json!({
                     "plat": 1,
@@ -985,213 +1185,216 @@ impl KugouApiService {
                 });
                 let v4_body_str = serde_json::to_string(&v4_body).unwrap_or_default();
                 let mut sign_params = BTreeMap::new();
-                sign_params.insert("appid".to_string(), target_app_id.to_string());
+                sign_params.insert("appid".to_string(), APP_ID.to_string());
                 sign_params.insert("clienttime".to_string(), now_sec.to_string());
-                sign_params.insert("clientver".to_string(), target_client_ver.to_string());
-                sign_params.insert("dfid".to_string(), dev.dfid.clone());
-                sign_params.insert("mid".to_string(), dev.mid.clone());
-                sign_params.insert("userid".to_string(), session.user_id.clone());
-                sign_params.insert("uuid".to_string(), dev.guid.clone());
+                sign_params.insert("clientver".to_string(), CLIENT_VERSION.to_string());
+                sign_params.insert("dfid".to_string(), dev_ref.dfid.clone());
+                sign_params.insert("mid".to_string(), dev_ref.mid.clone());
+                sign_params.insert("userid".to_string(), session_ref.user_id.clone());
+                sign_params.insert("uuid".to_string(), dev_ref.guid.clone());
 
                 let sig =
-                    signer::signature_with_salt(&sign_params, &v4_body_str, target_salt, false);
+                    signer::signature_with_salt(&sign_params, &v4_body_str, ANDROID_SALT, false);
                 let mut v4_query: HashMap<String, String> = sign_params.into_iter().collect();
                 v4_query.insert("signature".to_string(), sig);
 
                 let mut v4_headers = HashMap::new();
-                v4_headers.insert("KG-DEVID".to_string(), dev.mid.clone());
+                v4_headers.insert("KG-DEVID".to_string(), dev_ref.mid.clone());
                 v4_headers.insert("KG-CLIENTTIMEMS".to_string(), now_ms.to_string());
                 v4_headers.insert(
                     "x-router".to_string(),
                     "userinfoservice.kugou.com".to_string(),
                 );
 
-                for host in ["https://userinfoservice.kugou.com", "https://gateway.kugou.com"] {
-                    if let Ok(v4_resp) = self
-                        .transport
-                        .call(
-                            "/v4/get_grade_info",
-                            &dev,
-                            Some(&session),
-                            v4_query.clone(),
-                            Some(v4_body.clone()),
-                            host,
-                            "POST",
-                            false,
-                            v4_headers.clone(),
-                            false,
-                            false,
-                        )
-                        .await
-                    {
-                        let d_root = v4_resp.data();
-                        let d_inner = d_root.get("data").unwrap_or(d_root);
-                        let mut got_any = false;
-                        for k in ["d_sec", "dSec", "listen_sec", "d"] {
-                            if let Some(sec) = Self::val_i64(d_inner, k) {
-                                max_d_sec = max_d_sec.max(sec);
-                                got_any = true;
-                            }
-                        }
-                        for k in ["d_min", "duration", "r_duration"] {
-                            if let Some(m) = Self::val_i64(d_inner, k) {
-                                max_duration_min = max_duration_min.max(m);
-                                got_any = true;
-                            }
-                        }
-                        for k in ["p_grade", "user_grade", "grade"] {
-                            if let Some(g) = Self::val_i64(d_inner, k) {
-                                max_grade = max_grade.max(g as i32);
-                                got_any = true;
-                            }
-                        }
-                        for k in ["p_current_point", "score", "user_score"] {
-                            if let Some(sc) = Self::val_i64(d_inner, k) {
-                                max_score = max_score.max(sc);
-                            }
-                        }
-                        for k in ["p_next_grade_point", "next_score"] {
-                            if let Some(nsc) = Self::val_i64(d_inner, k) {
-                                max_next_score = max_next_score.max(nsc);
-                            }
-                        }
-                        for k in ["p_grade_point"] {
-                            if let Some(bsc) = Self::val_i64(d_inner, k) {
-                                max_base_score = max_base_score.max(bsc);
-                            }
-                        }
-                        for k in ["remain_d_sec", "need_d_sec", "upgrade_need_sec", "upgrade_d_sec"]
-                        {
-                            if let Some(rem) = Self::val_i64(d_inner, k) {
-                                if rem > 0 {
-                                    remain_sec_server = rem;
-                                }
-                            }
-                        }
-                        if got_any {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 通道 C: /v2/get_grade_info 双端协议栈（概念版 Lite 3116 + 正式版 Standard 1005）
-        for (target_app_id, target_client_ver, target_salt, is_lite) in [
-            (APP_ID, 10597u32, ANDROID_SALT, true),
-            (STANDARD_APP_ID, STANDARD_CLIENT_VERSION, STANDARD_SALT, false),
-        ] {
-            let v2_key = signer::md5_hex(&format!(
-                "{}{}{}{}",
-                target_app_id, target_salt, target_client_ver, now_sec
-            ));
-            let v2_inner = if is_report {
-                let report_md5 = signer::md5_hex(&format!("{}{}00", req_d_sec, req_diff_sec));
-                format!("{{\"token\":\"{}\",\"md5\":\"{}\"}}", session.token, report_md5)
-            } else {
-                format!("{{\"clienttime\":{},\"userid\":{}}}", now_sec, uid_num)
-            };
-            let v2_p_res = if is_lite {
-                signer::rsa_raw_zero_pad_hex(&v2_inner)
-            } else {
-                signer::rsa_raw_zero_pad_hex_standard(&v2_inner)
-            };
-            if let Ok(v2_p) = v2_p_res {
-                let mut v2_body = json!({
-                    "mid": dev.mid,
-                    "type": 1,
-                    "uuid": dev.guid,
-                    "userid": uid_num,
-                    "p": v2_p.to_uppercase(),
-                    "appid": target_app_id.to_string(),
-                    "clientver": target_client_ver.to_string(),
-                    "clienttime": now_sec,
-                    "key": v2_key
-                });
-                if is_report {
-                    v2_body["d_sec"] = json!(req_d_sec);
-                    v2_body["diff_sec"] = json!(req_diff_sec);
-                    v2_body["y_type"] = json!(0);
-                    v2_body["m_type"] = json!(0);
-                }
-                let mut v2_query = HashMap::new();
-                v2_query.insert("dfid".to_string(), dev.dfid.clone());
-                let mut v2_headers = HashMap::new();
-                v2_headers.insert(
-                    "Content-Type".to_string(),
-                    "text/plain; charset=ISO-8859-1".to_string(),
-                );
-                v2_headers.insert(
-                    "x-router".to_string(),
-                    "userinfo.user.kugou.com".to_string(),
-                );
-                if let Ok(v2_resp) = self
+                if let Ok(v4_resp) = self
                     .transport
                     .call(
-                        "/v2/get_grade_info",
-                        &dev,
-                        Some(&session),
-                        v2_query,
-                        Some(v2_body),
-                        "https://gateway.kugou.com",
+                        "/v4/get_grade_info",
+                        dev_ref,
+                        Some(session_ref),
+                        v4_query,
+                        Some(v4_body),
+                        "https://userinfoservice.kugou.com",
                         "POST",
                         false,
-                        v2_headers,
+                        v4_headers,
                         false,
                         false,
                     )
                     .await
                 {
-                    let d_root = v2_resp.data();
-                    let d_inner = d_root.get("data").unwrap_or(d_root);
-                    for k in ["d_sec", "dSec", "listen_sec", "d"] {
-                        if let Some(sec) = Self::val_i64(d_inner, k) {
-                            max_d_sec = max_d_sec.max(sec);
-                        }
+                    if v4_resp.is_success() {
+                        let d_root = v4_resp.data();
+                        return Some(d_root.get("data").unwrap_or(d_root).clone());
                     }
-                    for k in ["d_min", "duration", "r_duration"] {
-                        if let Some(m) = Self::val_i64(d_inner, k) {
-                            max_duration_min = max_duration_min.max(m);
-                        }
-                    }
-                    for k in ["p_grade", "user_grade", "grade"] {
-                        if let Some(g) = Self::val_i64(d_inner, k) {
-                            max_grade = max_grade.max(g as i32);
-                        }
-                    }
-                    for k in ["p_current_point", "score", "user_score"] {
-                        if let Some(sc) = Self::val_i64(d_inner, k) {
-                            max_score = max_score.max(sc);
-                        }
-                    }
-                    for k in ["p_next_grade_point", "next_score"] {
-                        if let Some(nsc) = Self::val_i64(d_inner, k) {
-                            max_next_score = max_next_score.max(nsc);
-                        }
-                    }
+                }
+            }
+            None
+        };
+
+        let (my_info_opt, rel_info_opt, grade_info_opt, vip_res) =
+            tokio::join!(fut_my_info, fut_rel_info, fut_grade, self.fetch_vip_status());
+
+        let mut max_d_sec: i64 = 0;
+        let mut max_duration_min: i64 = 0;
+        let mut max_grade: i32 = 0;
+        let mut next_grade: i32 = 0;
+        let mut grade_base_score: i64 = 0;
+        let mut user_score: i64 = 0;
+        let mut next_level_score: i64 = 0;
+        let mut grade_speed: f32 = 1.0;
+
+        let mut bg_pic_url = String::new();
+        let mut signature = String::new();
+        let mut gender: i32 = 0;
+        let mut birthday = String::new();
+        let mut province = String::new();
+        let mut city = String::new();
+        let mut ip_location = String::new();
+        let mut occupation = String::new();
+        let mut reg_time: i64 = 0;
+        let mut follows: i64 = 0;
+        let mut fans: i64 = 0;
+        let mut visitors: i64 = 0;
+
+        let mut session_dirty = false;
+
+        if let Some(ref d) = my_info_opt {
+            let nick = Self::val_str(d, "nickname");
+            if !nick.is_empty() && nick != session.nickname {
+                session.nickname = nick;
+                session_dirty = true;
+            }
+            let pic = Self::val_str(d, "pic");
+            if !pic.is_empty() {
+                let norm_pic = signer::normalize_image_url(Some(&pic));
+                if !norm_pic.is_empty() && norm_pic != session.avatar_url {
+                    session.avatar_url = norm_pic;
+                    session_dirty = true;
+                }
+            }
+            let bg = Self::val_str(d, "bg_pic");
+            if !bg.is_empty() {
+                bg_pic_url = signer::normalize_image_url(Some(&bg));
+            }
+            signature = {
+                let s = Self::val_str(d, "descri");
+                if !s.is_empty() {
+                    s
+                } else {
+                    Self::val_str(d, "intro")
+                }
+            };
+            gender = Self::val_i64(d, "gender")
+                .or_else(|| Self::val_i64(d, "sex"))
+                .unwrap_or(0) as i32;
+            birthday = Self::val_str(d, "birthday");
+            province = Self::val_str(d, "province");
+            city = Self::val_str(d, "city");
+            ip_location = Self::val_str(d, "loc");
+            occupation = Self::val_str(d, "occupation");
+            reg_time = Self::val_i64(d, "rtime")
+                .or_else(|| Self::val_i64(d, "reg_time"))
+                .unwrap_or(0);
+            follows = Self::val_i64(d, "follows").unwrap_or(0);
+            fans = Self::val_i64(d, "fans").unwrap_or(0);
+            visitors = Self::val_i64(d, "visitors")
+                .or_else(|| Self::val_i64(d, "nvisitors"))
+                .unwrap_or(0);
+
+            for k in ["r_duration", "duration", "listen_duration"] {
+                if let Some(m) = Self::val_i64(d, k) {
+                    max_duration_min = max_duration_min.max(m);
+                }
+            }
+            for k in ["p_grade", "user_grade", "grade"] {
+                if let Some(g) = Self::val_i64(d, k) {
+                    max_grade = max_grade.max(g as i32);
                 }
             }
         }
 
-        let min_field_in_sec = if max_duration_min > 2_000_000 {
-            max_duration_min
+        if let Some(ref d_rel) = rel_info_opt {
+            if session.nickname.is_empty() {
+                let nick = Self::val_str(d_rel, "nickname");
+                if !nick.is_empty() {
+                    session.nickname = nick;
+                    session_dirty = true;
+                }
+            }
+            if follows <= 0 {
+                follows = Self::val_i64(d_rel, "follows").unwrap_or(follows);
+            }
+            if fans <= 0 {
+                fans = Self::val_i64(d_rel, "fans").unwrap_or(fans);
+            }
+            for k in ["r_duration", "duration", "listen_duration"] {
+                if let Some(m) = Self::val_i64(d_rel, k) {
+                    max_duration_min = max_duration_min.max(m);
+                }
+            }
+            for k in ["p_grade", "user_grade", "grade"] {
+                if let Some(g) = Self::val_i64(d_rel, k) {
+                    max_grade = max_grade.max(g as i32);
+                }
+            }
+        }
+
+        if session_dirty {
+            self.store.set_session(Some(session.clone()));
+        }
+
+        if let Some(ref d_grade) = grade_info_opt {
+            // 严禁匹配单字母 "d"，严格提取权威秒级字段 d_sec 与分钟级字段 duration
+            for k in ["d_sec", "dSec", "listen_sec"] {
+                if let Some(sec) = Self::val_i64(d_grade, k) {
+                    max_d_sec = max_d_sec.max(sec);
+                }
+            }
+            for k in ["duration", "r_duration", "d_min"] {
+                if let Some(m) = Self::val_i64(d_grade, k) {
+                    max_duration_min = max_duration_min.max(m);
+                }
+            }
+            for k in ["p_grade", "user_grade", "grade"] {
+                if let Some(g) = Self::val_i64(d_grade, k) {
+                    max_grade = max_grade.max(g as i32);
+                }
+            }
+            if let Some(ng) = Self::val_i64(d_grade, "p_next_grade") {
+                next_grade = ng as i32;
+            }
+            if let Some(bsc) = Self::val_i64(d_grade, "p_grade_point") {
+                grade_base_score = grade_base_score.max(bsc);
+            }
+            for k in ["p_current_point", "user_score", "score"] {
+                if let Some(sc) = Self::val_i64(d_grade, k) {
+                    user_score = user_score.max(sc);
+                }
+            }
+            for k in ["p_next_grade_point", "next_score"] {
+                if let Some(nsc) = Self::val_i64(d_grade, k) {
+                    next_level_score = next_level_score.max(nsc);
+                }
+            }
+            if let Some(sp) = Self::val_f64_opt(d_grade, "p_speed") {
+                if sp > 0.1 {
+                    grade_speed = sp as f32;
+                }
+            }
+        }
+
+        // 权威云端基线：优先采用服务端返回的秒级 d_sec，若仅返回分钟级 duration 则转为 duration * 60
+        let raw_server_dsec = if max_d_sec > 0 {
+            max_d_sec
         } else {
-            max_duration_min * 60
+            max_duration_min.max(0) * 60
         };
-        let mut raw_base_sec = max_d_sec.max(min_field_in_sec);
-        if is_report && (req_d_sec + req_diff_sec) > raw_base_sec {
-            raw_base_sec = req_d_sec + req_diff_sec;
-        }
-        let local_diff_sec =
-            self.resolve_standard_client_local_diff_sec(&session.user_id, raw_base_sec);
-        let mut st = self.store.get_grade_state(&session.user_id);
-        if max_grade > st.last_known_grade {
-            st.last_known_grade = max_grade;
-            self.store.set_grade_state(&session.user_id, st.clone());
-        } else if max_grade <= 0 && st.last_known_grade > 0 {
-            max_grade = st.last_known_grade;
-        }
-        let total_sec = raw_base_sec + local_diff_sec;
+
+        let (unsettled_local_sec, pending_diff_sec, resolved_grade) =
+            self.reconcile_grade_state(&session.user_id, raw_server_dsec, max_grade, now_sec);
+
+        let total_sec = raw_server_dsec + unsettled_local_sec;
         let total_min = total_sec / 60;
         let hours = total_min / 60;
         let mins = total_min % 60;
@@ -1201,17 +1404,36 @@ impl KugouApiService {
             format!("{} 分钟", mins)
         };
 
-        let (level_progress_pct, next_level_remain_min) = Self::compute_level_progress_and_remain(
-            max_grade,
+        let resolved_next_grade = if next_grade > resolved_grade {
+            next_grade
+        } else {
+            resolved_grade + 1
+        };
+
+        let (
+            final_base_score,
+            final_user_score,
+            final_next_score,
+            next_level_remain_score,
+            level_progress_pct,
+            next_level_remain_min,
+        ) = Self::compute_grade_progress(
+            resolved_grade,
             total_min,
-            total_sec,
-            max_score,
-            max_next_score,
-            max_base_score,
-            remain_sec_server,
+            grade_base_score,
+            user_score,
+            next_level_score,
+            grade_speed,
         );
 
-        let vip_info = self.fetch_vip_status().await.unwrap_or(VipStatusInfo {
+        let music_age_years = if reg_time > 946_684_800 && now_sec > reg_time {
+            let yrs = (now_sec - reg_time) as f64 / (365.25 * 86_400.0);
+            ((yrs * 10.0).round() / 10.0) as f32
+        } else {
+            0.0
+        };
+
+        let vip_info = vip_res.unwrap_or(VipStatusInfo {
             is_vip: false,
             svip_active: false,
             tvip_active: false,
@@ -1226,7 +1448,7 @@ impl KugouApiService {
         });
 
         let vip_expire_text = if vip_info.svip_active {
-            format!("概念版 VIP · 到期 {}", vip_info.svip_expiry)
+            format!("概念版 SVIP · 到期 {}", vip_info.svip_expiry)
         } else if vip_info.tvip_active {
             format!("畅听 VIP · 到期 {}", vip_info.tvip_expiry)
         } else {
@@ -1237,6 +1459,19 @@ impl KugouApiService {
             user_id: session.user_id,
             nickname: session.nickname,
             avatar_url: session.avatar_url,
+            bg_pic_url,
+            signature,
+            gender,
+            birthday,
+            province,
+            city,
+            ip_location,
+            occupation,
+            reg_time,
+            music_age_years,
+            follows,
+            fans,
+            visitors,
             is_vip: vip_info.is_vip,
             svip_active: vip_info.svip_active,
             tvip_active: vip_info.tvip_active,
@@ -1244,128 +1479,91 @@ impl KugouApiService {
             listen_duration_min: total_min,
             listen_duration_sec: total_sec,
             listen_duration_formatted,
-            user_grade: max_grade,
-            raw_server_dsec: raw_base_sec,
-            user_score: max_score,
-            next_level_score: max_next_score.max(100),
+            pending_diff_sec,
+            user_grade: resolved_grade,
+            next_grade: resolved_next_grade,
+            raw_server_dsec,
+            grade_base_score: final_base_score,
+            user_score: final_user_score,
+            next_level_score: final_next_score,
+            next_level_remain_score,
+            grade_speed,
             level_progress_pct,
             next_level_remain_min,
         })
     }
 
-    /// 严格 1:1 复刻 Android 端 UserGradeInfo.computeLevelProgressAndRemain：
-    /// 酷狗 p_current_point / p_next_grade_point / p_grade_point 本身即为分钟单位，
-    /// 严禁乘以 6，并提供 Lv.0 ~ Lv.20 官方分钟阶梯表兜底校准。
-    fn compute_level_progress_and_remain(
+    /// 严格区分酷狗「累计听歌分钟数 (duration/d_sec)」与「等级成长值积分 (p_current_point / p_grade_point / p_next_grade_point)」：
+    /// - 成长值按 `听歌分钟 * p_speed`（VIP 1.5x/2.0x/2.5x 倍速）累加，绝不可与听歌时长混为一谈！
+    /// - 直接采用服务端下发的真实等级积分上下界计算精确百分比，不做人为 5% 保底失真截断。
+    fn compute_grade_progress(
         level: i32,
         total_minutes: i64,
-        total_seconds: i64,
-        score: i64,
-        next_score: i64,
-        current_base_score: i64,
-        remain_seconds_from_server: i64,
-    ) -> (f32, i64) {
-        const LEVEL_MIN_THRESHOLDS: [i64; 21] = [
-            0,         // Lv.0: 0h
-            60,        // Lv.1: 1h
-            300,       // Lv.2: 5h
-            900,       // Lv.3: 15h
-            1_800,     // Lv.4: 30h
-            3_600,     // Lv.5: 60h
-            7_200,     // Lv.6: 120h
-            15_000,    // Lv.7: 250h
-            30_000,    // Lv.8: 500h
-            60_000,    // Lv.9: 1000h
-            108_000,   // Lv.10: 1800h
-            150_000,   // Lv.11: 2500h
-            222_000,   // Lv.12: 3700h
-            330_000,   // Lv.13: 5500h
-            450_000,   // Lv.14: 7500h
-            600_000,   // Lv.15: 10000h
-            780_000,   // Lv.16: 13000h
-            990_000,   // Lv.17: 16500h
-            1_230_000, // Lv.18: 20500h
-            1_500_000, // Lv.19: 25000h
-            1_800_000, // Lv.20: 30000h
+        server_base_score: i64,
+        server_user_score: i64,
+        server_next_score: i64,
+        grade_speed: f32,
+    ) -> (i64, i64, i64, i64, f32, i64) {
+        // 酷狗官方听歌等级成长值阶梯表（仅当离线或接口未返回积分字段时作为兜底参考，Lv.12=300000, Lv.13=500000）
+        const OFFICIAL_GRADE_POINTS: [i64; 21] = [
+            0,         // Lv.0
+            50,        // Lv.1
+            200,       // Lv.2
+            500,       // Lv.3
+            1_000,     // Lv.4
+            2_000,     // Lv.5
+            4_000,     // Lv.6
+            8_000,     // Lv.7
+            15_000,    // Lv.8
+            30_000,    // Lv.9
+            60_000,    // Lv.10
+            150_000,   // Lv.11
+            300_000,   // Lv.12
+            500_000,   // Lv.13
+            800_000,   // Lv.14
+            1_200_000, // Lv.15
+            1_800_000, // Lv.16
+            2_500_000, // Lv.17
+            3_500_000, // Lv.18
+            5_000_000, // Lv.19
+            7_000_000, // Lv.20
         ];
-        let last_idx = LEVEL_MIN_THRESHOLDS.len() - 1;
-        let safe_mins = if total_seconds > 0 {
-            total_seconds / 60
-        } else {
-            total_minutes
-        }
-        .max(0);
+        let last_idx = OFFICIAL_GRADE_POINTS.len() - 1;
         let lv_idx = (level.max(0) as usize).min(last_idx - 1);
 
-        if remain_seconds_from_server > 0 && total_seconds > 0 {
-            let remain_mins = (remain_seconds_from_server / 60).max(1);
-            let base_min = if current_base_score >= 1 && current_base_score <= safe_mins {
-                current_base_score
-            } else {
-                LEVEL_MIN_THRESHOLDS[lv_idx].min(safe_mins)
-            };
-            let target_min = safe_mins + remain_mins;
-            let span = (target_min - base_min).max(1);
-            let pct = (((safe_mins - base_min) as f64 / span as f64) * 100.0) as f32;
-            return (pct.clamp(5.0, 99.0), remain_mins);
-        }
-
-        if next_score > 100 && (score > 0 || safe_mins > 0) {
-            let effective_current = if score > 0
-                && safe_mins > score
-                && safe_mins < next_score
-                && (safe_mins - score) <= 10_000
-            {
-                safe_mins
-            } else if score > 0 {
-                score
-            } else {
-                safe_mins
-            };
-            if next_score > effective_current {
-                let base = if current_base_score >= 1 && current_base_score <= effective_current {
-                    current_base_score
-                } else if LEVEL_MIN_THRESHOLDS[lv_idx] < effective_current {
-                    LEVEL_MIN_THRESHOLDS[lv_idx]
-                } else {
-                    0
-                };
-                let span = (next_score - base).max(1);
-                let pct = (((effective_current - base) as f64 / span as f64) * 100.0) as f32;
-                let remain_mins = (next_score - effective_current).max(0);
-                return (pct.clamp(5.0, 99.0), remain_mins);
-            }
-        }
-
-        let mut lower_min = LEVEL_MIN_THRESHOLDS[lv_idx];
-        let mut upper_min = LEVEL_MIN_THRESHOLDS[(lv_idx + 1).min(last_idx)];
-        if safe_mins < lower_min || safe_mins >= upper_min {
-            let mut matched_idx = 0usize;
-            for i in 0..last_idx {
-                if safe_mins >= LEVEL_MIN_THRESHOLDS[i] {
-                    matched_idx = i;
-                } else {
-                    break;
-                }
-            }
-            lower_min = LEVEL_MIN_THRESHOLDS[matched_idx];
-            upper_min = if matched_idx + 1 <= last_idx && safe_mins < LEVEL_MIN_THRESHOLDS[matched_idx + 1] {
-                LEVEL_MIN_THRESHOLDS[matched_idx + 1]
-            } else {
-                lower_min + 72_000
-            };
-        }
-        let span_sec = ((upper_min - lower_min) * 60).max(60);
-        let cur_sec = (if total_seconds > 0 {
-            total_seconds
+        let base_score = if server_base_score > 0 || level == 0 {
+            server_base_score.max(0)
         } else {
-            safe_mins * 60
-        })
-        .max(lower_min * 60);
-        let gained_sec = (cur_sec - lower_min * 60).max(0);
-        let duration_pct = (((gained_sec as f64) / (span_sec as f64)) * 100.0) as f32;
-        let duration_remain_mins = ((upper_min * 60 - cur_sec).max(0)) / 60;
-        (duration_pct.clamp(5.0, 99.0), duration_remain_mins)
+            OFFICIAL_GRADE_POINTS[lv_idx]
+        };
+
+        let cur_score = if server_user_score > 0 {
+            server_user_score
+        } else {
+            total_minutes.max(base_score)
+        };
+
+        let next_score = if server_next_score > base_score {
+            server_next_score
+        } else {
+            OFFICIAL_GRADE_POINTS[(lv_idx + 1).min(last_idx)].max(cur_score + 100)
+        };
+
+        let span = (next_score - base_score).max(1);
+        let gained = (cur_score - base_score).clamp(0, span);
+        let pct = ((gained as f64 / span as f64) * 100.0).clamp(0.0, 100.0) as f32;
+        let remain_score = (next_score - cur_score).max(0);
+        let effective_speed = (grade_speed as f64).max(0.5);
+        let remain_min = ((remain_score as f64) / effective_speed).ceil() as i64;
+
+        (
+            base_score,
+            cur_score,
+            next_score,
+            remain_score,
+            pct,
+            remain_min,
+        )
     }
 
     fn normalize_vip_record_day(raw_day: &str) -> String {
@@ -1402,9 +1600,11 @@ impl KugouApiService {
         query.insert("opt_product_types".to_string(), "dvip,qvip".to_string());
         query.insert("product_type".to_string(), "svip".to_string());
 
-        let resp = self
-            .transport
-            .call(
+        let mut rec_query = HashMap::new();
+        rec_query.insert("latest_limit".to_string(), "100".to_string());
+
+        let (union_res, rec_res) = tokio::join!(
+            self.transport.call(
                 "/v1/get_union_vip",
                 &dev,
                 Some(&session),
@@ -1416,11 +1616,26 @@ impl KugouApiService {
                 HashMap::new(),
                 true,
                 true,
+            ),
+            self.transport.call(
+                "/youth/v1/activity/get_month_vip_record",
+                &dev,
+                Some(&session),
+                rec_query,
+                None,
+                "https://gateway.kugou.com",
+                "GET",
+                false,
+                HashMap::new(),
+                true,
+                true,
             )
-            .await?
-            .require_success()?;
+        );
+
+        let resp = union_res?.require_success()?;
 
         let data = resp.data();
+        let now_utc_ts = Utc::now().timestamp();
         let mut svip_active = false;
         let mut tvip_active = false;
         let mut svip_expiry = String::new();
@@ -1431,10 +1646,11 @@ impl KugouApiService {
                 let pt = Self::val_str(item, "product_type").to_lowercase();
                 let is_vip = Self::val_i64(item, "is_vip").unwrap_or(0) == 1;
                 let end_time = Self::val_str(item, "vip_end_time");
-                if pt == "svip" && is_vip {
+                let time_valid = Self::is_vip_time_active(&end_time, now_utc_ts);
+                if pt == "svip" && is_vip && time_valid {
                     svip_active = true;
                     svip_expiry = end_time;
-                } else if (pt == "tvip" || pt == "dvip" || pt == "qvip") && is_vip {
+                } else if (pt == "tvip" || pt == "dvip" || pt == "qvip") && is_vip && time_valid {
                     tvip_active = true;
                     tvip_expiry = end_time;
                 }
@@ -1451,24 +1667,7 @@ impl KugouApiService {
         let mut seen_month_days = HashSet::new();
         let mut records_map: BTreeMap<String, VipDayRecord> = BTreeMap::new();
 
-        let mut rec_query = HashMap::new();
-        rec_query.insert("latest_limit".to_string(), "100".to_string());
-        if let Ok(rec_resp) = self
-            .transport
-            .call(
-                "/youth/v1/activity/get_month_vip_record",
-                &dev,
-                Some(&session),
-                rec_query,
-                None,
-                "https://gateway.kugou.com",
-                "GET",
-                false,
-                HashMap::new(),
-                true,
-                true,
-            )
-            .await
+        if let Ok(rec_resp) = rec_res
         {
             let list_opt = rec_resp
                 .data()
@@ -10068,11 +10267,6 @@ impl KugouApiService {
         if is_start {
             // 立即将当前播放歌曲写入本地持久化最近播放历史，重启软件绝不丢失
             self.store.append_play_history(uid_key, song);
-        } else if played_duration_ms >= 5_000 {
-            let delta_sec = (played_duration_ms / 1000).clamp(1, 600);
-            if let Some(ref s) = session_opt {
-                let _ = self.store.add_pending_listen_sec(&s.user_id, delta_sec);
-            }
         }
 
         let Some(session) = session_opt else {
@@ -10808,4 +11002,59 @@ where
     .await;
 
     results.into_iter().flatten().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_legacy_dfid_detection() {
+        assert!(KugouApiService::is_legacy_local_dfid(
+            "2d544fe0e844b4eff8c1b5d8"
+        ));
+        assert!(!KugouApiService::is_legacy_local_dfid(
+            "2Be40g4ZdG5S2UKRxv26ERR6"
+        ));
+        assert!(!KugouApiService::is_legacy_local_dfid(
+            "4Wygbl056MbS2dPc7z1v16D7"
+        ));
+    }
+
+    #[test]
+    fn test_grade_progress_separates_points_from_minutes() {
+        let (base, cur, next, rem_score, pct, rem_min) =
+            KugouApiService::compute_grade_progress(12, 223_089, 300_000, 301_106, 500_000, 1.0);
+        assert_eq!(base, 300_000);
+        assert_eq!(cur, 301_106);
+        assert_eq!(next, 500_000);
+        assert_eq!(rem_score, 198_894);
+        assert!((pct - 0.553).abs() < 0.01);
+        assert_eq!(rem_min, 198_894);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn verify_live_account_profile_and_heal_local_state() {
+        let store = Arc::new(AppStore::new());
+        if store.session().is_none() {
+            return;
+        }
+        let api = KugouApiService::new(store.clone());
+        let profile = api
+            .fetch_full_profile()
+            .await
+            .expect("live fetch_full_profile should succeed");
+        println!(
+            "LIVE PROFILE => {}",
+            serde_json::to_string_pretty(&profile).unwrap_or_default()
+        );
+        println!(
+            "HEALED DEVICE => {:?}\nHEALED GRADE STATE => {:?}",
+            store.device(),
+            store.get_grade_state(&profile.user_id)
+        );
+        assert!(profile.raw_server_dsec > 0);
+        assert_eq!(profile.listen_duration_sec, profile.raw_server_dsec);
+    }
 }

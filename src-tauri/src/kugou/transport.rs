@@ -293,31 +293,46 @@ impl KugouTransport {
         let query_vec: Vec<(&String, &String)> = params.iter().collect();
         req_builder = req_builder.query(&query_vec);
 
-        req_builder = req_builder
-            .header(
+        let has_header = |name: &str| -> bool {
+            headers.keys().any(|k| k.eq_ignore_ascii_case(name))
+        };
+
+        if !has_header("user-agent") {
+            req_builder = req_builder.header(
                 "User-Agent",
                 "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi",
-            )
-            .header("kg-rc", "1")
-            .header("kg-thash", "5d816a0")
-            .header("kg-rec", "1")
-            .header("kg-rf", "B9EDA08A64250DEFFBCADDEE00F8F25F");
+            );
+        }
+        if !has_header("kg-rc") {
+            req_builder = req_builder.header("kg-rc", "1");
+        }
+        if !has_header("kg-thash") {
+            req_builder = req_builder.header("kg-thash", "5d816a0");
+        }
+        if !has_header("kg-rec") {
+            req_builder = req_builder.header("kg-rec", "1");
+        }
+        if !has_header("kg-rf") {
+            req_builder = req_builder.header("kg-rf", "B9EDA08A64250DEFFBCADDEE00F8F25F");
+        }
 
         if include_default_params {
-            req_builder = req_builder
-                .header("dfid", &device.dfid)
-                .header("mid", &device.mid)
-                .header(
+            if !has_header("dfid") {
+                req_builder = req_builder.header("dfid", &device.dfid);
+            }
+            if !has_header("mid") {
+                req_builder = req_builder.header("mid", &device.mid);
+            }
+            if !has_header("clienttime") {
+                req_builder = req_builder.header(
                     "clienttime",
                     params.get("clienttime").cloned().unwrap_or(now_sec),
                 );
+            }
         }
 
-        let mut has_content_type = false;
+        let has_content_type = has_header("content-type");
         for (k, v) in headers {
-            if k.eq_ignore_ascii_case("content-type") {
-                has_content_type = true;
-            }
             req_builder = req_builder.header(k, v);
         }
 
@@ -405,21 +420,52 @@ impl KugouTransport {
                 _ => self.client.get(&full_url),
             };
             let query_vec: Vec<(&String, &String)> = params.iter().collect();
-            req_builder = req_builder
-                .query(&query_vec)
-                .header(
+            req_builder = req_builder.query(&query_vec);
+
+            let has_header = |name: &str| -> bool {
+                candidate_headers.keys().any(|k| k.eq_ignore_ascii_case(name))
+            };
+            if !has_header("user-agent") {
+                req_builder = req_builder.header(
                     "User-Agent",
                     "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi",
-                )
-                .header("kg-rc", "1")
-                .header("kg-thash", "5d816a0")
-                .header("kg-rec", "1")
-                .header("kg-rf", "B9EDA08A64250DEFFBCADDEE00F8F25F");
+                );
+            }
+            if !has_header("kg-rc") {
+                req_builder = req_builder.header("kg-rc", "1");
+            }
+            if !has_header("kg-thash") {
+                req_builder = req_builder.header("kg-thash", "5d816a0");
+            }
+            if !has_header("kg-rec") {
+                req_builder = req_builder.header("kg-rec", "1");
+            }
+            if !has_header("kg-rf") {
+                req_builder = req_builder.header("kg-rf", "B9EDA08A64250DEFFBCADDEE00F8F25F");
+            }
+            if include_default_params {
+                if !has_header("dfid") {
+                    req_builder = req_builder.header("dfid", &device.dfid);
+                }
+                if !has_header("mid") {
+                    req_builder = req_builder.header("mid", &device.mid);
+                }
+                if !has_header("clienttime") {
+                    req_builder = req_builder.header(
+                        "clienttime",
+                        params.get("clienttime").cloned().unwrap_or(now_sec),
+                    );
+                }
+            }
 
             for (k, v) in candidate_headers {
                 req_builder = req_builder.header(k, v);
             }
             if method.eq_ignore_ascii_case("POST") {
+                if !has_header("content-type") {
+                    req_builder =
+                        req_builder.header("Content-Type", "application/x-www-form-urlencoded");
+                }
                 req_builder = req_builder.body(payload);
             }
 

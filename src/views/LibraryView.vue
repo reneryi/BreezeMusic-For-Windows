@@ -25,32 +25,69 @@ const levelNum = computed(() => {
   return store.profile?.userGrade || store.profile?.userLevel || 1;
 });
 
+const nextLevelNum = computed(() => {
+  const ng = store.profile?.nextGrade;
+  return ng && ng > levelNum.value ? ng : levelNum.value + 1;
+});
+
+const listenTotalMinutes = computed(() => {
+  const sec = store.profile?.listenDurationSec ?? 0;
+  return sec > 0
+    ? Math.floor(sec / 60)
+    : store.profile?.listenDurationMin ?? 0;
+});
+
 const listenHoursNumber = computed(() => {
-  const sec = store.profile?.listenDurationSec || 0;
-  const totalMin = Math.max(store.profile?.listenDurationMin || 0, Math.floor(sec / 60));
-  return Math.floor(totalMin / 60);
+  return Math.floor(listenTotalMinutes.value / 60);
 });
 
 const listenRemainderMins = computed(() => {
-  const sec = store.profile?.listenDurationSec || 0;
-  const totalMin = Math.max(store.profile?.listenDurationMin || 0, Math.floor(sec / 60));
-  return totalMin % 60;
+  return listenTotalMinutes.value % 60;
 });
 
 const levelProgressPercent = computed(() => {
   const p = store.profile?.levelProgressPct;
-  if (typeof p === "number" && p > 0) return Math.min(100, Math.max(6, p));
-  return 68;
+  if (typeof p === "number" && Number.isFinite(p)) {
+    return Math.min(100, Math.max(0, p));
+  }
+  return 0;
+});
+
+const gradeSpeedText = computed(() => {
+  const sp = store.profile?.gradeSpeed;
+  if (typeof sp === "number" && Number.isFinite(sp) && sp > 0) {
+    return Number.isInteger(sp) ? `${sp}.0x` : `${sp.toFixed(1)}x`;
+  }
+  return "1.0x";
 });
 
 const nextLevelHintText = computed(() => {
+  const cur = store.profile?.userScore || 0;
+  const next = store.profile?.nextLevelScore || 0;
+  if (cur > 0 && next > 0) {
+    return `成长值 ${cur.toLocaleString()} / ${next.toLocaleString()}`;
+  }
   const diff = store.profile?.nextLevelRemainMin || 0;
   if (diff > 0) {
     const h = Math.floor(diff / 60);
     const m = diff % 60;
-    return h > 0 ? `距 Lv.${levelNum.value + 1} 需 ${h}h ${m}m` : `距 Lv.${levelNum.value + 1} 需 ${m} 分钟`;
+    return h > 0
+      ? `距 Lv.${nextLevelNum.value} 需 ${h}h ${m}m`
+      : `距 Lv.${nextLevelNum.value} 需 ${m} 分钟`;
   }
-  return `今日听满 30 分钟稳定升级`;
+  return `云端成长值实时校准`;
+});
+
+const gradeDetailTooltip = computed(() => {
+  const base = store.profile?.gradeBaseScore || 0;
+  const cur = store.profile?.userScore || 0;
+  const next = store.profile?.nextLevelScore || 0;
+  const remScore =
+    store.profile?.nextLevelRemainScore ?? Math.max(0, next - cur);
+  if (next > 0) {
+    return `Lv.${levelNum.value} 起点 ${base.toLocaleString()} · 当前 ${cur.toLocaleString()} / ${next.toLocaleString()}（差 ${remScore.toLocaleString()} 成长值升级，当前加速 ${gradeSpeedText.value}）`;
+  }
+  return `云端累计听歌 ${listenTotalMinutes.value.toLocaleString()} 分钟`;
 });
 
 const likedTotalCount = computed(() => {
@@ -377,11 +414,26 @@ onMounted(() => {
                   }}
                 </span>
               </div>
-              <div class="bento-user-sub">
+              <div
+                class="bento-user-sub"
+                :title="store.profile?.signature || ''"
+              >
                 <template v-if="store.isLoggedIn">
                   UID: {{ store.session?.userId || store.profile?.userId }}
-                  <span v-if="store.savedAccounts.length > 1">
-                    · 已绑定 {{ store.savedAccounts.length }} 个账号
+                  <span v-if="(store.profile?.musicAgeYears || 0) > 0">
+                    · 乐龄 {{ store.profile?.musicAgeYears }} 年
+                  </span>
+                  <span
+                    v-if="
+                      (store.profile?.follows || 0) > 0 ||
+                      (store.profile?.fans || 0) > 0
+                    "
+                  >
+                    · 关注 {{ store.profile?.follows || 0 }} / 粉丝
+                    {{ store.profile?.fans || 0 }}
+                  </span>
+                  <span v-else-if="store.savedAccounts.length > 1">
+                    · 已保存 {{ store.savedAccounts.length }} 个账号
                   </span>
                 </template>
                 <template v-else>
@@ -422,10 +474,15 @@ onMounted(() => {
           </div>
         </div>
 
-        <!-- 中段：听歌时长大数字与等级进度条 -->
-        <div class="bento-listen-box">
+        <!-- 中段：听歌时长大数字与等级成长值进度条 -->
+        <div class="bento-listen-box" :title="gradeDetailTooltip">
           <div class="bento-listen-left">
-            <span class="bento-listen-label">累计听歌时长 · 权威双水位线</span>
+            <span class="bento-listen-label">
+              云端累计听歌时长
+              <em v-if="listenTotalMinutes > 0" class="bento-listen-mins">
+                · {{ listenTotalMinutes.toLocaleString() }} 分钟
+              </em>
+            </span>
             <div class="bento-listen-value">
               <strong>{{ listenHoursNumber }}</strong>
               <span class="unit">小时</span>
@@ -436,15 +493,18 @@ onMounted(() => {
 
           <div class="bento-listen-right">
             <div class="bento-level-meta">
-              <span>Lv.{{ levelNum }} → Lv.{{ levelNum + 1 }}</span>
+              <span class="bento-lv-route">
+                Lv.{{ levelNum }} → Lv.{{ nextLevelNum }}
+                <em class="bento-speed-pill">{{ gradeSpeedText }}</em>
+              </span>
               <span class="hint">{{ nextLevelHintText }}</span>
             </div>
-            <div class="bento-level-track">
-              <div
-                class="bento-level-fill"
-                :style="{ width: `${levelProgressPercent}%` }"
-              ></div>
-            </div>
+            <progress
+              class="bento-level-progress"
+              :value="levelProgressPercent"
+              max="100"
+              :aria-label="`听歌等级进度 Lv.${levelNum} 至 Lv.${nextLevelNum}`"
+            ></progress>
           </div>
         </div>
 
@@ -1430,6 +1490,16 @@ onMounted(() => {
   font-size: 11.5px;
   font-weight: 700;
   color: var(--text-sub);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.bento-listen-mins {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .bento-listen-value {
@@ -1471,25 +1541,55 @@ onMounted(() => {
   color: var(--accent-mint);
 }
 
+.bento-lv-route {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.bento-speed-pill {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
 .bento-level-meta .hint {
   font-weight: 700;
   color: var(--text-sub);
   white-space: nowrap;
 }
 
-.bento-level-track {
+.bento-level-progress {
+  appearance: none;
+  border: 0 solid;
+  overflow: clip;
+  width: 100%;
   height: 7px;
-  border-radius: 999px;
+  --progress-bar-radius: 999px;
+  border-radius: var(--progress-bar-radius);
   background: rgba(120, 145, 185, 0.22);
-  overflow: hidden;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.1);
 }
 
-.bento-level-fill {
-  height: 100%;
-  border-radius: 999px;
+.bento-level-progress::-webkit-progress-bar {
+  background: transparent;
+}
+
+.bento-level-progress::-webkit-progress-value {
   background: linear-gradient(90deg, var(--primary) 0%, #00c4a7 100%);
-  box-shadow: 0 0 10px rgba(43, 140, 255, 0.35);
-  transition: width 0.35s ease;
+  border-radius: var(--progress-bar-radius);
+  transition: inline-size 0.3s;
+}
+
+.bento-level-progress::-moz-progress-bar {
+  background: linear-gradient(90deg, var(--primary) 0%, #00c4a7 100%);
+  border-radius: var(--progress-bar-radius);
+  transition: inline-size 0.3s;
 }
 
 /* 内嵌概念版 VIP 黑金/香槟金权益条 */

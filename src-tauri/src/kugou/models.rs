@@ -101,6 +101,19 @@ pub struct AccountProfile {
     pub user_id: String,
     pub nickname: String,
     pub avatar_url: String,
+    pub bg_pic_url: String,
+    pub signature: String,
+    pub gender: i32,
+    pub birthday: String,
+    pub province: String,
+    pub city: String,
+    pub ip_location: String,
+    pub occupation: String,
+    pub reg_time: i64,
+    pub music_age_years: f32,
+    pub follows: i64,
+    pub fans: i64,
+    pub visitors: i64,
     pub is_vip: bool,
     pub svip_active: bool,
     pub tvip_active: bool,
@@ -108,10 +121,15 @@ pub struct AccountProfile {
     pub listen_duration_min: i64,
     pub listen_duration_sec: i64,
     pub listen_duration_formatted: String,
+    pub pending_diff_sec: i64,
     pub user_grade: i32,
+    pub next_grade: i32,
     pub raw_server_dsec: i64,
+    pub grade_base_score: i64,
     pub user_score: i64,
     pub next_level_score: i64,
+    pub next_level_remain_score: i64,
+    pub grade_speed: f32,
     pub level_progress_pct: f32,
     pub next_level_remain_min: i64,
 }
@@ -550,9 +568,12 @@ pub struct CacheDiskStats {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct UserListeningGradeState {
+    pub schema_ver: u32,
     pub synced_official_listen_sec: i64,
     pub synced_raw_server_dsec: i64,
     pub pending_diff_sec: i64,
+    pub inflight_diff_sec: i64,
+    pub inflight_at_sec: i64,
     pub last_known_grade: i32,
 }
 

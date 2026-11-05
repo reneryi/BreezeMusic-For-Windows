@@ -3,10 +3,10 @@ pub mod kugou;
 use kugou::api::KugouApiService;
 use kugou::models::{
     AccountProfile, AlbumItem, CacheDiskStats, DownloadTaskResult, FmChannel, FollowedArtist,
-    GatewayDiagResult, KugouSession, ListeningGradeSyncResult, LyricData, PhoneLoginOutcome,
-    PlaybackResult, Playlist, PurchasedAlbumItem, PurchasedSongItem, QrCodeSession, QrPollResult,
-    RankItem, ResolvedSongAlbumMeta, SharedMusicResolved, Song, SongComment, SongDetailInfo,
-    VipStatusInfo, ViperEffectItem,
+    GatewayDiagResult, KugouSession, ListeningGradeSyncResult, LyricData, PagedSearchResult,
+    PhoneLoginOutcome, PlaybackResult, Playlist, PurchasedAlbumItem, PurchasedSongItem,
+    QrCodeSession, QrPollResult, RankItem, ResolvedSongAlbumMeta, SearchDiscoveryData,
+    SharedMusicResolved, Song, SongComment, SongDetailInfo, VipStatusInfo, ViperEffectItem,
 };
 use kugou::store::AppStore;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -247,7 +247,82 @@ async fn search_artists_cmd(
 ) -> Result<Vec<FollowedArtist>, String> {
     state
         .api
-        .search_artists(&keyword, page.unwrap_or(1), page_size.unwrap_or(24))
+        .search_artists(&keyword, page.unwrap_or(1), page_size.unwrap_or(30))
+        .await
+}
+
+#[tauri::command]
+async fn search_songs_paged_cmd(
+    state: State<'_, AppState>,
+    keyword: String,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<PagedSearchResult<Song>, String> {
+    state
+        .api
+        .search_songs_paged(&keyword, page.unwrap_or(1), page_size.unwrap_or(30))
+        .await
+}
+
+#[tauri::command]
+async fn search_playlists_paged_cmd(
+    state: State<'_, AppState>,
+    keyword: String,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<PagedSearchResult<Playlist>, String> {
+    state
+        .api
+        .search_playlists_paged(&keyword, page.unwrap_or(1), page_size.unwrap_or(30))
+        .await
+}
+
+#[tauri::command]
+async fn search_albums_paged_cmd(
+    state: State<'_, AppState>,
+    keyword: String,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<PagedSearchResult<AlbumItem>, String> {
+    state
+        .api
+        .search_albums_paged(&keyword, page.unwrap_or(1), page_size.unwrap_or(30))
+        .await
+}
+
+#[tauri::command]
+async fn search_artists_paged_cmd(
+    state: State<'_, AppState>,
+    keyword: String,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<PagedSearchResult<FollowedArtist>, String> {
+    state
+        .api
+        .search_artists_paged(&keyword, page.unwrap_or(1), page_size.unwrap_or(30))
+        .await
+}
+
+#[tauri::command]
+async fn get_hot_artists_cmd(
+    state: State<'_, AppState>,
+    category: Option<u32>,
+    count: Option<usize>,
+) -> Result<Vec<FollowedArtist>, String> {
+    state
+        .api
+        .fetch_hot_artists(category.unwrap_or(0), count.unwrap_or(24))
+        .await
+}
+
+#[tauri::command]
+async fn get_search_discovery_cmd(
+    state: State<'_, AppState>,
+    artist_category: Option<u32>,
+) -> Result<SearchDiscoveryData, String> {
+    state
+        .api
+        .fetch_search_discovery(artist_category.unwrap_or(0))
         .await
 }
 
@@ -780,11 +855,17 @@ pub fn run() {
             get_fm_songs,
             get_recent_history,
             search_songs,
+            search_songs_paged_cmd,
             get_search_hot,
             get_search_suggest_cmd,
+            get_hot_artists_cmd,
+            get_search_discovery_cmd,
             search_playlists_cmd,
+            search_playlists_paged_cmd,
             search_albums_cmd,
+            search_albums_paged_cmd,
             search_artists_cmd,
+            search_artists_paged_cmd,
             get_user_playlists,
             get_playlist_info_cmd,
             get_playlist_songs,

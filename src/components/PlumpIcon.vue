@@ -792,6 +792,95 @@ withDefaults(
       <rect x="16.4" y="12.2" width="4.4" height="7.4" rx="2.2" :fill="accent" />
       <circle cx="12" cy="11.2" r="1.7" :fill="accent" />
     </template>
+    <!-- 顶部主导航五枚专属圆润饱满图标 (nav-discover / nav-search / nav-library / nav-tuner / nav-settings) -->
+    <template v-else-if="name === 'nav-discover'">
+      <circle
+        cx="12"
+        cy="12"
+        r="9.3"
+        :fill="color"
+        fill-opacity="0.2"
+        :stroke="color"
+        stroke-width="2.5"
+      />
+      <path
+        d="M15.9 8.1C16.5 7.8 17.1 8.4 16.8 9.0L14.6 13.6C14.4 14.0 14.0 14.4 13.6 14.6L9.0 16.8C8.4 17.1 7.8 16.5 8.1 15.9L10.3 11.3C10.5 10.9 10.9 10.5 11.3 10.3L15.9 8.1Z"
+        :fill="color"
+      />
+      <circle cx="12" cy="12" r="1.75" :fill="accent" />
+    </template>
+
+    <template v-else-if="name === 'nav-search'">
+      <circle
+        cx="10.6"
+        cy="10.6"
+        r="6.7"
+        :fill="color"
+        fill-opacity="0.2"
+        :stroke="color"
+        stroke-width="2.9"
+      />
+      <path
+        d="M8.0 8.5C8.7 7.6 9.8 7.1 11.0 7.2"
+        :stroke="accent"
+        stroke-width="2.2"
+        stroke-linecap="round"
+      />
+      <path
+        d="M15.7 15.7L20.1 20.1"
+        :stroke="accent"
+        stroke-width="3.5"
+        stroke-linecap="round"
+      />
+    </template>
+
+    <template v-else-if="name === 'nav-library'">
+      <circle cx="12" cy="8.0" r="4.3" :fill="color" />
+      <path
+        d="M4.4 18.2C4.4 15.0 7.7 13.1 12 13.1C16.3 13.1 19.6 15.0 19.6 18.2C19.6 19.8 18.3 20.8 16.5 20.8H7.5C5.7 20.8 4.4 19.8 4.4 18.2Z"
+        :fill="color"
+        fill-opacity="0.82"
+      />
+      <path
+        d="M12 18.7C10.5 17.6 9.6 16.5 9.6 15.4C9.6 14.6 10.2 14.0 11.0 14.0C11.5 14.0 11.8 14.3 12 14.6C12.2 14.3 12.5 14.0 13.0 14.0C13.8 14.0 14.4 14.6 14.4 15.4C14.4 16.5 13.5 17.6 12 18.7Z"
+        :fill="accent"
+      />
+    </template>
+
+    <template v-else-if="name === 'nav-tuner'">
+      <rect x="3.2" y="6.6" width="17.6" height="3.0" rx="1.5" :fill="color" fill-opacity="0.28" />
+      <rect x="3.2" y="6.6" width="11.2" height="3.0" rx="1.5" :fill="color" />
+      <circle cx="14.8" cy="8.1" r="3.4" :fill="accent" />
+      <circle cx="14.8" cy="8.1" r="1.3" :fill="color" />
+
+      <rect x="3.2" y="14.4" width="17.6" height="3.0" rx="1.5" :fill="color" fill-opacity="0.28" />
+      <rect x="9.4" y="14.4" width="11.4" height="3.0" rx="1.5" :fill="color" />
+      <circle cx="9.2" cy="15.9" r="3.4" :fill="color" />
+      <circle cx="9.2" cy="15.9" r="1.3" :fill="accent" />
+    </template>
+
+    <template v-else-if="name === 'nav-settings'">
+      <path
+        d="M12 2.9C13.3 2.9 14.3 3.8 14.6 5.0C15.1 5.2 15.6 5.5 16.1 5.9C17.2 5.4 18.6 5.8 19.3 6.9C19.9 8.0 19.6 9.4 18.6 10.1C18.8 10.7 18.9 11.4 18.9 12.0C18.9 12.6 18.8 13.3 18.6 13.9C19.6 14.6 19.9 16.0 19.3 17.1C18.6 18.2 17.2 18.6 16.1 18.1C15.6 18.5 15.1 18.8 14.6 19.0C14.3 20.2 13.3 21.1 12 21.1C10.7 21.1 9.7 20.2 9.4 19.0C8.9 18.8 8.4 18.5 7.9 18.1C6.8 18.6 5.4 18.2 4.7 17.1C4.1 16.0 4.4 14.6 5.4 13.9C5.2 13.3 5.1 12.6 5.1 12.0C5.1 11.4 5.2 10.7 5.4 10.1C4.4 9.4 4.1 8.0 4.7 6.9C5.4 5.8 6.8 5.4 7.9 5.9C8.4 5.5 8.9 5.2 9.4 5.0C9.7 3.8 10.7 2.9 12 2.9Z"
+        :fill="color"
+        fill-opacity="0.22"
+        :stroke="color"
+        stroke-width="2.4"
+        stroke-linejoin="round"
+      />
+      <circle cx="12" cy="12" r="3.4" :fill="accent" />
+    </template>
+
+    <template v-else-if="name === 'flame' || name === 'fire'">
+      <path
+        d="M12.6 3.0C12.9 5.5 11.4 7.3 10.2 8.7C9.3 9.7 9.6 11.3 10.9 11.6C12.1 11.8 13.1 10.8 13.3 9.4C13.4 8.7 14.3 8.4 14.8 8.9C17.2 11.1 18.6 13.4 18.6 15.8C18.6 19.3 15.7 21.5 12.0 21.5C8.3 21.5 5.4 19.1 5.4 15.4C5.4 11.7 8.1 8.2 11.4 3.4C11.8 2.8 12.5 2.4 12.6 3.0Z"
+        :fill="color"
+      />
+      <path
+        d="M12.0 13.6C13.5 14.8 14.3 16.1 14.3 17.4C14.3 18.8 13.3 19.8 12.0 19.8C10.7 19.8 9.7 18.8 9.7 17.4C9.7 16.1 10.6 14.8 12.0 13.6Z"
+        :fill="accent"
+      />
+    </template>
     <template v-else>
       <circle cx="12" cy="12" r="8" :fill="color" fill-opacity="0.25" />
       <circle cx="12" cy="12" r="3.5" :fill="accent" />

@@ -33,6 +33,7 @@ import type {
   PurchasedSongItem,
   RankItem,
   SearchCategoryTab,
+  SearchDiscoveryData,
   Song,
   SongComment,
   SongDetailInfo,
@@ -71,8 +72,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     (activeTab.value === "discover" && discoverSubView.value !== "home") ||
     activeTab.value === "artist_detail" ||
     activeTab.value === "album_detail" ||
-    activeTab.value === "playlist_detail" ||
-    activeTab.value === "search"
+    activeTab.value === "playlist_detail"
   );
 
   // 心流舱专注统计与环境伴音协同
@@ -292,8 +292,9 @@ export const useAppStore = defineStore("breezeApp", () => {
     userPlaylists.value.find((p) => p.isLiked || p.title === "我喜欢")
   );
 
-  // ================= 4. 搜索与天际线指令舱状态 =================
+  // ================= 4. 独立搜索页（热搜探索 + 全量无上限结果）状态 =================
   const searchKeyword = ref<string>("");
+  const searchViewMode = ref<"landing" | "results">("landing");
   const searchSuggestions = ref<string[]>([]);
   const searchCategoryTab = ref<SearchCategoryTab>("all");
   const hotSearchKeywords = ref<string[]>([
@@ -308,6 +309,15 @@ export const useAppStore = defineStore("breezeApp", () => {
     "方大同",
     "YOASOBI",
   ]);
+  const searchDiscovery = ref<SearchDiscoveryData>({
+    hotSongs: [],
+    hotBoards: [],
+    hotArtists: [],
+  });
+  const isLoadingSearchDiscovery = ref(false);
+  const hotArtistCategory = ref<number>(0);
+  const isChangingHotArtistCat = ref(false);
+
   const searchHistory = ref<string[]>(
     JSON.parse(localStorage.getItem("bm_search_history") || "[]")
   );
@@ -315,7 +325,32 @@ export const useAppStore = defineStore("breezeApp", () => {
   const searchResultsPlaylists = ref<Playlist[]>([]);
   const searchResultsAlbums = ref<AlbumItem[]>([]);
   const searchResultsArtists = ref<FollowedArtist[]>([]);
+  const searchTotals = reactive({
+    songs: 0,
+    albums: 0,
+    artists: 0,
+    playlists: 0,
+  });
+  const searchPages = reactive({
+    songs: 1,
+    albums: 1,
+    artists: 1,
+    playlists: 1,
+  });
+  const searchHasMore = reactive({
+    songs: false,
+    albums: false,
+    artists: false,
+    playlists: false,
+  });
+  const isLoadingMoreSearch = reactive({
+    songs: false,
+    albums: false,
+    artists: false,
+    playlists: false,
+  });
   const isSearching = ref(false);
+  let activeSearchSeq = 0;
 
   let suggestDebounceTimer: number | null = null;
   watch(searchKeyword, (kw) => {
@@ -1912,10 +1947,13 @@ export const useAppStore = defineStore("breezeApp", () => {
     loadRankList();
     loadFmChannels();
     loadRecentHistory();
+    loadSearchDiscovery(false);
     kugouClient
       .getSearchHot()
       .then((kws) => {
-        if (kws.length > 0) hotSearchKeywords.value = kws;
+        if (kws.length > 0 && searchDiscovery.value.hotBoards.length === 0) {
+          hotSearchKeywords.value = kws;
+        }
       })
       .catch(() => {});
   }
@@ -1981,11 +2019,14 @@ export const useAppStore = defineStore("breezeApp", () => {
     try {
       const switched = await kugouClient.switchSavedAccount(userId);
       if (switched) {
+        sessionPlayedSongs = [];
+        recentHistorySongs.value = [];
         session.value = switched;
         isLoginModalOpen.value = false;
         notify(`已切换至账号「${switched.nickname}」`);
         await refreshAccountAndVip(false);
         await loadDailyRecommend();
+        loadSearchDiscovery(true);
       }
     } catch (e: any) {
       notify(`切换账号失败：${String(e)}`);
@@ -2310,11 +2351,80 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
+  let sessionPlayedSongs: Song[] = [];
+
+  function isSameHistoryTrack(a: Song, b: Song): boolean {
+    const ha = (a.hash || "").trim().toLowerCase();
+    const hb = (b.hash || "").trim().toLowerCase();
+    if (ha && hb && ha === hb) return true;
+    const aAid = Number(a.audioId) || 0;
+    const bAid = Number(b.audioId) || 0;
+    if (aAid > 0 && aAid === bAid) return true;
+    const aAlbumAid = Number(a.albumAudioId) || 0;
+    const bAlbumAid = Number(b.albumAudioId) || 0;
+    if (aAlbumAid > 0 && aAlbumAid === bAlbumAid) return true;
+    const ma = (a.mixSongId || "").trim();
+    const mb = (b.mixSongId || "").trim();
+    if (ma && ma !== "0" && ma === mb) return true;
+    const ia = (a.id || "").trim();
+    const ib = (b.id || "").trim();
+    if (ia && ib && ia === ib) return true;
+    return false;
+  }
+
+  function mergeHistoryTrack(base: Song, incoming: Song): Song {
+    return {
+      ...base,
+      ...incoming,
+      coverUrl: incoming.coverUrl || base.coverUrl || "",
+      album: incoming.album || base.album || "",
+      albumId: incoming.albumId || base.albumId || "",
+      artistId: incoming.artistId || base.artistId || "",
+    };
+  }
+
+  function syncRecentHistoryPlaylistView() {
+    if (selectedPlaylist.value?.id === "__recent_history__") {
+      playlistSongs.value = [...recentHistorySongs.value];
+      selectedPlaylist.value.trackCount = recentHistorySongs.value.length;
+      if (recentHistorySongs.value[0]?.coverUrl) {
+        selectedPlaylist.value.coverUrl = recentHistorySongs.value[0].coverUrl;
+      }
+    }
+  }
+
+  function recordSongToRecentHistory(song: Song) {
+    if (!song || (!song.hash && !song.id && !song.title)) return;
+    const prevInAll = recentHistorySongs.value.find((s) =>
+      isSameHistoryTrack(s, song)
+    );
+    const merged = prevInAll ? mergeHistoryTrack(prevInAll, song) : { ...song };
+    sessionPlayedSongs = [
+      merged,
+      ...sessionPlayedSongs.filter((s) => !isSameHistoryTrack(s, merged)),
+    ].slice(0, 200);
+    recentHistorySongs.value = [
+      merged,
+      ...recentHistorySongs.value.filter((s) => !isSameHistoryTrack(s, merged)),
+    ].slice(0, 200);
+    syncRecentHistoryPlaylistView();
+  }
+
   async function loadRecentHistory() {
     try {
       const list = await kugouClient.getRecentHistory();
       if (list.length > 0 || recentHistorySongs.value.length === 0) {
-        recentHistorySongs.value = list;
+        const merged: Song[] = [];
+        for (const item of [...sessionPlayedSongs, ...list]) {
+          const idx = merged.findIndex((m) => isSameHistoryTrack(m, item));
+          if (idx >= 0) {
+            merged[idx] = mergeHistoryTrack(item, merged[idx]);
+          } else if (merged.length < 200) {
+            merged.push(item);
+          }
+        }
+        recentHistorySongs.value = merged;
+        syncRecentHistoryPlaylistView();
       }
     } catch (e) {
       console.warn("loadRecentHistory error:", e);
@@ -3435,40 +3545,272 @@ export const useAppStore = defineStore("breezeApp", () => {
     isCommentsModalOpen.value = false;
   }
 
-  // ================= 10. 多维搜索执行 =================
+  // ================= 10. 独立搜索页探索与全量无上限多维搜索 =================
+  async function loadSearchDiscovery(force = false) {
+    if (
+      !force &&
+      (searchDiscovery.value.hotSongs.length > 0 ||
+        searchDiscovery.value.hotArtists.length > 0)
+    ) {
+      return;
+    }
+    if (isLoadingSearchDiscovery.value) return;
+    isLoadingSearchDiscovery.value = true;
+    try {
+      const data = await kugouClient.getSearchDiscovery(hotArtistCategory.value);
+      searchDiscovery.value = data;
+      if (data.hotBoards.length > 0 && data.hotBoards[0].entries.length > 0) {
+        hotSearchKeywords.value = data.hotBoards[0].entries
+          .map((e) => e.keyword)
+          .filter(Boolean)
+          .slice(0, 24);
+      }
+    } catch (e) {
+      console.warn("loadSearchDiscovery error:", e);
+    } finally {
+      isLoadingSearchDiscovery.value = false;
+    }
+  }
+
+  async function switchHotArtistCategory(category: number) {
+    if (hotArtistCategory.value === category && searchDiscovery.value.hotArtists.length > 0) {
+      return;
+    }
+    hotArtistCategory.value = category;
+    isChangingHotArtistCat.value = true;
+    try {
+      const artists = await kugouClient.getHotArtists(category, 24);
+      if (artists.length > 0) {
+        searchDiscovery.value = {
+          ...searchDiscovery.value,
+          hotArtists: artists,
+        };
+      }
+    } catch (e) {
+      console.warn("switchHotArtistCategory error:", e);
+    } finally {
+      isChangingHotArtistCat.value = false;
+    }
+  }
+
+  function openSearchLanding(clearInput = false) {
+    if (clearInput) {
+      searchKeyword.value = "";
+    }
+    searchSuggestions.value = [];
+    searchViewMode.value = "landing";
+    scrollStageToTop();
+    loadSearchDiscovery(false);
+  }
+
+  function buildSongSearchDedupKey(s: Song): string {
+    return `${(s.hash || "").toLowerCase()}_${Number(s.albumAudioId) || 0}_${s.albumId || ""}_${s.id || ""}_${s.title || ""}`;
+  }
+
   async function executeSearch(kw?: string) {
     const target = (kw !== undefined ? kw : searchKeyword.value).trim();
-    if (!target) return;
+    if (!target) {
+      openSearchLanding(false);
+      return;
+    }
+    const seq = ++activeSearchSeq;
     searchKeyword.value = target;
+    searchSuggestions.value = [];
     activeTab.value = "search";
+    searchViewMode.value = "results";
     isSearchPaletteOpen.value = false;
     isNowPlayingOpen.value = false;
+    scrollStageToTop();
 
     searchHistory.value = [
       target,
       ...searchHistory.value.filter((item) => item !== target),
-    ].slice(0, 14);
+    ].slice(0, 20);
     localStorage.setItem(
       "bm_search_history",
       JSON.stringify(searchHistory.value)
     );
 
+    searchPages.songs = 1;
+    searchPages.albums = 1;
+    searchPages.artists = 1;
+    searchPages.playlists = 1;
+    isLoadingMoreSearch.songs = false;
+    isLoadingMoreSearch.albums = false;
+    isLoadingMoreSearch.artists = false;
+    isLoadingMoreSearch.playlists = false;
+
     isSearching.value = true;
     try {
-      const [songs, playlists, albums, artists] = await Promise.all([
-        kugouClient.searchSongs(target, 1, 45).catch(() => []),
-        kugouClient.searchPlaylists(target).catch(() => []),
-        kugouClient.searchAlbums(target).catch(() => []),
-        kugouClient.searchArtists(target).catch(() => []),
+      const [songsRes, playlistsRes, albumsRes, artistsRes] = await Promise.all([
+        kugouClient.searchSongsPaged(target, 1, 30).catch(() => ({
+          items: [] as Song[],
+          total: 0,
+          page: 1,
+          pageSize: 30,
+          hasMore: false,
+        })),
+        kugouClient.searchPlaylistsPaged(target, 1, 30).catch(() => ({
+          items: [] as Playlist[],
+          total: 0,
+          page: 1,
+          pageSize: 30,
+          hasMore: false,
+        })),
+        kugouClient.searchAlbumsPaged(target, 1, 30).catch(() => ({
+          items: [] as AlbumItem[],
+          total: 0,
+          page: 1,
+          pageSize: 30,
+          hasMore: false,
+        })),
+        kugouClient.searchArtistsPaged(target, 1, 30).catch(() => ({
+          items: [] as FollowedArtist[],
+          total: 0,
+          page: 1,
+          pageSize: 30,
+          hasMore: false,
+        })),
       ]);
-      searchResultsSongs.value = songs;
-      searchResultsPlaylists.value = playlists;
-      searchResultsAlbums.value = albums;
-      searchResultsArtists.value = artists;
+      if (seq !== activeSearchSeq) return;
+
+      searchResultsSongs.value = songsRes.items;
+      searchTotals.songs = Math.max(songsRes.total || 0, songsRes.items.length);
+      searchHasMore.songs = Boolean(songsRes.hasMore);
+
+      searchResultsPlaylists.value = playlistsRes.items;
+      searchTotals.playlists = Math.max(
+        playlistsRes.total || 0,
+        playlistsRes.items.length
+      );
+      searchHasMore.playlists = Boolean(playlistsRes.hasMore);
+
+      searchResultsAlbums.value = albumsRes.items;
+      searchTotals.albums = Math.max(
+        albumsRes.total || 0,
+        albumsRes.items.length
+      );
+      searchHasMore.albums = Boolean(albumsRes.hasMore);
+
+      searchResultsArtists.value = artistsRes.items;
+      searchTotals.artists = Math.max(
+        artistsRes.total || 0,
+        artistsRes.items.length
+      );
+      searchHasMore.artists = Boolean(artistsRes.hasMore);
     } catch (e: any) {
-      notify(`搜索失败：${String(e)}`);
+      if (seq === activeSearchSeq) {
+        notify(`搜索失败：${String(e)}`);
+      }
     } finally {
-      isSearching.value = false;
+      if (seq === activeSearchSeq) {
+        isSearching.value = false;
+      }
+    }
+  }
+
+  async function loadMoreSearchCategory(
+    cat: "songs" | "albums" | "artists" | "playlists"
+  ) {
+    const kw = searchKeyword.value.trim();
+    if (
+      !kw ||
+      isSearching.value ||
+      !searchHasMore[cat] ||
+      isLoadingMoreSearch[cat]
+    ) {
+      return;
+    }
+    const seq = activeSearchSeq;
+    const nextPage = searchPages[cat] + 1;
+    isLoadingMoreSearch[cat] = true;
+    try {
+      if (cat === "songs") {
+        const res = await kugouClient.searchSongsPaged(kw, nextPage, 30);
+        if (seq !== activeSearchSeq) return;
+        const seen = new Set(
+          searchResultsSongs.value.map(buildSongSearchDedupKey)
+        );
+        const fresh = res.items.filter((s) => {
+          const k = buildSongSearchDedupKey(s);
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+        searchResultsSongs.value = [...searchResultsSongs.value, ...fresh];
+        searchPages.songs = nextPage;
+        searchTotals.songs = Math.max(
+          searchTotals.songs,
+          res.total || 0,
+          searchResultsSongs.value.length
+        );
+        searchHasMore.songs = res.items.length > 0 && Boolean(res.hasMore);
+      } else if (cat === "albums") {
+        const res = await kugouClient.searchAlbumsPaged(kw, nextPage, 30);
+        if (seq !== activeSearchSeq) return;
+        const seen = new Set(searchResultsAlbums.value.map((a) => a.albumId));
+        const fresh = res.items.filter((a) => {
+          if (!a.albumId || seen.has(a.albumId)) return false;
+          seen.add(a.albumId);
+          return true;
+        });
+        searchResultsAlbums.value = [...searchResultsAlbums.value, ...fresh];
+        searchPages.albums = nextPage;
+        searchTotals.albums = Math.max(
+          searchTotals.albums,
+          res.total || 0,
+          searchResultsAlbums.value.length
+        );
+        searchHasMore.albums = res.items.length > 0 && Boolean(res.hasMore);
+      } else if (cat === "artists") {
+        const res = await kugouClient.searchArtistsPaged(kw, nextPage, 30);
+        if (seq !== activeSearchSeq) return;
+        const seen = new Set(searchResultsArtists.value.map((a) => a.artistId));
+        const fresh = res.items.filter((a) => {
+          if (!a.artistId || seen.has(a.artistId)) return false;
+          seen.add(a.artistId);
+          return true;
+        });
+        searchResultsArtists.value = [...searchResultsArtists.value, ...fresh];
+        searchPages.artists = nextPage;
+        searchTotals.artists = Math.max(
+          searchTotals.artists,
+          res.total || 0,
+          searchResultsArtists.value.length
+        );
+        searchHasMore.artists = res.items.length > 0 && Boolean(res.hasMore);
+      } else if (cat === "playlists") {
+        const res = await kugouClient.searchPlaylistsPaged(kw, nextPage, 30);
+        if (seq !== activeSearchSeq) return;
+        const seen = new Set(
+          searchResultsPlaylists.value.map(
+            (p) => p.id || p.globalCollectionId
+          )
+        );
+        const fresh = res.items.filter((p) => {
+          const k = p.id || p.globalCollectionId;
+          if (!k || seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+        searchResultsPlaylists.value = [
+          ...searchResultsPlaylists.value,
+          ...fresh,
+        ];
+        searchPages.playlists = nextPage;
+        searchTotals.playlists = Math.max(
+          searchTotals.playlists,
+          res.total || 0,
+          searchResultsPlaylists.value.length
+        );
+        searchHasMore.playlists = res.items.length > 0 && Boolean(res.hasMore);
+      }
+    } catch (e) {
+      console.warn(`loadMoreSearchCategory(${cat}) error:`, e);
+    } finally {
+      if (seq === activeSearchSeq) {
+        isLoadingMoreSearch[cat] = false;
+      }
     }
   }
 
@@ -3521,10 +3863,7 @@ export const useAppStore = defineStore("breezeApp", () => {
       }
     }
 
-    recentHistorySongs.value = [
-      song,
-      ...recentHistorySongs.value.filter((s) => s.hash !== song.hash),
-    ].slice(0, 100);
+    recordSongToRecentHistory(song);
 
     await loadAndPlayCurrentSong(0);
   }
@@ -3534,6 +3873,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     if (!song) return;
 
     const reqId = ++activePlayRequestId;
+    recordSongToRecentHistory(song);
     isBuffering.value = true;
     currentPlaybackInfo.value = null;
     currentTrackPlayedAccumMs = 0;
@@ -3542,6 +3882,27 @@ export const useAppStore = defineStore("breezeApp", () => {
 
     loadLyricForSong(song);
     loadCommentsForSong(song, commentSortType.value);
+
+    if (!song.coverUrl) {
+      kugouClient
+        .getSongDetailInfo(song, preferredQuality.value)
+        .then((detail) => {
+          if (detail?.song?.coverUrl) {
+            song.coverUrl = detail.song.coverUrl;
+            if (!song.album && (detail.albumName || detail.song.album)) {
+              song.album = detail.albumName || detail.song.album;
+            }
+            if (!song.albumId && detail.song.albumId) {
+              song.albumId = detail.song.albumId;
+            }
+            recordSongToRecentHistory(song);
+            if (currentSong.value && isSameHistoryTrack(currentSong.value, song)) {
+              syncWindowsMediaSession(currentSong.value);
+            }
+          }
+        })
+        .catch(() => {});
+    }
 
     try {
       const pb = ktvAccompanimentMode.value
@@ -3554,6 +3915,7 @@ export const useAppStore = defineStore("breezeApp", () => {
       if (reqId !== activePlayRequestId) return;
 
       currentPlaybackInfo.value = pb;
+      recordSongToRecentHistory(song);
       // 优先使用 Rust 本地 HTTP Range 边听边存流媒体代理 (proxyUrl)，彻底杜绝酷狗 CDN 长连接静默断流
       const candidates = [pb.proxyUrl, pb.url, ...(pb.backupUrls || [])].filter(
         (u, idx, arr): u is string => Boolean(u) && arr.indexOf(u) === idx
@@ -3848,6 +4210,7 @@ export const useAppStore = defineStore("breezeApp", () => {
 
     if (fromAutoEnded && playMode.value === "repeat_one") {
       if (currentSong.value) {
+        recordSongToRecentHistory(currentSong.value);
         activeTelemetrySong = currentSong.value;
         currentTrackPlayedAccumMs = 0;
         kugouClient.reportPlaybackTelemetry(currentSong.value, true, 0).catch(() => {});
@@ -4161,25 +4524,30 @@ export const useAppStore = defineStore("breezeApp", () => {
     newSession: KugouSession,
     newProfile?: AccountProfile | null
   ) {
+    sessionPlayedSongs = [];
     session.value = newSession;
     if (newProfile) profile.value = newProfile;
     isLoginModalOpen.value = false;
     notify(`欢迎回来，${newSession.nickname}！`);
     await refreshAccountAndVip(false);
     await loadDailyRecommend();
+    loadSearchDiscovery(true);
   }
 
   async function logout() {
     await kugouClient.logoutAccount().catch(() => {});
+    sessionPlayedSongs = [];
     session.value = null;
     profile.value = null;
     vipStatus.value = null;
     userPlaylists.value = [];
     playlistSongs.value = [];
     likedSongs.value = [];
+    recentHistorySongs.value = [];
     followedArtists.value = [];
     purchasedAlbums.value = [];
     purchasedSongs.value = [];
+    loadRecentHistory();
     notify("已退出酷狗概念版账号");
   }
 
@@ -4374,14 +4742,23 @@ export const useAppStore = defineStore("breezeApp", () => {
     artistsOrderIds,
     purchasedOrderIds,
     searchKeyword,
+    searchViewMode,
     searchSuggestions,
     searchCategoryTab,
     hotSearchKeywords,
+    searchDiscovery,
+    isLoadingSearchDiscovery,
+    hotArtistCategory,
+    isChangingHotArtistCat,
     searchHistory,
     searchResultsSongs,
     searchResultsPlaylists,
     searchResultsAlbums,
     searchResultsArtists,
+    searchTotals,
+    searchPages,
+    searchHasMore,
+    isLoadingMoreSearch,
     isSearching,
     playQueue,
     recentPlayQueues,
@@ -4457,8 +4834,13 @@ export const useAppStore = defineStore("breezeApp", () => {
     reorderLibraryAssetList,
     openArtistDetail,
     openAlbumDetail,
+    loadSearchDiscovery,
+    switchHotArtistCategory,
+    openSearchLanding,
     executeSearch,
+    loadMoreSearchCategory,
     clearSearchHistory,
+    recordSongToRecentHistory,
     playSongFromList,
     togglePlayPause,
     toggleKtvAccompaniment,

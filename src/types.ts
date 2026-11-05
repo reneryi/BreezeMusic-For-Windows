@@ -181,6 +181,7 @@ export interface AccountProfile {
   userGrade: number;
   nextGrade?: number;
   rawServerDsec?: number;
+  liteServerDsec?: number;
   gradeBaseScore?: number;
   userScore?: number;
   nextLevelScore?: number;
@@ -287,6 +288,7 @@ export interface Song {
   climaxEndMs?: number;
   highestQuality: string;
   publishDate: string;
+  foldedVersions?: Song[];
 }
 
 export interface PlaybackResult {
@@ -612,4 +614,29 @@ export interface LyricData {
   isKrc: boolean;
   hasTranslation: boolean;
   hasPhonetic: boolean;
+}
+
+export interface PagedSearchResult<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+}
+
+export interface HotSearchEntry {
+  keyword: string;
+  reason: string;
+  iconType: number;
+}
+
+export interface HotSearchBoard {
+  name: string;
+  entries: HotSearchEntry[];
+}
+
+export interface SearchDiscoveryData {
+  hotSongs: Song[];
+  hotBoards: HotSearchBoard[];
+  hotArtists: FollowedArtist[];
 }

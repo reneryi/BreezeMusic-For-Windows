@@ -10892,3 +10892,108 @@ body.lib-dragging-cursor * {
   color: #38bdf8;
   border: 1px solid rgba(56, 189, 248, 0.32);
 }
+
+
+/* ============================================================================
+   16. 顶栏五合一精简图标胶囊导航与轻盈时段文案调优
+   ============================================================================ */
+.inflow-top-greeting-row {
+  max-width: calc(50vw - 180px);
+}
+
+@media (max-width: 1400px) {
+  .inflow-top-greeting-row {
+    max-width: calc(50vw - 165px);
+  }
+}
+
+.inflow-greeting-dot {
+  width: 8px;
+  height: 8px;
+  box-shadow: 0 0 10px rgba(43, 140, 255, 0.72);
+}
+
+.inflow-greeting-text {
+  font-size: clamp(15px, 1.15vw, 18px) !important;
+  font-weight: 400 !important;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--text-primary) 86%, var(--text-secondary));
+}
+
+.skyline-nav-capsule {
+  gap: 5px;
+  height: 46px;
+  padding: 4px 6px;
+}
+
+.skyline-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 700;
+  transition:
+    padding 0.26s cubic-bezier(0.22, 1, 0.36, 1),
+    background 0.22s ease,
+    color 0.2s ease,
+    transform 0.22s cubic-bezier(0.22, 1.25, 0.36, 1),
+    box-shadow 0.22s ease;
+}
+
+.skyline-nav-btn.icon-only {
+  width: 38px;
+  min-width: 38px;
+  padding: 0 !important;
+  gap: 0;
+  border-radius: 50%;
+}
+
+.skyline-nav-btn.icon-only:hover {
+  transform: translateY(-1px) scale(1.05);
+}
+
+.skyline-nav-btn.active {
+  padding: 0 16px !important;
+  gap: 7px;
+  background: linear-gradient(135deg, var(--primary), #19b5fe);
+  color: #ffffff !important;
+  box-shadow: 0 6px 18px rgba(43, 140, 255, 0.34);
+}
+
+.scheme-watercolor_light .skyline-nav-btn.active,
+.scheme-light .skyline-nav-btn.active {
+  background: linear-gradient(135deg, #2563eb, #0ea5e9);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.28);
+}
+
+.skyline-nav-label {
+  display: inline-block;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  animation: nav-label-reveal 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes nav-label-reveal {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}

@@ -10,6 +10,7 @@ import type {
   KugouSession,
   ListeningGradeSyncResult,
   LyricData,
+  PagedSearchResult,
   PhoneLoginOutcome,
   PlaybackResult,
   Playlist,
@@ -19,6 +20,7 @@ import type {
   QrPollResult,
   RankItem,
   ResolvedSongAlbumMeta,
+  SearchDiscoveryData,
   SharedMusicResolved,
   Song,
   SongAuthor,
@@ -135,6 +137,10 @@ export function normSong(s: Song): Song {
     authors: splitSongAuthors(s),
     climaxStartMs: s.climaxStartMs ?? 0,
     climaxEndMs: s.climaxEndMs ?? 0,
+    foldedVersions:
+      Array.isArray(s.foldedVersions) && s.foldedVersions.length > 0
+        ? s.foldedVersions.map(normSong)
+        : undefined,
   };
 }
 
@@ -359,15 +365,53 @@ export const kugouClient = {
   },
 
   /** 搜索单曲 */
-  async searchSongs(keyword: string, page = 1, pageSize = 40): Promise<Song[]> {
+  async searchSongs(keyword: string, page = 1, pageSize = 30): Promise<Song[]> {
     return normSongs(
       await invoke<Song[]>("search_songs", { keyword, page, pageSize })
     );
   },
 
+  /** 全量分页搜索单曲（返回官方真实 total 与折叠版本） */
+  async searchSongsPaged(
+    keyword: string,
+    page = 1,
+    pageSize = 30
+  ): Promise<PagedSearchResult<Song>> {
+    const res = await invoke<PagedSearchResult<Song>>("search_songs_paged_cmd", {
+      keyword,
+      page,
+      pageSize,
+    });
+    return {
+      ...res,
+      items: normSongs(res.items || []),
+    };
+  },
+
   /** 获取酷狗实时热搜榜关键词 */
   getSearchHot(): Promise<string[]> {
     return invoke<string[]>("get_search_hot");
+  },
+
+  /** 获取实时热门歌手榜单 (0=全部, 1=华语, 2=欧美, 3=日韩) */
+  async getHotArtists(category = 0, count = 24): Promise<FollowedArtist[]> {
+    const list = await invoke<FollowedArtist[]>("get_hot_artists_cmd", {
+      category,
+      count,
+    });
+    return (list || []).map(normArtist);
+  },
+
+  /** 获取独立搜索页探索聚合（实时热搜歌曲 + 多维热搜词榜 + 实时热门歌手） */
+  async getSearchDiscovery(artistCategory = 0): Promise<SearchDiscoveryData> {
+    const res = await invoke<SearchDiscoveryData>("get_search_discovery_cmd", {
+      artistCategory,
+    });
+    return {
+      hotSongs: normSongs(res.hotSongs || []),
+      hotBoards: res.hotBoards || [],
+      hotArtists: (res.hotArtists || []).map(normArtist),
+    };
   },
 
   /** 获取实时搜索联想建议词 (/v2/getSearchTip) */
@@ -389,9 +433,38 @@ export const kugouClient = {
     return (list || []).map(normPlaylist);
   },
 
+  /** 全量分页搜索歌单 */
+  async searchPlaylistsPaged(
+    keyword: string,
+    page = 1,
+    pageSize = 30
+  ): Promise<PagedSearchResult<Playlist>> {
+    const res = await invoke<PagedSearchResult<Playlist>>(
+      "search_playlists_paged_cmd",
+      { keyword, page, pageSize }
+    );
+    return {
+      ...res,
+      items: (res.items || []).map(normPlaylist),
+    };
+  },
+
   /** 搜索专辑 */
   searchAlbums(keyword: string, page = 1, pageSize = 30): Promise<AlbumItem[]> {
     return invoke<AlbumItem[]>("search_albums_cmd", {
+      keyword,
+      page,
+      pageSize,
+    });
+  },
+
+  /** 全量分页搜索专辑 */
+  searchAlbumsPaged(
+    keyword: string,
+    page = 1,
+    pageSize = 30
+  ): Promise<PagedSearchResult<AlbumItem>> {
+    return invoke<PagedSearchResult<AlbumItem>>("search_albums_paged_cmd", {
       keyword,
       page,
       pageSize,
@@ -402,7 +475,7 @@ export const kugouClient = {
   async searchArtists(
     keyword: string,
     page = 1,
-    pageSize = 24
+    pageSize = 30
   ): Promise<FollowedArtist[]> {
     const list = await invoke<FollowedArtist[]>("search_artists_cmd", {
       keyword,
@@ -410,6 +483,22 @@ export const kugouClient = {
       pageSize,
     });
     return (list || []).map(normArtist);
+  },
+
+  /** 全量分页搜索歌手 */
+  async searchArtistsPaged(
+    keyword: string,
+    page = 1,
+    pageSize = 30
+  ): Promise<PagedSearchResult<FollowedArtist>> {
+    const res = await invoke<PagedSearchResult<FollowedArtist>>(
+      "search_artists_paged_cmd",
+      { keyword, page, pageSize }
+    );
+    return {
+      ...res,
+      items: (res.items || []).map(normArtist),
+    };
   },
 
   /** 获取用户自建与收藏歌单列表 */

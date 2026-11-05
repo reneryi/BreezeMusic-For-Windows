@@ -219,17 +219,20 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
       target.tagName === "TEXTAREA" ||
       target.isContentEditable);
 
-  // Ctrl + K：快速聚焦搜索框
+  // Ctrl + K：快速进入独立搜索页并聚焦搜索框
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
-    const input = document.querySelector(".skyline-search-input") as HTMLInputElement | null;
-    if (input) {
-      input.focus();
-      input.select();
-    } else {
-      store.isNowPlayingOpen = false;
-      store.activeTab = "search";
-    }
+    store.isNowPlayingOpen = false;
+    store.activeTab = "search";
+    nextTick(() => {
+      const input = document.getElementById(
+        "independent-search-input"
+      ) as HTMLInputElement | null;
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    });
     return;
   }
 

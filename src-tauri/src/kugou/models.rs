@@ -125,6 +125,7 @@ pub struct AccountProfile {
     pub user_grade: i32,
     pub next_grade: i32,
     pub raw_server_dsec: i64,
+    pub lite_server_dsec: i64,
     pub grade_base_score: i64,
     pub user_score: i64,
     pub next_level_score: i64,
@@ -243,6 +244,8 @@ pub struct Song {
     pub is_hi_res: bool,
     pub highest_quality: String,
     pub publish_date: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folded_versions: Vec<Song>,
 }
 
 impl Song {
@@ -585,4 +588,38 @@ pub struct ListeningGradeSyncResult {
     pub cloud_confirmed: bool,
     pub message: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PagedSearchResult<T> {
+    pub items: Vec<T>,
+    pub total: u32,
+    pub page: u32,
+    pub page_size: u32,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HotSearchEntry {
+    pub keyword: String,
+    pub reason: String,
+    pub icon_type: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HotSearchBoard {
+    pub name: String,
+    pub entries: Vec<HotSearchEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SearchDiscoveryData {
+    pub hot_songs: Vec<Song>,
+    pub hot_boards: Vec<HotSearchBoard>,
+    pub hot_artists: Vec<FollowedArtist>,
+}
+
 

@@ -15,6 +15,12 @@ const daysInMonth = computed(() => {
   return new Date(currentYear, currentMonth, 0).getDate();
 });
 
+const weekHeaders = ["一", "二", "三", "四", "五", "六", "日"];
+const leadingBlanks = computed(() => {
+  const firstDayWeek = new Date(currentYear, currentMonth - 1, 1).getDay(); // 0=Sun..6=Sat
+  return firstDayWeek === 0 ? 6 : firstDayWeek - 1;
+});
+
 const calendarCells = computed(() => {
   const recs = store.vipStatus?.records || [];
   const cells: {
@@ -184,7 +190,21 @@ async function copyCred(label: string, val?: string) {
                 </span>
               </div>
 
-              <div class="cal-grid">
+              <div class="cal-grid" style="grid-template-columns: repeat(7, 1fr)">
+                <div
+                  v-for="wh in weekHeaders"
+                  :key="'wh_' + wh"
+                  class="cal-day-cell"
+                  style="opacity: 0.55; font-size: 11px; background: transparent; border: none"
+                >
+                  {{ wh }}
+                </div>
+                <div
+                  v-for="b in leadingBlanks"
+                  :key="'blank_' + b"
+                  class="cal-day-cell"
+                  style="visibility: hidden"
+                ></div>
                 <div
                   v-for="cell in calendarCells"
                   :key="cell.day"

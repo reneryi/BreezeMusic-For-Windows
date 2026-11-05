@@ -289,7 +289,21 @@
                   </span>
                 </div>
 
-                <div class="pvm-heatmap-grid">
+                <div class="pvm-heatmap-grid" style="grid-template-columns: repeat(7, 1fr)">
+                  <div
+                    v-for="wh in weekHeaders"
+                    :key="'wh_' + wh"
+                    class="pvm-hm-cell"
+                    style="opacity: 0.55; font-size: 10.5px; background: transparent; border: none"
+                  >
+                    {{ wh }}
+                  </div>
+                  <div
+                    v-for="b in leadingBlanks"
+                    :key="'blank_' + b"
+                    class="pvm-hm-cell"
+                    style="visibility: hidden"
+                  ></div>
                   <div
                     v-for="cell in calendarCells"
                     :key="cell.day"
@@ -406,6 +420,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore, type MainTab } from "../stores/appStore";
 import { kugouClient } from "../api/kugou";
 import PlumpIcon from "./PlumpIcon.vue";
@@ -564,6 +579,11 @@ const currentMonth = now.getMonth() + 1;
 const todayDay = now.getDate();
 
 const daysInMonth = computed(() => new Date(currentYear, currentMonth, 0).getDate());
+const weekHeaders = ["一", "二", "三", "四", "五", "六", "日"];
+const leadingBlanks = computed(() => {
+  const firstDayWeek = new Date(currentYear, currentMonth - 1, 1).getDay();
+  return firstDayWeek === 0 ? 6 : firstDayWeek - 1;
+});
 
 const calendarCells = computed(() => {
   const recs = store.vipStatus?.records || [];
@@ -605,7 +625,6 @@ function toggleColorScheme() {
 
 async function minimizeWin() {
   try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
     await getCurrentWindow().minimize();
   } catch {
     store.notify("浏览器预览模式：最小化窗口");
@@ -614,7 +633,6 @@ async function minimizeWin() {
 
 async function toggleMaximizeWin() {
   try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
     await getCurrentWindow().toggleMaximize();
   } catch {
     if (!document.fullscreenElement) {
@@ -627,7 +645,6 @@ async function toggleMaximizeWin() {
 
 async function closeWin() {
   try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
     if (store.closeToTray) {
       await getCurrentWindow().hide();
       store.notify("微风音乐已最小化至系统托盘");

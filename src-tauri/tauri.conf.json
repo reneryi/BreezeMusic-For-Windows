@@ -24,6 +24,24 @@
         "decorations": false,
         "transparent": true,
         "shadow": true
+      },
+      {
+        "label": "desktop_lyric",
+        "title": "微风桌面歌词",
+        "url": "index.html?window=desktop_lyric",
+        "width": 440,
+        "height": 118,
+        "minWidth": 320,
+        "minHeight": 84,
+        "resizable": false,
+        "fullscreen": false,
+        "center": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "visible": false
       }
     ],
     "security": {

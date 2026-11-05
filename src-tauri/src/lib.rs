@@ -2,18 +2,25 @@ pub mod kugou;
 
 use kugou::api::KugouApiService;
 use kugou::models::{
-    AccountProfile, AlbumItem, DownloadTaskResult, FmChannel, FollowedArtist, GatewayDiagResult,
-    KugouSession, LyricData, PhoneLoginOutcome, PlaybackResult, Playlist, PurchasedAlbumItem,
-    PurchasedSongItem, QrCodeSession, QrPollResult, RankItem, ResolvedSongAlbumMeta,
-    SharedMusicResolved, Song, SongComment, SongDetailInfo, VipStatusInfo, ViperEffectItem,
+    AccountProfile, AlbumItem, CacheDiskStats, DownloadTaskResult, FmChannel, FollowedArtist,
+    GatewayDiagResult, KugouSession, LyricData, PhoneLoginOutcome, PlaybackResult, Playlist,
+    PurchasedAlbumItem, PurchasedSongItem, QrCodeSession, QrPollResult, RankItem,
+    ResolvedSongAlbumMeta, SharedMusicResolved, Song, SongComment, SongDetailInfo, VipStatusInfo,
+    ViperEffectItem,
 };
 use kugou::store::AppStore;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::State;
+use tauri::{
+    menu::{MenuBuilder, MenuItemBuilder},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Emitter, LogicalSize, Manager, Size, State, WindowEvent,
+};
 
 pub struct AppState {
     pub api: Arc<KugouApiService>,
     pub store: Arc<AppStore>,
+    pub close_to_tray: Arc<AtomicBool>,
 }
 
 #[tauri::command]
@@ -105,8 +112,14 @@ async fn get_daily_recommend(state: State<'_, AppState>) -> Result<Vec<Song>, St
 }
 
 #[tauri::command]
-async fn get_personal_fm(state: State<'_, AppState>) -> Result<Vec<Song>, String> {
-    state.api.fetch_personal_fm().await
+async fn get_personal_fm(
+    state: State<'_, AppState>,
+    exclude_hashes: Option<Vec<String>>,
+) -> Result<Vec<Song>, String> {
+    state
+        .api
+        .fetch_personal_fm_with_excludes(exclude_hashes)
+        .await
 }
 
 #[tauri::command]
@@ -540,8 +553,60 @@ async fn resolve_song_accompaniment_cmd(
 async fn get_song_detail_info_cmd(
     state: State<'_, AppState>,
     song: Song,
+    preferred_quality: Option<String>,
 ) -> Result<SongDetailInfo, String> {
-    state.api.fetch_song_detail_info(&song).await
+    state
+        .api
+        .fetch_song_detail_info_with_quality(&song, preferred_quality.as_deref())
+        .await
+}
+
+#[tauri::command]
+async fn get_cache_stats_cmd(state: State<'_, AppState>) -> Result<CacheDiskStats, String> {
+    state.api.get_cache_stats()
+}
+
+#[tauri::command]
+async fn clear_cache_category_cmd(
+    state: State<'_, AppState>,
+    category: String,
+) -> Result<CacheDiskStats, String> {
+    state.api.clear_cache_category(&category)
+}
+
+#[tauri::command]
+async fn set_desktop_lyric_window_state_cmd(
+    app: AppHandle,
+    visible: bool,
+    locked: bool,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> Result<bool, String> {
+    if let Some(win) = app.get_webview_window("desktop_lyric") {
+        if let (Some(w), Some(h)) = (width, height) {
+            let clamped_w = w.clamp(340.0, 720.0);
+            let clamped_h = h.clamp(92.0, 220.0);
+            let _ = win.set_size(Size::Logical(LogicalSize::new(clamped_w, clamped_h)));
+        }
+        let _ = win.set_always_on_top(true);
+        let _ = win.set_ignore_cursor_events(locked);
+        if visible {
+            let _ = win.show();
+        } else {
+            let _ = win.hide();
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+#[tauri::command]
+async fn set_close_to_tray_cmd(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    state.close_to_tray.store(enabled, Ordering::Relaxed);
+    Ok(enabled)
 }
 
 #[tauri::command]
@@ -573,9 +638,105 @@ async fn get_song_lyric(state: State<'_, AppState>, song: Song) -> Result<LyricD
 pub fn run() {
     let store = Arc::new(AppStore::new());
     let api = Arc::new(KugouApiService::new(store.clone()));
+    let close_to_tray = Arc::new(AtomicBool::new(true));
+    let close_to_tray_for_event = close_to_tray.clone();
 
     tauri::Builder::default()
-        .manage(AppState { api, store })
+        .manage(AppState {
+            api,
+            store,
+            close_to_tray,
+        })
+        .setup(|app| {
+            let show_i = MenuItemBuilder::with_id("show", "显示主窗口").build(app)?;
+            let toggle_play_i =
+                MenuItemBuilder::with_id("toggle_play", "播放 / 暂停").build(app)?;
+            let prev_i = MenuItemBuilder::with_id("prev_song", "上一首").build(app)?;
+            let next_i = MenuItemBuilder::with_id("next_song", "下一首").build(app)?;
+            let desktop_lyric_i =
+                MenuItemBuilder::with_id("toggle_desktop_lyric", "开关桌面歌词").build(app)?;
+            let lyric_lock_i =
+                MenuItemBuilder::with_id("toggle_lyric_lock", "锁定 / 解锁桌面歌词").build(app)?;
+            let quit_i = MenuItemBuilder::with_id("quit", "退出微风音乐").build(app)?;
+
+            let menu = MenuBuilder::new(app)
+                .items(&[
+                    &show_i,
+                    &toggle_play_i,
+                    &prev_i,
+                    &next_i,
+                    &desktop_lyric_i,
+                    &lyric_lock_i,
+                    &quit_i,
+                ])
+                .build()?;
+
+            let mut tray_builder = TrayIconBuilder::with_id("main-tray")
+                .menu(&menu)
+                .tooltip("BreezeMusic 微风音乐 · 酷狗概念版")
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app_handle = tray.app_handle();
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .on_menu_event(|app_handle, event| match event.id().as_ref() {
+                    "show" => {
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "toggle_play" => {
+                        let _ = app_handle.emit("tray-action", "toggle_play");
+                    }
+                    "prev_song" => {
+                        let _ = app_handle.emit("tray-action", "prev_song");
+                    }
+                    "next_song" => {
+                        let _ = app_handle.emit("tray-action", "next_song");
+                    }
+                    "toggle_desktop_lyric" => {
+                        let _ = app_handle.emit("tray-action", "toggle_desktop_lyric");
+                    }
+                    "toggle_lyric_lock" => {
+                        let _ = app_handle.emit("tray-action", "toggle_lyric_lock");
+                    }
+                    "quit" => {
+                        app_handle.exit(0);
+                    }
+                    _ => {}
+                });
+
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+            let _ = tray_builder.build(app);
+            Ok(())
+        })
+        .on_window_event(move |window, event| {
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    if close_to_tray_for_event.load(Ordering::Relaxed) {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    } else {
+                        window.app_handle().exit(0);
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             init_app_state,
             get_saved_accounts_cmd,
@@ -635,6 +796,10 @@ pub fn run() {
             resolve_song_url,
             resolve_song_accompaniment_cmd,
             get_song_detail_info_cmd,
+            get_cache_stats_cmd,
+            clear_cache_category_cmd,
+            set_desktop_lyric_window_state_cmd,
+            set_close_to_tray_cmd,
             report_playback_telemetry_cmd,
             get_viper_effects_cmd,
             get_song_lyric,

@@ -268,6 +268,8 @@ impl Song {
 #[serde(rename_all = "camelCase")]
 pub struct PlaybackResult {
     pub url: String,
+    #[serde(default)]
+    pub backup_urls: Vec<String>,
     pub actual_quality: String,
     pub quality_label: String,
     pub quality_badge: String,
@@ -529,4 +531,16 @@ pub struct ResolvedSongAlbumMeta {
     pub cover_url: String,
     pub publish_date: String,
     pub company: String,
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CacheDiskStats {
+    pub audio_stream_mb: f64,
+    pub artwork_image_mb: f64,
+    pub playlist_snapshot_mb: f64,
+    pub lyric_and_url_mb: f64,
+    pub total_mb: f64,
+    pub cache_dir_path: String,
 }

@@ -292,18 +292,36 @@
 
           <div class="tuner-slider-row">
             <div class="tsr-label">
-              <span>空间混响湿度与纵深 (Reverb &amp; Stage Depth)</span>
-              <strong>{{ store.acousticField.reverbWetPercent }}%</strong>
+              <span>空间混响湿度与预延迟 ({{ store.acousticField.reverbWetPercent }}% / {{ store.acousticField.reverbPreDelayMs }}ms)</span>
+              <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer">
+                <input
+                  v-model="store.acousticField.bauerCrossfeed"
+                  type="checkbox"
+                  @change="enableAcousticAndSync"
+                />
+                <span>Bauer 双耳交叉馈送</span>
+              </label>
             </div>
-            <input
-              v-model.number="store.acousticField.reverbWetPercent"
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-              class="pb-volume-slider full"
-              @input="onReverbWetChange"
-            />
+            <div style="display: flex; gap: 10px">
+              <input
+                v-model.number="store.acousticField.reverbWetPercent"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                class="pb-volume-slider full"
+                @input="onReverbWetChange"
+              />
+              <input
+                v-model.number="store.acousticField.reverbPreDelayMs"
+                type="range"
+                min="0"
+                max="120"
+                step="2"
+                class="pb-volume-slider full"
+                @input="enableAcousticAndSync"
+              />
+            </div>
           </div>
 
           <div class="tuner-slider-row">

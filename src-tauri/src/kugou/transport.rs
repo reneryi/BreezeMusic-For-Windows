@@ -79,17 +79,22 @@ impl KugouTransport {
         Self { client }
     }
 
-    /// 通过轻量级 HTTP Range (bytes=0-511) 请求读取远程音频流前 512 字节，
+    /// 通过轻量级 HTTP Range (bytes=0-511 或扩大至 bytes=0-4095) 请求读取远程音频流前 N 字节，
     /// 用于 FLAC STREAMINFO / OGG Vorbis / MP3 硬件级真实采样率 (44.1/48/96/192kHz) 与位深 (16/24-bit) 探测
     pub async fn probe_stream_head_bytes(&self, url: &str) -> Option<Vec<u8>> {
+        self.probe_stream_head_bytes_range(url, 512).await
+    }
+
+    pub async fn probe_stream_head_bytes_range(&self, url: &str, max_bytes: usize) -> Option<Vec<u8>> {
         let trimmed = url.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || max_bytes < 12 {
             return None;
         }
+        let end_byte = max_bytes.saturating_sub(1);
         let resp = self
             .client
             .get(trimmed)
-            .header("Range", "bytes=0-511")
+            .header("Range", format!("bytes=0-{}", end_byte))
             .header(
                 "User-Agent",
                 "Android15-1070-11440-46-0-DiscoveryDRADProtocol-wifi",
@@ -104,7 +109,7 @@ impl KugouTransport {
         }
         let bytes = resp.bytes().await.ok()?;
         if bytes.len() >= 12 {
-            Some(bytes.iter().take(512).copied().collect())
+            Some(bytes.iter().take(max_bytes).copied().collect())
         } else {
             None
         }
@@ -337,55 +342,76 @@ impl KugouTransport {
         sign: bool,
         include_default_params: bool,
     ) -> Result<Vec<u8>, String> {
-        let now_sec = Utc::now().timestamp().to_string();
-        let mut params = BTreeMap::new();
-        if include_default_params {
-            params.insert("dfid".to_string(), device.dfid.clone());
-            params.insert("mid".to_string(), device.mid.clone());
-            params.insert("uuid".to_string(), "-".to_string());
-            params.insert("appid".to_string(), APP_ID.to_string());
-            params.insert("clientver".to_string(), CLIENT_VERSION.to_string());
-            params.insert("clienttime".to_string(), now_sec.clone());
-            if let Some(s) = session {
-                params.insert("token".to_string(), s.token.clone());
-                params.insert("userid".to_string(), s.user_id.clone());
+        let candidates = Self::build_candidate_endpoints(host, &headers);
+        let mut last_err = String::from("网络连接失败");
+
+        for (idx, (candidate_host, candidate_headers)) in candidates.iter().enumerate() {
+            let now_sec = Utc::now().timestamp().to_string();
+            let mut params = BTreeMap::new();
+            if include_default_params {
+                params.insert("dfid".to_string(), device.dfid.clone());
+                params.insert("mid".to_string(), device.mid.clone());
+                params.insert("uuid".to_string(), "-".to_string());
+                params.insert("appid".to_string(), APP_ID.to_string());
+                params.insert("clientver".to_string(), CLIENT_VERSION.to_string());
+                params.insert("clienttime".to_string(), now_sec.clone());
+                if let Some(s) = session {
+                    if !s.token.is_empty() {
+                        params.insert("token".to_string(), s.token.clone());
+                    }
+                    if !s.user_id.is_empty() && s.user_id != "0" {
+                        params.insert("userid".to_string(), s.user_id.clone());
+                    }
+                }
+            }
+            for (k, v) in &query {
+                params.insert(k.clone(), v.clone());
+            }
+            let payload = raw_body.clone().unwrap_or_default();
+            if sign {
+                let sig = signer::signature(&params, &payload, false);
+                params.insert("signature".to_string(), sig);
+            }
+
+            let full_url = format!(
+                "{}/{}",
+                candidate_host.trim_end_matches('/'),
+                path.trim_start_matches('/')
+            );
+            let mut req_builder = match method.to_uppercase().as_str() {
+                "POST" => self.client.post(&full_url),
+                _ => self.client.get(&full_url),
+            };
+            let query_vec: Vec<(&String, &String)> = params.iter().collect();
+            req_builder = req_builder
+                .query(&query_vec)
+                .header(
+                    "User-Agent",
+                    "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi",
+                )
+                .header("kg-rc", "1")
+                .header("kg-thash", "5d816a0")
+                .header("kg-rec", "1")
+                .header("kg-rf", "B9EDA08A64250DEFFBCADDEE00F8F25F");
+
+            for (k, v) in candidate_headers {
+                req_builder = req_builder.header(k, v);
+            }
+            if method.eq_ignore_ascii_case("POST") {
+                req_builder = req_builder.body(payload);
+            }
+
+            match req_builder.send().await {
+                Ok(resp) => match resp.bytes().await {
+                    Ok(bytes) => return Ok(bytes.to_vec()),
+                    Err(e) => last_err = e.to_string(),
+                },
+                Err(e) => last_err = e.to_string(),
+            }
+            if idx + 1 < candidates.len() {
+                tokio::time::sleep(Duration::from_millis(120 * (idx as u64 + 1))).await;
             }
         }
-        for (k, v) in query {
-            params.insert(k, v);
-        }
-        let payload = raw_body.unwrap_or_default();
-        if sign {
-            let sig = signer::signature(&params, &payload, false);
-            params.insert("signature".to_string(), sig);
-        }
-
-        let full_url = format!("{}/{}", host.trim_end_matches('/'), path.trim_start_matches('/'));
-        let mut req_builder = match method.to_uppercase().as_str() {
-            "POST" => self.client.post(&full_url),
-            _ => self.client.get(&full_url),
-        };
-        let query_vec: Vec<(&String, &String)> = params.iter().collect();
-        req_builder = req_builder
-            .query(&query_vec)
-            .header(
-                "User-Agent",
-                "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi",
-            )
-            .header("kg-rc", "1")
-            .header("kg-thash", "5d816a0")
-            .header("kg-rec", "1")
-            .header("kg-rf", "B9EDA08A64250DEFFBCADDEE00F8F25F");
-
-        for (k, v) in headers {
-            req_builder = req_builder.header(k, v);
-        }
-        if method.eq_ignore_ascii_case("POST") {
-            req_builder = req_builder.body(payload);
-        }
-
-        let resp = req_builder.send().await.map_err(|e| e.to_string())?;
-        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
-        Ok(bytes.to_vec())
+        Err(last_err)
     }
 }

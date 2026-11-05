@@ -330,11 +330,22 @@ fn embed_mp3_id3v23_metadata(path: &Path, meta: &AudioTagMetadata) -> Result<boo
         write_frame(b"TALB", &build_text_payload(meta.album.trim()));
     }
     if !meta.publish_date.trim().is_empty() {
-        let year: String = meta.publish_date.trim().chars().take(4).collect();
+        let trimmed_date = meta.publish_date.trim();
+        let year: String = trimmed_date.chars().take(4).collect();
         if year.len() == 4 && year.chars().all(|c| c.is_ascii_digit()) {
             write_frame(b"TYER", &build_text_payload(&year));
         }
-        write_frame(b"TDRC", &build_text_payload(meta.publish_date.trim()));
+        // ID3v2.3 标准使用 TDAT (DDMM 四位格式) 记录月日，而非 ID3v2.4 专属的 TDRC 帧
+        let digits_only: String = trimmed_date
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .collect();
+        if digits_only.len() >= 8 {
+            let mm = &digits_only[4..6];
+            let dd = &digits_only[6..8];
+            let tdat_val = format!("{}{}", dd, mm);
+            write_frame(b"TDAT", &build_text_payload(&tdat_val));
+        }
     }
 
     let mut comment_parts = Vec::new();

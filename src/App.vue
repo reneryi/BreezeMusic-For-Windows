@@ -1,24 +1,64 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, computed, ref, watch, nextTick } from "vue";
+import {
+  onMounted,
+  onBeforeUnmount,
+  computed,
+  ref,
+  watch,
+  nextTick,
+  defineAsyncComponent,
+} from "vue";
 import { useAppStore } from "./stores/appStore";
 import TitleBar from "./components/TitleBar.vue";
 import PlayerBar from "./components/PlayerBar.vue";
 import LoginModal from "./components/LoginModal.vue";
-import FocusPodModal from "./components/FocusPodModal.vue";
-import LyricPosterModal from "./components/LyricPosterModal.vue";
 import SongContextMenu from "./components/SongContextMenu.vue";
-import CommentsModal from "./components/CommentsModal.vue";
 import MultiArtistModal from "./components/MultiArtistModal.vue";
+import DesktopLyricWindow from "./components/DesktopLyricWindow.vue";
 import PlumpIcon from "./components/PlumpIcon.vue";
 import DiscoverView from "./views/DiscoverView.vue";
-import LibraryView from "./views/LibraryView.vue";
-import RadioView from "./views/RadioView.vue";
-import SearchPlaceholderView from "./views/SearchPlaceholderView.vue";
-import SettingsPlaceholderView from "./views/SettingsPlaceholderView.vue";
-import NowPlayingView from "./views/NowPlayingView.vue";
-import PlaylistDetailView from "./views/PlaylistDetailView.vue";
-import ArtistDetailView from "./views/ArtistDetailView.vue";
-import AlbumDetailView from "./views/AlbumDetailView.vue";
+
+const FocusPodModal = defineAsyncComponent(
+  () => import("./components/FocusPodModal.vue")
+);
+const LyricPosterModal = defineAsyncComponent(
+  () => import("./components/LyricPosterModal.vue")
+);
+const CommentsModal = defineAsyncComponent(
+  () => import("./components/CommentsModal.vue")
+);
+const LibraryView = defineAsyncComponent(
+  () => import("./views/LibraryView.vue")
+);
+const RadioView = defineAsyncComponent(
+  () => import("./views/RadioView.vue")
+);
+const SearchPlaceholderView = defineAsyncComponent(
+  () => import("./views/SearchPlaceholderView.vue")
+);
+const SettingsPlaceholderView = defineAsyncComponent(
+  () => import("./views/SettingsPlaceholderView.vue")
+);
+const NowPlayingView = defineAsyncComponent(
+  () => import("./views/NowPlayingView.vue")
+);
+const PlaylistDetailView = defineAsyncComponent(
+  () => import("./views/PlaylistDetailView.vue")
+);
+const ArtistDetailView = defineAsyncComponent(
+  () => import("./views/ArtistDetailView.vue")
+);
+const AlbumDetailView = defineAsyncComponent(
+  () => import("./views/AlbumDetailView.vue")
+);
+
+const isStandaloneDesktopLyricWindow =
+  typeof window !== "undefined" &&
+  window.location.search.includes("window=desktop_lyric");
+
+const isTauriRuntime =
+  typeof window !== "undefined" &&
+  ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
 
 const store = useAppStore();
 const stageViewportRef = ref<HTMLElement | null>(null);
@@ -40,7 +80,7 @@ function onDesktopLyricMouseDown(e: MouseEvent) {
 
   const onMove = (ev: MouseEvent) => {
     if (!isDraggingDesktopLyric.value) return;
-    const width = store.desktopLyricWidth || rect.width || 760;
+    const width = store.desktopLyricWidth || rect.width || 440;
     const height = rect.height || 100;
     const maxX = Math.max(12, window.innerWidth - width - 12);
     const maxY = Math.max(12, window.innerHeight - height - 12);
@@ -59,10 +99,10 @@ function onDesktopLyricMouseDown(e: MouseEvent) {
 }
 
 const desktopLyricPositionStyle = computed(() => {
-  const w = store.desktopLyricWidth || 760;
+  const w = store.desktopLyricWidth || 440;
   const base: Record<string, string> = {
     "--fdl-color": store.desktopLyricColor || "#00e5ff",
-    "--fdl-size": `${store.desktopLyricFontSize || 24}px`,
+    "--fdl-size": `${store.desktopLyricFontSize || 22}px`,
     width: `${w}px`,
     maxWidth: "calc(100vw - 24px)",
   };
@@ -248,6 +288,18 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
     return;
   }
 
+  // Ctrl + Shift + L：一键锁定 / 解锁桌面歌词（解决鼠标穿透锁定后快速解锁需求）
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "l") {
+    e.preventDefault();
+    store.desktopLyricLocked = !store.desktopLyricLocked;
+    store.notify(
+      store.desktopLyricLocked
+        ? "已锁定桌面歌词（开启鼠标穿透，按 Ctrl+Shift+L 可随时解锁）"
+        : "已解锁桌面歌词，现在可自由拖动与调节"
+    );
+    return;
+  }
+
   // Ctrl + Left / Right：上一曲 / 下一曲
   if ((e.ctrlKey || e.metaKey) && e.key === "ArrowLeft") {
     e.preventDefault();
@@ -273,8 +325,10 @@ async function copyShareCommand(song: any) {
 }
 
 onMounted(() => {
-  store.bootstrap();
-  window.addEventListener("keydown", handleGlobalKeyDown);
+  if (!isStandaloneDesktopLyricWindow) {
+    store.bootstrap();
+    window.addEventListener("keydown", handleGlobalKeyDown);
+  }
 });
 
 onBeforeUnmount(() => {
@@ -283,7 +337,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <DesktopLyricWindow v-if="isStandaloneDesktopLyricWindow" />
   <div
+    v-else
     class="app-root"
     :class="[
       `layout-${store.layoutMode}`,
@@ -425,10 +481,10 @@ onBeforeUnmount(() => {
         </main>
       </div>
 
-      <!-- 系统级悬浮桌面歌词舱（规定长度 + 屏幕内任意 2D 自由拖动 + KRC 逐字流光扫掠） -->
+      <!-- 浏览器预览回退桌面歌词舱（Tauri 桌面端由独立透明置顶窗口 desktop_lyric 渲染，避免双实例重叠） -->
       <transition name="pop-spring">
         <div
-          v-if="store.desktopLyricEnabled"
+          v-if="store.desktopLyricEnabled && !isTauriRuntime"
           ref="desktopLyricRef"
           class="floating-desktop-lyric-bar"
           :class="{
@@ -454,15 +510,15 @@ onBeforeUnmount(() => {
               </button>
               <button
                 class="fdl-icon-btn"
-                title="缩短桌面歌词规定长度 (-60px)"
-                @click.stop="store.desktopLyricWidth = Math.max(480, (store.desktopLyricWidth || 760) - 60)"
+                title="缩短桌面歌词规定长度 (-30px)"
+                @click.stop="store.desktopLyricWidth = Math.max(340, (store.desktopLyricWidth || 440) - 30)"
               >
                 W-
               </button>
               <button
                 class="fdl-icon-btn"
-                title="加长桌面歌词规定长度 (+60px)"
-                @click.stop="store.desktopLyricWidth = Math.min(1280, (store.desktopLyricWidth || 760) + 60)"
+                title="加长桌面歌词规定长度 (+30px)"
+                @click.stop="store.desktopLyricWidth = Math.min(720, (store.desktopLyricWidth || 440) + 30)"
               >
                 W+
               </button>

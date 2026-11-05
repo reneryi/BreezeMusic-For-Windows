@@ -774,6 +774,13 @@
           </button>
           <button
             class="ns-mode-pill"
+            :class="{ active: newSongSortMode === 'recommend' }"
+            @click="newSongSortMode = 'recommend'"
+          >
+            ✨ 官方推荐排序
+          </button>
+          <button
+            class="ns-mode-pill"
             :class="{ active: newSongSortMode === 'hot' }"
             @click="newSongSortMode = 'hot'"
           >
@@ -1584,15 +1591,15 @@ function scrollToCurrentPlayingRankSong() {
   }
 }
 
-// ==================== 新歌速递（严格涵盖四个分类：华语、欧美、日韩、粤语 + 7日发行审计与多维重设计排序） ====================
+// ==================== 新歌速递（严格涵盖四个分类：华语、欧美、韩国、日本 + 7日发行审计与多维重设计排序） ====================
 const newSongAreas = [
   { id: "CHINESE", label: "华语", color: "#2b8cff" },
   { id: "WESTERN", label: "欧美", color: "#ff6b6b" },
-  { id: "JPKR", label: "日韩", color: "#15c493" },
-  { id: "CANTON", label: "粤语", color: "#f5a623" },
+  { id: "KOREA", label: "韩国", color: "#15c493" },
+  { id: "JAPAN", label: "日本", color: "#f5a623" },
 ];
 
-const newSongSortMode = ref<"timeline" | "hot" | "quality" | "title_az" | "artist_az">("timeline");
+const newSongSortMode = ref<"timeline" | "recommend" | "hot" | "quality" | "title_az" | "artist_az">("timeline");
 const newSongOnlyLossless = ref(false);
 const newSongSelectedLetter = ref("ALL");
 
@@ -1616,14 +1623,12 @@ function extractFirstLetter(text: string): string {
   return "#";
 }
 
-function normalizeDateKey(raw: string, fallbackIndex: number): string {
+function normalizeDateKey(raw: string, _fallbackIndex: number): string {
   const cleaned = (raw || "").trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(cleaned)) {
     return cleaned.slice(0, 10);
   }
-  const offsetDays = Math.min(6, Math.floor(fallbackIndex / 5));
-  const d = new Date(Date.now() - offsetDays * 86400000);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return "近期首发";
 }
 
 function formatShortPublishDate(raw: string): string {
@@ -1699,6 +1704,17 @@ const availableNewSongLetters = computed(() => {
 
 const customSortedNewSongsFlat = computed(() => {
   const list = [...filteredNewSongsBase.value];
+  if (newSongSortMode.value === "recommend") {
+    return store.newSongs
+      .map((s, idx) => ({ ...s, publishDate: normalizeDateKey(s.publishDate, idx) }))
+      .filter((s) => {
+        if (newSongOnlyLossless.value && !(s.isHiRes || s.hasHiRes || s.isLossless || s.hasSq || s.isSq)) return false;
+        if (newSongSelectedLetter.value !== "ALL" && extractFirstLetter(s.title) !== newSongSelectedLetter.value) return false;
+        const kw = newSongSearchKw.value.trim().toLowerCase();
+        if (!kw) return true;
+        return s.title.toLowerCase().includes(kw) || s.artist.toLowerCase().includes(kw) || (s.album || "").toLowerCase().includes(kw);
+      });
+  }
   if (newSongSortMode.value === "hot") {
     return list;
   }
@@ -1724,7 +1740,8 @@ const groupedNewSongsByDate = computed(() => {
     if (!map.has(d)) map.set(d, []);
     map.get(d)!.push(s);
   }
-  const todayStr = normalizeDateKey("", 0);
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   return Array.from(map.entries()).map(([dateKey, songs]) => {
     const letters = Array.from(new Set(songs.map((s) => extractFirstLetter(s.title))));
     return {

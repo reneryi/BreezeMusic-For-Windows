@@ -129,6 +129,15 @@ const channels = ref<AmbientChannel[]>([
     volume: 0.24,
     filterFreq: 2400,
   },
+  {
+    id: "wind_chimes",
+    label: "微风林涛与风铃",
+    sub: "山林松涛呼吸与空灵高频泛音",
+    icon: "sparkle",
+    active: false,
+    volume: 0.26,
+    filterFreq: 3200,
+  },
 ]);
 
 const sceneMixPresets = [
@@ -237,6 +246,8 @@ function toggleAmbientChannel(ch: AmbientChannel) {
         env = 2.6;
       } else if (ch.id === "vinyl" && Math.random() < 0.0009) {
         env = 1.9;
+      } else if (ch.id === "wind_chimes") {
+        env = 0.6 + 0.4 * Math.sin((i / ctx.sampleRate) * Math.PI * 0.35);
       }
       output[i] = (b0 + b1 + b2 + white * 0.015) * 0.35 * env;
     }
@@ -388,7 +399,7 @@ onUnmounted(() => {
         <!-- 环境伴音智能协同开关与一键场景混音预设 -->
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex-wrap: wrap; gap: 8px">
           <div style="display: flex; align-items: center; gap: 10px">
-            <span class="cfg-label" style="margin-bottom: 0">4 路程序化环境白噪音混音矩阵</span>
+            <span class="cfg-label" style="margin-bottom: 0">5 路程序化环境白噪音混音矩阵</span>
             <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-secondary); cursor: pointer">
               <input v-model="store.ambientSyncWithMusic" type="checkbox" />
               <span>仅在播放音乐时伴音</span>

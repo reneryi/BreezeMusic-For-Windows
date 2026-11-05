@@ -27,6 +27,7 @@ export interface NavigationHistoryEntry {
   artistId?: string;
   albumId?: string;
   playlistId?: string;
+  scrollTop?: number;
   returnToNowPlaying?: boolean;
 }
 
@@ -285,6 +286,7 @@ export interface Song {
 
 export interface PlaybackResult {
   url: string;
+  backupUrls?: string[];
   actualQuality: string;
   matchedQuality?: string;
   qualityLabel: string;
@@ -522,7 +524,16 @@ export interface ResolvedSongAlbumMeta {
   company: string;
 }
 
-/** 12级封面动态取色分级调色板 (Upgraded 12-Grade Cover Tonal Palette) */
+export interface CacheDiskStats {
+  audioStreamMb: number;
+  artworkImageMb: number;
+  playlistSnapshotMb: number;
+  lyricAndUrlMb: number;
+  totalMb: number;
+  cacheDirPath: string;
+}
+
+/** 16级封面动态取色分级调色板 (Upgraded 16-Grade CIE L* Cover Tonal Palette) */
 export interface CoverColorGrades {
   c1: string;
   c2: string;
@@ -536,7 +547,14 @@ export interface CoverColorGrades {
   c10: string;
   c11: string;
   c12: string;
+  c13?: string;
+  c14?: string;
+  c15?: string;
+  c16?: string;
+  tones?: Record<number, string>;
   seedHex?: string;
+  secondaryHex?: string;
+  tertiaryHex?: string;
   hue?: number;
   saturation?: number;
   c1Primary?: string;

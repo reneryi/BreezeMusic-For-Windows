@@ -402,6 +402,28 @@ async function copyEnvDiagnostic() {
                 <span class="plump-slider"></span>
               </label>
             </div>
+
+            <div class="setting-toggle-line">
+              <div>
+                <div class="stl-title">
+                  跨曲平滑淡入淡出过渡 ({{
+                    store.crossfadeSeconds > 0
+                      ? `${store.crossfadeSeconds} 秒`
+                      : "已关闭"
+                  }})
+                </div>
+                <div class="stl-sub">
+                  在曲目临近尾声时自动平滑衰减音量并无缝渐入下一首曲目
+                </div>
+              </div>
+              <input
+                v-model.number="store.crossfadeSeconds"
+                type="range"
+                min="0"
+                max="8"
+                step="1"
+              />
+            </div>
           </section>
         </template>
 
@@ -424,26 +446,39 @@ async function copyEnvDiagnostic() {
 
             <div class="setting-toggle-line">
               <div>
+                <div class="stl-title">锁定桌面歌词（开启硬件级鼠标穿透）</div>
+                <div class="stl-sub">
+                  锁定后鼠标点击将直接穿透歌词框至底层窗口；可通过此开关、系统托盘菜单或快捷键 Ctrl + Shift + L 随时解锁
+                </div>
+              </div>
+              <label class="plump-switch">
+                <input v-model="store.desktopLyricLocked" type="checkbox" />
+                <span class="plump-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-toggle-line">
+              <div>
                 <div class="stl-title">桌面歌词规定长度 ({{ store.desktopLyricWidth }}px)</div>
                 <div class="stl-sub">
-                  自由设定桌面歌词悬浮条固定宽度 (480px ~ 1280px)，超出自动优雅截断不溢出
+                  默认宽度略大于屏幕宽度的五分之一 (~440px)，刚好容纳一句长歌词并在屏幕内自由拖动 (340px ~ 720px)
                 </div>
               </div>
               <div style="display: flex; align-items: center; gap: 10px">
                 <input
                   v-model.number="store.desktopLyricWidth"
                   type="range"
-                  min="480"
-                  max="1280"
-                  step="20"
+                  min="340"
+                  max="720"
+                  step="10"
                 />
                 <button
                   class="tonal-pill-btn sm"
                   @click="
                     store.desktopLyricX = null;
                     store.desktopLyricY = null;
-                    store.desktopLyricWidth = 760;
-                    store.notify('已重置桌面歌词位置与规定长度 (760px)');
+                    store.desktopLyricWidth = 440;
+                    store.notify('已重置桌面歌词位置与规定长度 (440px)');
                   "
                 >
                   重置位置
@@ -549,11 +584,36 @@ async function copyEnvDiagnostic() {
                 <span class="plump-slider"></span>
               </label>
             </div>
+
+            <div class="setting-toggle-line">
+              <div>
+                <div class="stl-title">播放音乐时保持屏幕常亮防休眠</div>
+                <div class="stl-sub">
+                  播放期间请求系统级屏幕唤醒锁 (WakeLock)，防止全屏歌词或心流专注时息屏锁屏
+                </div>
+              </div>
+              <label class="plump-switch">
+                <input v-model="store.keepScreenAwake" type="checkbox" />
+                <span class="plump-slider"></span>
+              </label>
+            </div>
           </section>
 
           <section class="settings-card-panel">
             <h3>桌面全局快捷键一览</h3>
             <div class="hotkey-grid">
+              <div class="hotkey-row">
+                <span>播放 / 暂停当前音乐</span>
+                <kbd>Space</kbd>
+              </div>
+              <div class="hotkey-row">
+                <span>切换上一曲 / 下一曲</span>
+                <kbd>Ctrl + ← / →</kbd>
+              </div>
+              <div class="hotkey-row">
+                <span>锁定 / 解锁桌面歌词（鼠标穿透开关）</span>
+                <kbd>Ctrl + Shift + L</kbd>
+              </div>
               <div class="hotkey-row">
                 <span>呼出 / 收起天际线搜索指令舱</span>
                 <kbd>Ctrl + K</kbd>
@@ -577,10 +637,22 @@ async function copyEnvDiagnostic() {
         <!-- 5. 存储缓存与功能管控（含合规隐藏式下载解锁开关） -->
         <template v-else-if="activeCategory === 'storage_privacy'">
           <section class="settings-card-panel">
-            <h3>四维存储缓存明细与独立清理</h3>
-            <p class="panel-desc">
-              对齐 Android 端 AudioCacheManager 四维分项统计，精准清理不伤账号配置
-            </p>
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px">
+              <div>
+                <h3>四维存储缓存明细与独立清理</h3>
+                <p class="panel-desc" style="margin-bottom: 0">
+                  对齐 Android 端 AudioCacheManager 四维真实磁盘统计，精准清理不伤账号配置
+                </p>
+              </div>
+              <div style="display: flex; gap: 8px">
+                <button class="tonal-pill-btn sm" @click="store.refreshCacheStats()">
+                  刷新统计
+                </button>
+                <button class="tonal-pill-btn sm" @click="store.clearCacheCategory('all')">
+                  一键清理全部
+                </button>
+              </div>
+            </div>
             <div class="cache-grid">
               <div class="cache-item-card">
                 <div>

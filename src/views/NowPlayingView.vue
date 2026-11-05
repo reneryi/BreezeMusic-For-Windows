@@ -414,6 +414,10 @@ async function handleSendComment() {
       '--dyn-c10': store.coverColorGrades.c10,
       '--dyn-c11': store.coverColorGrades.c11,
       '--dyn-c12': store.coverColorGrades.c12,
+      '--dyn-c13': store.coverColorGrades.c13,
+      '--dyn-c14': store.coverColorGrades.c14,
+      '--dyn-c15': store.coverColorGrades.c15,
+      '--dyn-c16': store.coverColorGrades.c16,
       '--halo-scale': 1 + (avgEnergy / 100) * 0.24,
       '--bass-scale': 1 + (store.rhythmTelemetry?.bassEnergy || 0) * 0.32,
       '--mid-scale': 1 + (store.rhythmTelemetry?.midVocalEnergy || 0) * 0.24,
@@ -1044,15 +1048,15 @@ async function handleSendComment() {
             </button>
           </div>
 
-          <div class="cfg-label mt-14">当前专辑封面 12 级全色阶流体取色矩阵 (CIE L* 色相直方图提取)</div>
-          <div style="display: grid; grid-template-columns: repeat(12, 1fr); gap: 6px; margin-top: 6px">
+          <div class="cfg-label mt-14">当前专辑封面 16 级全色阶流体取色矩阵 (24-bin HSV 直方图 + CIE L* 色调映射)</div>
+          <div style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin-top: 6px">
             <div
               v-for="(hex, key) in store.coverColorGrades"
               :key="key"
               :style="{
                 height: '26px',
                 borderRadius: '6px',
-                background: hex,
+                background: String(hex || '#10243d'),
                 border: '1px solid rgba(255,255,255,0.16)',
                 display: 'flex',
                 alignItems: 'center',

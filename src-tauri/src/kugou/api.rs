@@ -5,8 +5,8 @@ use crate::kugou::models::{
     AccountProfile, AlbumItem, AudioQuality, DownloadTaskResult, FmChannel, FollowedArtist,
     GatewayDiagResult, KugouSession, LoginCandidate, LyricData, PhoneLoginOutcome, PlaybackResult,
     Playlist, PurchasedAlbumItem, PurchasedSongItem, QrCodeSession, QrPollResult, QuotedReplyHop,
-    RankItem, ResolvedSongAlbumMeta, SharedMusicResolved, Song, SongAuthor, SongComment,
-    SongDetailInfo, VipDayRecord, VipStatusInfo, ViperEffectItem,
+    CacheDiskStats, RankItem, ResolvedSongAlbumMeta, SharedMusicResolved, Song, SongAuthor,
+    SongComment, SongDetailInfo, VipDayRecord, VipStatusInfo, ViperEffectItem,
 };
 use crate::kugou::signer::{self, ANDROID_SALT, APP_ID, CLIENT_VERSION};
 use crate::kugou::store::AppStore;
@@ -146,20 +146,27 @@ impl KugouApiService {
         Ok(fallback_dfid)
     }
 
-    /// 2. 发送手机短信验证码 (对齐 captcha_sent.js -> /v7/send_mobile_code)
+    /// 2. 发送手机短信验证码 (对齐 MakcRe/KuGouMusicApi captcha_sent.js -> /v7/send_mobile_code)
     pub async fn send_mobile_code(&self, mobile: &str) -> Result<String, String> {
         let trimmed = mobile.trim();
         if trimmed.len() != 11 || !trimmed.starts_with('1') {
             return Err("请输入有效的 11 位中国大陆手机号".to_string());
         }
         let mut dev = self.store.device();
-        dev.dfid = "-".to_string();
+        if dev.dfid.trim().is_empty() {
+            dev.dfid = "-".to_string();
+        }
+        let now_ms = Utc::now().timestamp_millis();
+        let now_sec = (now_ms / 1000).to_string();
 
         let body = json!({
             "businessid": 5,
             "mobile": trimmed,
             "plat": 3
         });
+
+        let mut query = HashMap::new();
+        query.insert("clienttime".to_string(), now_sec);
 
         let mut headers = HashMap::new();
         headers.insert("x-router".to_string(), "login.user.kugou.com".to_string());
@@ -169,9 +176,9 @@ impl KugouApiService {
                 "/v7/send_mobile_code",
                 &dev,
                 None,
-                HashMap::new(),
+                query,
                 Some(body),
-                "http://login.user.kugou.com",
+                "https://loginserviceretry.kugou.com",
                 "POST",
                 false,
                 headers,
@@ -184,7 +191,7 @@ impl KugouApiService {
         Ok("验证码已发送，请注意查收短信".to_string())
     }
 
-    /// 3. 手机短信验证码登录 (对齐 login_cellphone.js -> /v7/login_by_verifycode)
+    /// 3. 手机短信验证码登录 (对齐 MakcRe/KuGouMusicApi login_cellphone.js -> /v7/login_by_verifycode)
     pub async fn login_by_phone(
         &self,
         mobile: &str,
@@ -194,6 +201,7 @@ impl KugouApiService {
         let mobile = mobile.trim();
         let code = code.trim();
         let now_ms = Utc::now().timestamp_millis();
+        let now_sec = (now_ms / 1000).to_string();
         let dev = self.store.device();
 
         let plain_params = json!({
@@ -236,6 +244,10 @@ impl KugouApiService {
             }
         }
 
+        // 显式锁定 query 中的 clienttime 与 body_obj 的 clienttime_ms / 1000 完全同步，防止跨秒重试导致签名时间戳偏移
+        let mut login_query = HashMap::new();
+        login_query.insert("clienttime".to_string(), now_sec);
+
         let mut headers = HashMap::new();
         headers.insert("support-calm".to_string(), "1".to_string());
         headers.insert("x-router".to_string(), "login.user.kugou.com".to_string());
@@ -250,7 +262,7 @@ impl KugouApiService {
                 "/v7/login_by_verifycode",
                 &dev,
                 None,
-                HashMap::new(),
+                login_query.clone(),
                 Some(body_obj.clone()),
                 "https://loginserviceretry.kugou.com",
                 "POST",
@@ -268,7 +280,7 @@ impl KugouApiService {
                         "/v7/login_by_ipv4",
                         &dev,
                         None,
-                        HashMap::new(),
+                        login_query,
                         Some(body_obj),
                         "http://login.user.kugou.com",
                         "POST",
@@ -647,14 +659,8 @@ impl KugouApiService {
     }
 
     /// 对齐 Android 端 MusicRepository.resolveStandardClientLocalDiffSec(userId, rawServerSeconds)
-    fn resolve_standard_client_local_diff_sec(user_id: &str, raw_server_seconds: i64) -> i64 {
-        if raw_server_seconds <= 0 {
-            return 0;
-        }
-        match user_id {
-            "874555157" => 16_380, // 273 * 60s 对齐《酷狗音乐》本地缓存补偿值
-            _ => 0,
-        }
+    fn resolve_standard_client_local_diff_sec(_user_id: &str, _raw_server_seconds: i64) -> i64 {
+        0
     }
 
     /// 6. 获取当前登录账号详细资料、权威听歌时长 (d_sec) 与 VIP 状态
@@ -1212,9 +1218,30 @@ impl KugouApiService {
                 .get("list")
                 .and_then(|v| v.as_array())
                 .or_else(|| rec_resp.data().get("records").and_then(|v| v.as_array()))
+                .or_else(|| rec_resp.data().get("day_list").and_then(|v| v.as_array()))
                 .or_else(|| rec_resp.data().as_array());
             if let Some(list) = list_opt {
                 for r in list {
+                    if let Some(day_str) = r.as_str() {
+                        let day = Self::normalize_vip_record_day(day_str);
+                        if !day.is_empty() {
+                            if day.starts_with(current_ym_prefix) {
+                                seen_month_days.insert(day.clone());
+                            }
+                            if day == today_str {
+                                today_claimed = true;
+                            }
+                            records_map.insert(
+                                day.clone(),
+                                VipDayRecord {
+                                    day,
+                                    received: true,
+                                    vip_type: if svip_active { "svip".to_string() } else { "tvip".to_string() },
+                                },
+                            );
+                        }
+                        continue;
+                    }
                     let raw_day = {
                         let d = Self::val_str(r, "day");
                         if !d.is_empty() {
@@ -1228,10 +1255,12 @@ impl KugouApiService {
                     if day.is_empty() {
                         continue;
                     }
-                    let received = match r.get("receive_vip") {
+                    let received = match r.get("receive_vip").or_else(|| r.get("is_receive")).or_else(|| r.get("status")) {
                         Some(v) => Self::val_i64(r, "receive_vip").unwrap_or(0) == 1
+                            || Self::val_i64(r, "is_receive").unwrap_or(0) == 1
+                            || Self::val_i64(r, "status").unwrap_or(0) == 1
                             || v.as_bool().unwrap_or(false),
-                        None => true,
+                        None => !Self::val_str(r, "receive_time").is_empty() || !Self::val_str(r, "receive_day").is_empty(),
                     };
                     let raw_vtype = Self::val_str(r, "vip_type").to_lowercase();
                     let vip_type = if raw_vtype.contains("svip") || raw_vtype == "2" {
@@ -1405,7 +1434,7 @@ impl KugouApiService {
                 latest_status = rechecked;
             }
         }
-        if !latest_status.today_claimed {
+        if direct_ok && !latest_status.today_claimed {
             latest_status.today_claimed = true;
             if !latest_status.records.iter().any(|r| r.day == today_str && r.received) {
                 latest_status.records.push(VipDayRecord {
@@ -1529,6 +1558,13 @@ impl KugouApiService {
 
     /// 10. 猜你喜欢 · 私人随心听 FM (对齐 Android MusicRepository.personalFm 5 路推荐引擎 + 口味种子 + 换批去重游标)
     pub async fn fetch_personal_fm(&self) -> Result<Vec<Song>, String> {
+        self.fetch_personal_fm_with_excludes(None).await
+    }
+
+    pub async fn fetch_personal_fm_with_excludes(
+        &self,
+        exclude_hashes: Option<Vec<String>>,
+    ) -> Result<Vec<Song>, String> {
         let session = self.store.session();
         let dev = self.store.device();
         let now_sec = Utc::now().timestamp();
@@ -1562,6 +1598,14 @@ impl KugouApiService {
             .lock()
             .map(|g| g.clone())
             .unwrap_or_default();
+        if let Some(ex_list) = exclude_hashes {
+            for h in ex_list {
+                let clean = h.trim().to_lowercase();
+                if !clean.is_empty() {
+                    seen_global.insert(clean);
+                }
+            }
+        }
         if seen_global.len() > 240 {
             seen_global.clear();
             if let Ok(mut g) = self.seen_personal_fm_hashes.lock() {
@@ -1816,10 +1860,13 @@ impl KugouApiService {
                 (21608, 31308),
                 (21609, 31310),
                 (21610, 31311),
+                (21611, 31312),
                 (21611, 31313),
             ],
             "WESTERN" | "EUROPE_AMERICA" | "21609" => vec![(21609, 31310)],
-            "JPKR" | "JAPAN_KOREA" | "21610" => vec![(21610, 31311)],
+            "KOREA" | "KR" | "31311" => vec![(21610, 31311)],
+            "JAPAN" | "JP" | "31312" => vec![(21610, 31312)],
+            "JPKR" | "JAPAN_KOREA" | "21610" => vec![(21610, 31311), (21610, 31312)],
             "CANTON" | "CANTONESE" | "21611" => vec![(21611, 31313)],
             _ => vec![(21608, 31308)],
         };
@@ -1903,42 +1950,35 @@ impl KugouApiService {
             .to_string();
         let today_str = today_date.format("%Y-%m-%d").to_string();
 
-        // 优先筛选最近一周（7天内）正式发布的歌曲；若某分站（如粤语）当周新发不足 12 首，平滑扩充至 14 天内新歌并限制在最近 7 天窗口展示
+        // 严格筛选最近一周（7天内）正式发布的歌曲，绝不篡改或伪造旧歌发行日期
         let mut strictly_7d: Vec<Song> = songs
             .iter()
-            .filter(|s| s.publish_date >= cutoff_7d && s.publish_date <= today_str)
+            .filter(|s| !s.publish_date.is_empty() && s.publish_date >= cutoff_7d && s.publish_date <= today_str)
             .cloned()
             .collect();
 
-        if strictly_7d.len() < 15 {
+        if strictly_7d.len() < 12 {
             for s in &songs {
                 if strictly_7d.len() >= 36 {
                     break;
                 }
-                if !strictly_7d.iter().any(|e| e.hash == s.hash) && s.publish_date >= cutoff_14d {
-                    let mut clamped = s.clone();
-                    if clamped.publish_date < cutoff_7d {
-                        clamped.publish_date = cutoff_7d.clone();
-                    }
-                    strictly_7d.push(clamped);
+                if !strictly_7d.iter().any(|e| e.hash == s.hash)
+                    && !s.publish_date.is_empty()
+                    && s.publish_date >= cutoff_14d
+                    && s.publish_date <= today_str
+                {
+                    strictly_7d.push(s.clone());
                 }
             }
         }
 
-        let mut final_list = if strictly_7d.len() >= 8 {
+        let mut final_list = if !strictly_7d.is_empty() {
             strictly_7d
         } else {
             songs
                 .into_iter()
-                .take(40)
-                .enumerate()
-                .map(|(idx, mut s)| {
-                    if s.publish_date.is_empty() || s.publish_date < cutoff_7d {
-                        let d = today_date - chrono::Duration::days((idx % 7) as i64);
-                        s.publish_date = d.format("%Y-%m-%d").to_string();
-                    }
-                    s
-                })
+                .filter(|s| !s.publish_date.is_empty())
+                .take(36)
                 .collect()
         };
 
@@ -2204,6 +2244,43 @@ impl KugouApiService {
                 .position(|&pid| pid == r.rank_id)
                 .unwrap_or(999)
         });
+
+        // 并发补全缺失 Top 3 歌曲预览的榜单，确保任意榜单卡片展示真实实时前三名
+        let missing_indices: Vec<(usize, i32)> = ranks
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.top_songs_preview.is_empty())
+            .take(16)
+            .map(|(idx, r)| (idx, r.rank_id))
+            .collect();
+        if !missing_indices.is_empty() {
+            for chunk in missing_indices.chunks(6) {
+                let mut futs = Vec::new();
+                for &(idx, rid) in chunk {
+                    futs.push(async move {
+                        let songs = self.fetch_rank_songs_single_page(rid, 1, 5, 0).await;
+                        (idx, songs)
+                    });
+                }
+                let results = futures_join_vec(futs).await;
+                for (idx, songs) in results {
+                    if !songs.is_empty() {
+                        ranks[idx].top_songs_preview = songs
+                            .into_iter()
+                            .take(3)
+                            .enumerate()
+                            .map(|(i, s)| {
+                                if !s.artist.is_empty() && s.artist != "未知歌手" {
+                                    format!("{}. {} - {}", i + 1, s.title, s.artist)
+                                } else {
+                                    format!("{}. {}", i + 1, s.title)
+                                }
+                            })
+                            .collect();
+                    }
+                }
+            }
+        }
 
         Ok(ranks)
     }
@@ -2761,11 +2838,12 @@ impl KugouApiService {
             .require_success()?;
 
         let mut playlists = Vec::new();
+        let mut legacy_default_count: i32 = 0;
+        let mut legacy_default_gid = String::new();
+        let mut legacy_default_list_id: i64 = 0;
         if let Some(info_arr) = resp.data().get("info").and_then(|v| v.as_array()) {
             for item in info_arr {
-                if Self::val_i64(item, "is_def") == Some(1) {
-                    continue;
-                }
+                let is_def_val = Self::val_i64(item, "is_def").unwrap_or(0);
                 let name = {
                     let n = Self::val_str(item, "name");
                     if !n.is_empty() {
@@ -2779,7 +2857,13 @@ impl KugouApiService {
                         }
                     }
                 };
-                if name.trim() == "默认收藏" {
+                if is_def_val == 1 || name.trim() == "默认收藏" {
+                    legacy_default_count += Self::val_i64(item, "count").unwrap_or(0) as i32;
+                    let g = Self::val_str(item, "global_collection_id");
+                    if !g.is_empty() {
+                        legacy_default_gid = g;
+                    }
+                    legacy_default_list_id = Self::val_i64(item, "listid").unwrap_or(0);
                     continue;
                 }
                 let list_id = Self::val_i64(item, "listid").unwrap_or(0);
@@ -2902,6 +2986,35 @@ impl KugouApiService {
             }
         }
 
+        if legacy_default_count > 0 {
+            if let Some(liked_pl) = playlists.iter_mut().find(|p| p.is_liked || p.title == "我喜欢") {
+                if liked_pl.track_count == 0 {
+                    liked_pl.track_count = legacy_default_count;
+                    if liked_pl.global_collection_id.is_empty() && !legacy_default_gid.is_empty() {
+                        liked_pl.global_collection_id = legacy_default_gid;
+                    }
+                }
+            } else if !legacy_default_gid.is_empty() {
+                playlists.insert(
+                    0,
+                    Playlist {
+                        id: legacy_default_gid.clone(),
+                        title: "我喜欢".to_string(),
+                        cover_url: String::new(),
+                        track_count: legacy_default_count,
+                        description: "我喜欢的音乐".to_string(),
+                        creator_name: session.nickname.clone(),
+                        is_created_by_me: true,
+                        is_favorite: false,
+                        is_liked: true,
+                        list_id: legacy_default_list_id,
+                        global_collection_id: legacy_default_gid,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+
         Ok(playlists)
     }
 
@@ -2961,9 +3074,8 @@ impl KugouApiService {
                 break;
             }
             let raw_len = raw_batch.len();
-            let batch = self.enrich_songs_privilege_lite(raw_batch).await;
             let mut added = 0usize;
-            for song in batch {
+            for song in raw_batch {
                 let k = if !song.hash.is_empty() {
                     song.hash.to_lowercase()
                 } else {
@@ -2987,7 +3099,7 @@ impl KugouApiService {
         }
 
         if !all_songs.is_empty() {
-            return Ok(all_songs);
+            return Ok(self.enrich_songs_privilege_lite(all_songs).await);
         }
 
         // 备用通道 1：/v4/get_other_list_file 多页拉取
@@ -3024,9 +3136,8 @@ impl KugouApiService {
                 break;
             }
             let raw_len = raw_batch.len();
-            let batch = self.enrich_songs_privilege_lite(raw_batch).await;
             let mut added = 0usize;
-            for song in batch {
+            for song in raw_batch {
                 let k = if !song.hash.is_empty() {
                     song.hash.to_lowercase()
                 } else {
@@ -3043,7 +3154,7 @@ impl KugouApiService {
         }
 
         if !all_songs.is_empty() {
-            return Ok(all_songs);
+            return Ok(self.enrich_songs_privilege_lite(all_songs).await);
         }
 
         // 备用通道 2：CDN 歌单接口 (/api/v3/special/song)
@@ -3089,9 +3200,8 @@ impl KugouApiService {
                     break;
                 }
                 let raw_len = raw_batch.len();
-                let batch = self.enrich_songs_privilege_lite(raw_batch).await;
                 let mut added = 0usize;
-                for song in batch {
+                for song in raw_batch {
                     let k = if !song.hash.is_empty() {
                         song.hash.to_lowercase()
                     } else {
@@ -3108,7 +3218,7 @@ impl KugouApiService {
             }
         }
 
-        Ok(all_songs)
+        Ok(self.enrich_songs_privilege_lite(all_songs).await)
     }
 
     /// 17. 概念版音源规格补全 (/v2/get_res_privilege/lite)
@@ -3344,17 +3454,13 @@ impl KugouApiService {
                                     // 跳过正统酷狗 suvip 专属蝰蛇合成流
                                 }
                                 (6, _) | (_, "high" | "res" | "hires") => {
-                                    if sz == 0 || sz >= 7_500_000 {
+                                    if rg_hash != s.hash_flac && rg_hash != s.hash320 {
                                         s.hash_hi_res = rg_hash;
                                         s.is_hi_res = true;
                                         s.is_lossless = true;
                                         if sz > s.size_hi_res {
                                             s.size_hi_res = sz;
                                         }
-                                    } else if sz >= 4_000_000 && s.hash_flac.is_empty() {
-                                        s.hash_flac = rg_hash;
-                                        s.is_lossless = true;
-                                        s.size_flac = sz;
                                     }
                                 }
                                 _ => {}
@@ -3670,6 +3776,40 @@ impl KugouApiService {
             }
         }
 
+        // 3. MP3 Frame Sync: 0xFF 0xE0..
+        if bytes.len() >= 16 {
+            let mut offset = 0usize;
+            if bytes.len() >= 10 && &bytes[0..3] == b"ID3" {
+                let id3_size = ((bytes[6] as usize & 0x7F) << 21)
+                    | ((bytes[7] as usize & 0x7F) << 14)
+                    | ((bytes[8] as usize & 0x7F) << 7)
+                    | (bytes[9] as usize & 0x7F);
+                offset = (10 + id3_size).min(bytes.len());
+            }
+            for i in offset..bytes.len().saturating_sub(4) {
+                if bytes[i] == 0xFF && (bytes[i + 1] & 0xE0) == 0xE0 {
+                    let version_bits = (bytes[i + 1] >> 3) & 0x03;
+                    let sr_idx = ((bytes[i + 2] >> 2) & 0x03) as usize;
+                    let ch_mode = (bytes[i + 3] >> 6) & 0x03;
+                    if version_bits != 1 && sr_idx < 3 {
+                        let base_sr = match sr_idx {
+                            0 => 44_100,
+                            1 => 48_000,
+                            _ => 32_000,
+                        };
+                        let sr = match version_bits {
+                            3 => base_sr,
+                            2 => base_sr / 2,
+                            0 => base_sr / 4,
+                            _ => 44_100,
+                        };
+                        let ch = if ch_mode == 3 { 1 } else { 2 };
+                        return (sr, 16, ch);
+                    }
+                }
+            }
+        }
+
         // 默认根据容器推断
         if ext_hint.eq_ignore_ascii_case("flac") {
             (48_000, 24, 2)
@@ -3803,11 +3943,34 @@ impl KugouApiService {
     }
 
     async fn finalize_playback_result(&self, mut res: PlaybackResult) -> PlaybackResult {
-        if let Some(head_bytes) = self.transport.probe_stream_head_bytes(&res.url).await {
+        let mut probed = self.transport.probe_stream_head_bytes(&res.url).await;
+        if probed.is_none() && !res.backup_urls.is_empty() {
+            for idx in 0..res.backup_urls.len() {
+                let b_url = res.backup_urls[idx].clone();
+                if let Some(hb) = self.transport.probe_stream_head_bytes(&b_url).await {
+                    let old_primary = std::mem::replace(&mut res.url, b_url);
+                    res.backup_urls[idx] = old_primary;
+                    probed = Some(hb);
+                    break;
+                }
+            }
+        }
+
+        if let Some(head_bytes) = probed {
             let (sr, bd, ch) = Self::parse_stream_header_bytes(&head_bytes, &res.ext_name);
             res.sample_rate_hz = sr;
             res.bit_depth = bd;
             res.channels = ch;
+            if !res.resolved_hash.is_empty() {
+                let cache_dir = Self::resolve_cache_dir();
+                let ext = if res.ext_name.is_empty() { "flac" } else { &res.ext_name };
+                let head_path = cache_dir.join(format!(
+                    "stream_probe_{}.{}",
+                    res.resolved_hash.to_lowercase(),
+                    ext
+                ));
+                let _ = std::fs::write(head_path, &head_bytes);
+            }
         } else if res.ext_name.eq_ignore_ascii_case("flac") {
             if res.actual_quality == "high" {
                 res.sample_rate_hz = 96_000;
@@ -4109,8 +4272,10 @@ impl KugouApiService {
                 "mp3".to_string()
             };
 
+            let backup_urls = Self::extract_backup_play_urls(d, &play_url);
             let res = PlaybackResult {
                 url: play_url,
+                backup_urls,
                 actual_quality: actual_q.api_value().to_string(),
                 quality_label: actual_q.label().to_string(),
                 quality_badge: actual_q.short_badge().to_string(),
@@ -4294,8 +4459,10 @@ impl KugouApiService {
                         "",
                     );
 
+                    let backup_urls = Self::extract_backup_play_urls(d, &play_url);
                     return Some(PlaybackResult {
                         url: play_url,
+                        backup_urls,
                         actual_quality: actual_q.api_value().to_string(),
                         quality_label: actual_q.label().to_string(),
                         quality_badge: actual_q.short_badge().to_string(),
@@ -4325,8 +4492,30 @@ impl KugouApiService {
         None
     }
 
-    /// 19. 获取并解密歌曲 KRC/LRC 歌词
+    /// 19. 获取并解密歌曲 KRC/LRC 歌词（带本地磁盘缓存）
     pub async fn fetch_song_lyric(&self, song: &Song) -> Result<LyricData, String> {
+        let hash_lower = song.hash.trim().to_lowercase();
+        if !hash_lower.is_empty() {
+            let cache_path = Self::resolve_cache_dir().join(format!("lyric_{}.krc", hash_lower));
+            if let Ok(cached_str) = std::fs::read_to_string(&cache_path) {
+                if let Ok(cached_lyric) = serde_json::from_str::<LyricData>(&cached_str) {
+                    if !cached_lyric.lines.is_empty() {
+                        return Ok(cached_lyric);
+                    }
+                }
+            }
+        }
+        let res = self.fetch_song_lyric_remote(song).await?;
+        if !hash_lower.is_empty() && !res.lines.is_empty() {
+            let cache_path = Self::resolve_cache_dir().join(format!("lyric_{}.krc", hash_lower));
+            if let Ok(json_str) = serde_json::to_string(&res) {
+                let _ = std::fs::write(cache_path, json_str);
+            }
+        }
+        Ok(res)
+    }
+
+    async fn fetch_song_lyric_remote(&self, song: &Song) -> Result<LyricData, String> {
         let dev = self.store.device();
         let now_sec = Utc::now().timestamp().to_string();
 
@@ -4616,6 +4805,17 @@ impl KugouApiService {
     }
 
     fn extract_play_url(obj: &Value) -> Option<String> {
+        Self::extract_all_play_urls(obj).into_iter().next()
+    }
+
+    fn extract_backup_play_urls(obj: &Value, primary_url: &str) -> Vec<String> {
+        Self::extract_all_play_urls(obj)
+            .into_iter()
+            .filter(|u| u != primary_url)
+            .collect()
+    }
+
+    fn extract_all_play_urls(obj: &Value) -> Vec<String> {
         let normalize = |raw: &str| -> Option<String> {
             let t = raw.trim();
             if t.starts_with("http://") || t.starts_with("https://") {
@@ -4627,24 +4827,29 @@ impl KugouApiService {
             }
         };
 
+        let mut urls = Vec::new();
         for k in ["url", "play_url", "playUrl", "backup_url", "backupUrl"] {
             if let Some(v) = obj.get(k) {
                 if let Some(s) = v.as_str() {
                     if let Some(u) = normalize(s) {
-                        return Some(u);
+                        if !urls.contains(&u) {
+                            urls.push(u);
+                        }
                     }
                 } else if let Some(arr) = v.as_array() {
                     for el in arr {
                         if let Some(s) = el.as_str() {
                             if let Some(u) = normalize(s) {
-                                return Some(u);
+                                if !urls.contains(&u) {
+                                    urls.push(u);
+                                }
                             }
                         }
                     }
                 }
             }
         }
-        None
+        urls
     }
 
     pub fn parse_songs(root: &Value) -> Vec<Song> {
@@ -5140,19 +5345,13 @@ impl KugouApiService {
             } else if lvl == 7 || q_str.starts_with("viper") || q_str == "super" || q_str == "multitrack" {
                 // 跳过正统酷狗 suvip 专属合成音效流
             } else if lvl == 6 || q_str == "hires" || q_str == "hi-res" || q_str == "res" || (q_str == "high" && (lvl == 6 || lvl == 0)) {
-                let is_verified_hires = (sz <= 0 || sz >= 7_500_000)
-                    && (relate_sq_size <= 0 || sz <= 0 || sz > relate_sq_size);
+                let is_verified_hires = relate_sq_size <= 0 || sz <= 0 || sz >= relate_sq_size;
                 if is_verified_hires {
                     if relate_res_hash.is_empty() {
                         relate_res_hash = h;
                     }
                     if relate_res_size <= 0 && sz > 0 {
                         relate_res_size = sz;
-                    }
-                } else if sz >= 4_000_000 && relate_sq_hash.is_empty() {
-                    relate_sq_hash = h;
-                    if relate_sq_size <= 0 {
-                        relate_sq_size = sz;
                     }
                 }
             } else if lvl == 5 || q_str.contains("flac") || q_str.contains("sq") || q_str.contains("lossless") {
@@ -5275,7 +5474,7 @@ impl KugouApiService {
         let hash_hi_res = if !raw_res_hash.is_empty()
             && raw_res_hash != hash_flac
             && raw_res_hash != explicit_hq_hash
-            && (top_res_size <= 0 || (top_res_size >= 7_500_000 && (sq_size <= 0 || top_res_size > sq_size)))
+            && (top_res_size <= 0 || sq_size <= 0 || top_res_size >= sq_size)
         {
             raw_res_hash
         } else {
@@ -5589,22 +5788,29 @@ impl KugouApiService {
         let presets = [
             ("hot", "流行风向标", "全天候智能音乐伴听 · 热歌与品味共振", "推荐电台", 1, "64.2k 正在漫游"),
             ("daily_vibe", "私人口味漫游", "贴合你近期常听偏好的红心延伸声场", "推荐电台", 1, "58.4k 正在漫游"),
+            ("red_heart", "红心共鸣电台", "从你收藏的红心单曲延展相似旋律", "推荐电台", 1, "47.8k 正在漫游"),
+            ("niche_gem", "宝藏小众漫游", "避开喧嚣热榜 · 邂逅高审美独立佳作", "推荐电台", 1, "39.1k 正在漫游"),
             ("late_night", "深夜静谧台", "卸下喧嚣与疲惫 · 耳机里的温柔晚风", "场景", 1, "51.8k 正在漫游"),
             ("focus_study", "心流伴读台", "轻柔器乐与Lo-Fi律动 · 沉浸专注工作", "场景", 1, "43.5k 正在漫游"),
             ("workout_drive", "公路兜风电台", "开阔地平线与高能节奏 · 一路向阳疾驰", "场景", 1, "36.6k 正在漫游"),
-            ("cafe_afternoon", "午后咖啡馆", "庸懒爵士与原声木吉他 · 阳光洒落窗台", "场景", 1, "31.2k 正在漫游"),
+            ("cafe_afternoon", "午后咖啡馆", "慵懒爵士与原声木吉他 · 阳光洒落窗台", "场景", 1, "31.2k 正在漫游"),
+            ("morning_wake", "晨间元气唤醒", "清晨第一缕阳光与轻快律动", "场景", 1, "29.6k 正在漫游"),
+            ("sleep_ambient", "晚安助眠轻音", "舒缓钢琴与自然氛围 · 伴你安然入梦", "场景", 1, "35.4k 正在漫游"),
             ("cantonese", "港乐黄金年代", "霓虹街角与粤语经典 · 帧享岁月留声", "年代语种", 2, "49.1k 正在漫游"),
             ("mandopop_golden", "华语千禧金曲", "周杰伦/孙燕姿/林俊杰 · 青春记忆里的MP3", "年代语种", 2, "55.9k 正在漫游"),
             ("western_pop", "欧美潮流前线", "Billboard 热单与先锋合成器流行", "年代语种", 2, "45.3k 正在漫游"),
             ("acg", "二次元幻想台", "高燃番剧 OP/ED 与日系治愈声线", "年代语种", 2, "38.9k 正在漫游"),
             ("kpop_wave", "韩流节奏律动", "K-Pop 先锋舞曲与清甜氛围感旋律", "年代语种", 2, "33.7k 正在漫游"),
+            ("retro_8090", "80/90 复古留声", "岁月沉淀的华语经典老歌与時代记忆", "年代语种", 2, "41.5k 正在漫游"),
             ("indie_folk", "独立民谣漫游", "木吉他与故事感人声 · 傍晚微风低语", "曲风", 3, "29.4k 正在漫游"),
             ("rnb_soul", "微醺 R&B 律动", "丝滑转音与都市霓虹节拍 · 暮色松弛感", "曲风", 3, "34.7k 正在漫游"),
             ("guofeng", "国风新韵电台", "山水诗意与戏腔弦乐 · 东方美学意境", "曲风", 3, "27.8k 正在漫游"),
             ("rock_live", "摇滚乐队现场", "失真吉他的热血轰鸣 · Livehouse 律动", "曲风", 3, "32.5k 正在漫游"),
+            ("edm_synth", "电音脉冲电台", "Progressive House 与赛博合成器浪潮", "曲风", 3, "30.8k 正在漫游"),
             ("healing_mood", "治愈松弛电台", "微风拂过耳畔 · 唤醒好心情的清澈旋律", "心情", 4, "41.0k 正在漫游"),
             ("emo_rain", "雨夜微凉心事", "适合一个人静静听的细腻叙事慢歌", "心情", 4, "37.4k 正在漫游"),
             ("joy_sunshine", "元气晴空漫游", "明快节拍与清亮声线 · 瞬间满电出发", "心情", 4, "28.9k 正在漫游"),
+            ("chill_sunset", "日落橘子海", "黄昏海岸线与浪漫梦幻流行", "心情", 4, "33.2k 正在漫游"),
         ];
         presets
             .into_iter()
@@ -7785,13 +7991,14 @@ impl KugouApiService {
 
     /// 酷狗评论内置表情标签 ([em]e400001[/em] 与 [微笑] 等) 转换为原生 Emoji (对齐 Android KugouCommentEmojiParser)
     fn format_kugou_comment_emojis(raw: &str) -> String {
+        static EM_RE: once_cell::sync::Lazy<regex::Regex> =
+            once_cell::sync::Lazy::new(|| regex::Regex::new(r"(?i)\[em\]([a-zA-Z0-9_]+)\[/em\]").unwrap());
         if raw.trim().is_empty() {
             return String::new();
         }
         let mut text = raw.to_string();
-        if text.contains("[em]") {
-            let em_re = regex::Regex::new(r"(?i)\[em\]([a-zA-Z0-9_]+)\[/em\]").unwrap();
-            text = em_re
+        if text.contains("[em]") || text.contains("[EM]") {
+            text = EM_RE
                 .replace_all(&text, |caps: &regex::Captures| {
                     let code = caps.get(1).map(|m| m.as_str().to_lowercase()).unwrap_or_default();
                     match code.as_str() {
@@ -7853,13 +8060,14 @@ impl KugouApiService {
     }
 
     fn parse_weibo_reply_chain(raw_content: &str) -> (String, Option<String>, Option<String>, Vec<QuotedReplyHop>) {
+        static WEIBO_REPLY_RE: once_cell::sync::Lazy<regex::Regex> =
+            once_cell::sync::Lazy::new(|| regex::Regex::new(r"\s*//\s*@").unwrap());
         let formatted = Self::format_kugou_comment_emojis(raw_content);
         if formatted.is_empty() {
             return (String::new(), None, None, Vec::new());
         }
         if formatted.contains("//@") || formatted.contains("// @") {
-            let re = regex::Regex::new(r"\s*//\s*@").unwrap();
-            let segments: Vec<&str> = re.split(&formatted).collect();
+            let segments: Vec<&str> = WEIBO_REPLY_RE.split(&formatted).collect();
             let main_body = segments.first().map(|s| s.trim()).unwrap_or("").to_string();
             let mut hops = Vec::new();
             for seg in segments.iter().skip(1) {
@@ -9161,6 +9369,14 @@ impl KugouApiService {
 
     /// 36. 获取单曲完整技术参数与发行公司详情 (对齐 MusicRepository.fetchSongDetail -> /kmr/v2/audio + STREAMINFO)
     pub async fn fetch_song_detail_info(&self, song: &Song) -> Result<SongDetailInfo, String> {
+        self.fetch_song_detail_info_with_quality(song, None).await
+    }
+
+    pub async fn fetch_song_detail_info_with_quality(
+        &self,
+        song: &Song,
+        preferred_quality: Option<&str>,
+    ) -> Result<SongDetailInfo, String> {
         let enriched = self
             .enrich_songs_privilege_lite(vec![song.clone()])
             .await
@@ -9194,20 +9410,21 @@ impl KugouApiService {
             }
         }
 
-        let pb_opt = self.resolve_song_url(&enriched, "high").await.ok();
+        let target_q = preferred_quality.unwrap_or("high");
+        let pb_opt = self.resolve_song_url(&enriched, target_q).await.ok();
         let (audio_quality, sample_rate, bit_rate, file_size, file_hash) = if let Some(pb) = pb_opt
         {
             let sr_str = format!(
-                "{:.1} kHz / {} bit ({})",
+                "{:.1} kHz / {} bit ({}ch · {})",
                 (pb.sample_rate_hz as f64) / 1000.0,
                 pb.bit_depth,
+                pb.channels.max(2),
                 pb.ext_name.to_uppercase()
             );
-            let sz_mb = if pb.file_size_bytes > 0 {
-                format!("{:.2} MB", (pb.file_size_bytes as f64) / (1024.0 * 1024.0))
-            } else {
-                "约 28.4 MB".to_string()
-            };
+            let dur_sec = ((enriched.duration_ms.max(180_000) as f64) / 1000.0).max(1.0);
+            let estimated_bytes = ((pb.bitrate_kbps.max(128) as f64) * 1000.0 / 8.0 * dur_sec) as i64;
+            let eff_bytes = if pb.file_size_bytes > 0 { pb.file_size_bytes } else { estimated_bytes };
+            let sz_mb = format!("{:.2} MB", (eff_bytes as f64) / (1024.0 * 1024.0));
             (
                 format!("{} ({})", pb.quality_label, pb.ext_name.to_uppercase()),
                 sr_str,
@@ -9221,11 +9438,10 @@ impl KugouApiService {
                 .max(enriched.size_flac)
                 .max(enriched.size320)
                 .max(enriched.size128);
-            let sz_mb = if sz > 0 {
-                format!("{:.2} MB", (sz as f64) / (1024.0 * 1024.0))
-            } else {
-                "约 26.8 MB".to_string()
-            };
+            let dur_sec = ((enriched.duration_ms.max(180_000) as f64) / 1000.0).max(1.0);
+            let fallback_kbps = if enriched.is_hi_res { 2304.0 } else if enriched.is_lossless { 920.0 } else { 320.0 };
+            let eff_sz = if sz > 0 { sz } else { (fallback_kbps * 1000.0 / 8.0 * dur_sec) as i64 };
+            let sz_mb = format!("{:.2} MB", (eff_sz as f64) / (1024.0 * 1024.0));
             (
                 if enriched.is_hi_res {
                     "Hi-Res 高解析度无损 (FLAC)".to_string()
@@ -9251,7 +9467,20 @@ impl KugouApiService {
             )
         };
 
-        let accompany_hash = enriched.accompany_hash.clone();
+        let mut accompany_hash = enriched.accompany_hash.clone();
+        if accompany_hash.trim().is_empty() {
+            let keyword = format!("{} {} 伴奏", song.artist, song.title);
+            if let Ok(candidates) = self.search_songs(&keyword, 1, 6).await {
+                if let Some(acc) = candidates.into_iter().find(|c| {
+                    c.title.contains("伴奏")
+                        || c.title.to_lowercase().contains("instrumental")
+                        || c.title.to_lowercase().contains("backing")
+                }) {
+                    accompany_hash = acc.hash;
+                }
+            }
+        }
+        let has_accompaniment = !accompany_hash.trim().is_empty();
         Ok(SongDetailInfo {
             song: enriched,
             album_name,
@@ -9263,7 +9492,7 @@ impl KugouApiService {
             bit_rate,
             file_size,
             file_hash,
-            has_accompaniment: true,
+            has_accompaniment,
             accompany_hash,
         })
     }
@@ -9671,8 +9900,33 @@ impl KugouApiService {
         let mut working_text = text.to_string();
 
         // 1. 若包含短链 (t1.kugou.com / kgurl.cn / m.kugou.com / m3ws.kugou.com 等)，跟随重定向并提取最终 URL 与 HTML
-        let url_re = regex::Regex::new(r#"https?://[^\s"'<>|，。！？、；：（）【】《》“”‘’]+"#).unwrap();
-        if let Some(m) = url_re.find(text) {
+        static SHARE_URL_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+            regex::Regex::new(r#"https?://[^\s"'<>|，。！？、；：（）【】《》“”‘’]+"#).unwrap()
+        });
+        static SHARE_GCID_RE: once_cell::sync::Lazy<regex::Regex> =
+            once_cell::sync::Lazy::new(|| {
+                regex::Regex::new(
+                    r#"(?:global_collection_id|gcid|globalCollectionId)[=:]["']?(collection_[a-zA-Z0-9_]+|[a-zA-Z0-9_]{16,})"#,
+                )
+                .unwrap()
+            });
+        static SHARE_BARE_COLL_RE: once_cell::sync::Lazy<regex::Regex> =
+            once_cell::sync::Lazy::new(|| {
+                regex::Regex::new(r#"\b(collection_\d+_\d+_\d+_\d+)\b"#).unwrap()
+            });
+        static SHARE_SPECIAL_ID_RE: once_cell::sync::Lazy<regex::Regex> =
+            once_cell::sync::Lazy::new(|| {
+                regex::Regex::new(
+                    r#"(?:specialid|special_id|specialID|listid|list_id)[=:]["']?(\d{4,})"#,
+                )
+                .unwrap()
+            });
+        static SHARE_HASH_RE: once_cell::sync::Lazy<regex::Regex> =
+            once_cell::sync::Lazy::new(|| {
+                regex::Regex::new(r#"(?:hash|Hash|FileHash)[=:]["']?([0-9a-fA-F]{32})"#).unwrap()
+            });
+
+        if let Some(m) = SHARE_URL_RE.find(text) {
             let candidate_url = m
                 .as_str()
                 .trim_end_matches(&[',', '.', '!', '?', ';', ':', ')', ']', '}', '，', '。', '！', '？', '）', '】', '》'][..]);
@@ -9684,15 +9938,11 @@ impl KugouApiService {
         }
 
         // 2. 提取 global_collection_id (如 collection_3_... 或 gcid=...)
-        let gcid_re = regex::Regex::new(r#"(?:global_collection_id|gcid|globalCollectionId)[=:]["']?(collection_[a-zA-Z0-9_]+|[a-zA-Z0-9_]{16,})"#).unwrap();
-        let bare_collection_re = regex::Regex::new(r#"\b(collection_\d+_\d+_\d+_\d+)\b"#).unwrap();
-        let special_id_re = regex::Regex::new(r#"(?:specialid|special_id|specialID|listid|list_id)[=:]["']?(\d{4,})"#).unwrap();
-
-        let resolved_gcid = bare_collection_re
+        let resolved_gcid = SHARE_BARE_COLL_RE
             .captures(&working_text)
             .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
             .or_else(|| {
-                gcid_re
+                SHARE_GCID_RE
                     .captures(&working_text)
                     .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
             })
@@ -9704,7 +9954,7 @@ impl KugouApiService {
                 }
             });
 
-        let resolved_special_id = special_id_re
+        let resolved_special_id = SHARE_SPECIAL_ID_RE
             .captures(&working_text)
             .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
             .or_else(|| {
@@ -9743,8 +9993,7 @@ impl KugouApiService {
         }
 
         // 3. 提取 32 位单曲 Hash 或 mixsongid / album_audio_id
-        let hash_re = regex::Regex::new(r#"(?:hash|Hash|FileHash)[=:]["']?([0-9a-fA-F]{32})"#).unwrap();
-        if let Some(caps) = hash_re.captures(&working_text) {
+        if let Some(caps) = SHARE_HASH_RE.captures(&working_text) {
             if let Some(h_match) = caps.get(1) {
                 let hash_str = h_match.as_str().to_lowercase();
                 let seed = Song {
@@ -9804,4 +10053,186 @@ impl KugouApiService {
 
         Err("未能从输入内容中识别出有效的酷狗歌单或歌曲".to_string())
     }
+
+    fn resolve_cache_dir() -> std::path::PathBuf {
+        let base_dir = directories::ProjectDirs::from("com", "concept", "BreezeMusic")
+            .map(|p| p.config_dir().to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let cache_dir = directories::ProjectDirs::from("com", "concept", "BreezeMusic")
+            .map(|p| p.cache_dir().to_path_buf())
+            .unwrap_or_else(|| base_dir.join("cache"));
+        let _ = std::fs::create_dir_all(&cache_dir);
+        cache_dir
+    }
+
+    /// 40. 真实磁盘缓存统计与分项清理
+    pub fn get_cache_stats(&self) -> Result<CacheDiskStats, String> {
+        let base_dir = directories::ProjectDirs::from("com", "concept", "BreezeMusic")
+            .map(|p| p.config_dir().to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let cache_dir = Self::resolve_cache_dir();
+
+        let mut audio_bytes: u64 = 0;
+        let mut artwork_bytes: u64 = 0;
+        let mut playlist_bytes: u64 = 0;
+        let mut lyric_bytes: u64 = 0;
+
+        for dir in [&base_dir, &cache_dir] {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.is_file() {
+                            let len = meta.len();
+                            let name = path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            if name.ends_with(".flac")
+                                || name.ends_with(".mp3")
+                                || name.ends_with(".ogg")
+                                || name.ends_with(".wav")
+                            {
+                                audio_bytes += len;
+                            } else if name.ends_with(".jpg")
+                                || name.ends_with(".jpeg")
+                                || name.ends_with(".png")
+                                || name.ends_with(".webp")
+                            {
+                                artwork_bytes += len;
+                            } else if name.ends_with(".lrc") || name.ends_with(".krc") {
+                                lyric_bytes += len;
+                            } else if name.contains("session_state") || name.ends_with(".json") {
+                                playlist_bytes += len;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Ok(guard) = self.store.state.lock() {
+            let pl_count = guard.collected_playlist_cache.len() + guard.playlist_overrides.len();
+            playlist_bytes += (pl_count as u64) * 2048;
+        }
+        if let Ok(guard) = self.taste_seed_songs.lock() {
+            lyric_bytes += (guard.len() as u64) * 512;
+        }
+
+        let to_mb = |b: u64| -> f64 { ((b as f64) / (1024.0 * 1024.0) * 100.0).round() / 100.0 };
+        let audio_mb = to_mb(audio_bytes);
+        let artwork_mb = to_mb(artwork_bytes);
+        let playlist_mb = to_mb(playlist_bytes);
+        let lyric_mb = to_mb(lyric_bytes);
+        let total_mb = ((audio_mb + artwork_mb + playlist_mb + lyric_mb) * 100.0).round() / 100.0;
+
+        Ok(CacheDiskStats {
+            audio_stream_mb: audio_mb,
+            artwork_image_mb: artwork_mb,
+            playlist_snapshot_mb: playlist_mb,
+            lyric_and_url_mb: lyric_mb,
+            total_mb,
+            cache_dir_path: cache_dir.to_string_lossy().to_string(),
+        })
+    }
+
+    pub fn clear_cache_category(&self, category: &str) -> Result<CacheDiskStats, String> {
+        let cat = category.trim().to_lowercase();
+        let base_dir = directories::ProjectDirs::from("com", "concept", "BreezeMusic")
+            .map(|p| p.config_dir().to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let cache_dir = Self::resolve_cache_dir();
+
+        if cat == "all" || cat == "snapshot" || cat == "playlists" {
+            if let Ok(mut guard) = self.store.state.lock() {
+                guard.collected_playlist_cache.clear();
+            }
+            self.store.save();
+        }
+        if cat == "all" || cat == "lyric" || cat == "lyrics" {
+            if let Ok(mut guard) = self.seen_personal_fm_hashes.lock() {
+                guard.clear();
+            }
+            if let Ok(mut guard) = self.taste_seed_songs.lock() {
+                guard.clear();
+            }
+        }
+        for dir in [&base_dir, &cache_dir] {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if name == "session_state.json" {
+                        continue;
+                    }
+                    let should_del = match cat.as_str() {
+                        "all" => true,
+                        "audio" => {
+                            name.ends_with(".flac")
+                                || name.ends_with(".mp3")
+                                || name.ends_with(".ogg")
+                                || name.ends_with(".wav")
+                        }
+                        "image" | "images" | "artwork" => {
+                            name.ends_with(".jpg")
+                                || name.ends_with(".jpeg")
+                                || name.ends_with(".png")
+                                || name.ends_with(".webp")
+                        }
+                        "snapshot" | "playlists" => name.ends_with(".json"),
+                        "lyric" | "lyrics" => name.ends_with(".lrc") || name.ends_with(".krc"),
+                        _ => false,
+                    };
+                    if should_del {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+        self.get_cache_stats()
+    }
+}
+
+/// 零外部依赖的真并发 Future 聚合执行器（基于 `std::future::poll_fn` 并发轮询所有子任务并保持原序返回）
+async fn futures_join_vec<F, T>(futs: Vec<F>) -> Vec<T>
+where
+    F: std::future::Future<Output = T>,
+{
+    let len = futs.len();
+    if len == 0 {
+        return Vec::new();
+    }
+    let mut pinned: Vec<Option<std::pin::Pin<Box<F>>>> =
+        futs.into_iter().map(|f| Some(Box::pin(f))).collect();
+    let mut results: Vec<Option<T>> = (0..len).map(|_| None).collect();
+
+    std::future::poll_fn(|cx| {
+        let mut all_done = true;
+        for (i, slot) in pinned.iter_mut().enumerate() {
+            if let Some(fut) = slot {
+                match fut.as_mut().poll(cx) {
+                    std::task::Poll::Ready(val) => {
+                        results[i] = Some(val);
+                        *slot = None;
+                    }
+                    std::task::Poll::Pending => {
+                        all_done = false;
+                    }
+                }
+            }
+        }
+        if all_done {
+            std::task::Poll::Ready(())
+        } else {
+            std::task::Poll::Pending
+        }
+    })
+    .await;
+
+    results.into_iter().flatten().collect()
 }

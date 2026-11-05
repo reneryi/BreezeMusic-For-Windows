@@ -7,7 +7,7 @@ import PlumpIcon from "./PlumpIcon.vue";
 const store = useAppStore();
 
 function formatBytes(bytes: number): string {
-  if (!bytes || bytes <= 0) return "约 28.5 MB";
+  if (!bytes || bytes <= 0) return "流式直连解析";
   return (bytes / (1024 * 1024)).toFixed(2) + " MB";
 }
 

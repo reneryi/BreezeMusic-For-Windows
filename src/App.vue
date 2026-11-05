@@ -361,7 +361,7 @@ onBeforeUnmount(() => {
     <!-- 全局浮动提示胶囊 -->
     <transition name="pop-spring">
       <div v-if="store.statusBanner" class="toast-banner">
-        <PlumpIcon name="sparkles" :size="16" color="#00e5ff" />
+        <PlumpIcon name="sparkles" :size="15" color="var(--primary)" />
         <span>{{ store.statusBanner }}</span>
       </div>
     </transition>

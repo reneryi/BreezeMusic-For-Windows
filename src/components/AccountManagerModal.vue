@@ -239,6 +239,12 @@ async function handleLogout() {
   border: 1px solid var(--border-accent);
 }
 
+:global(.scheme-watercolor_light) .acct-current-hero,
+:global(.scheme-light) .acct-current-hero {
+  background: linear-gradient(135deg, #e8f2ff 0%, #edfaf7 100%);
+  border-color: rgba(26, 115, 232, 0.22);
+}
+
 .acct-current-main {
   display: flex;
   align-items: center;

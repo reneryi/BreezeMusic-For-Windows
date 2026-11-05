@@ -455,7 +455,7 @@ onMounted(() => {
         >
           <div class="bento-vip-left">
             <div class="bento-vip-orb">
-              <PlumpIcon name="crown" :size="16" color="#FFD54F" />
+              <PlumpIcon name="crown" :size="16" color="currentColor" />
             </div>
             <div class="bento-vip-copy">
               <div class="bento-vip-title">
@@ -464,9 +464,9 @@ onMounted(() => {
               <div class="bento-vip-sub">
                 {{
                   store.vipStatus?.svipExpiry
-                    ? `有效期至 ${store.vipStatus.svipExpiry.slice(0, 10)} · 点击查看月度签到日历与网关诊断`
+                    ? `有效期至 ${store.vipStatus.svipExpiry.slice(0, 10)} · 点击查看月度签到日历`
                     : store.vipStatus?.tvipExpiry
-                    ? `有效期至 ${store.vipStatus.tvipExpiry.slice(0, 10)} · 点击查看月度签到日历与网关诊断`
+                    ? `有效期至 ${store.vipStatus.tvipExpiry.slice(0, 10)} · 点击查看月度签到日历`
                     : "每日签到自动续期概念版无损与 Hi-Res 畅听特权"
                 }}
               </div>
@@ -668,7 +668,7 @@ onMounted(() => {
         >
           <div class="bento-compact-main">
             <div class="bento-compact-cover violet">
-              <PlumpIcon name="sparkles" :size="22" color="#fff" />
+              <PlumpIcon name="headphones" :size="23" color="#fff" accent="#e9d5ff" />
             </div>
 
             <div class="bento-compact-copy">
@@ -693,7 +693,7 @@ onMounted(() => {
             title="开启概念心流舱"
             @click.stop="store.isFocusPodOpen = true"
           >
-            <PlumpIcon name="compass" :size="16" color="#fff" />
+            <PlumpIcon name="chevron-right" :size="17" color="#fff" />
           </button>
         </article>
       </div>
@@ -751,7 +751,7 @@ onMounted(() => {
             <span>新建歌单</span>
           </button>
           <button class="lib-tool-btn" @click="openImportModal">
-            <PlumpIcon name="sparkles" :size="15" />
+            <PlumpIcon name="import" :size="15" />
             <span>导入歌单 / 口令</span>
           </button>
           <button
@@ -774,7 +774,7 @@ onMounted(() => {
             @click="store.isLibraryGridView = !store.isLibraryGridView"
           >
             <PlumpIcon
-              :name="store.isLibraryGridView ? 'list-view' : 'grid-view'"
+              :name="store.isLibraryGridView ? 'list' : 'grid'"
               :size="16"
             />
           </button>
@@ -813,9 +813,9 @@ onMounted(() => {
                 alt=""
               />
               <div v-else class="lib-pl-cover-fallback">
-                <PlumpIcon name="music-note" :size="30" />
+                <PlumpIcon name="music" :size="30" />
               </div>
-              <span class="lib-pl-count-tag">{{ pl.trackCount || 0 }} 首</span>
+              <span class="bento-pl-count-pill">{{ pl.trackCount || 0 }} 首</span>
 
               <div class="lib-pl-hover-mask">
                 <button
@@ -846,7 +846,7 @@ onMounted(() => {
                   title="编辑歌单标题与简介"
                   @click.stop="openEditPlaylist(pl)"
                 >
-                  <PlumpIcon name="sliders" :size="13" />
+                  <PlumpIcon name="edit" :size="13" />
                 </button>
                 <button
                   class="pl-mini-act-btn danger"
@@ -984,7 +984,7 @@ onMounted(() => {
               <div v-else class="lib-pl-cover-fallback gold">
                 <PlumpIcon name="crown" :size="30" color="#FFD54F" />
               </div>
-              <span class="lib-pl-count-tag gold">
+              <span class="bento-pl-count-pill gold">
                 {{ store.purchasedSongs.length }} 首已购
               </span>
 
@@ -1033,7 +1033,7 @@ onMounted(() => {
               <div v-else class="lib-pl-cover-fallback gold">
                 <PlumpIcon name="disc" :size="30" color="#FFD54F" />
               </div>
-              <span class="lib-pl-count-tag gold">
+              <span class="bento-pl-count-pill gold">
                 {{ alb.songCount > 0 ? `${alb.songCount} 首` : "数字专辑" }}
               </span>
 
@@ -1193,9 +1193,10 @@ onMounted(() => {
 .library-bento-page {
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  padding: 6px 6px 36px;
+  gap: 26px;
+  padding: 6px 6px 40px;
   min-height: 100%;
+  color: var(--text-main);
 }
 
 /* ==================== 第一层：12 栅格 5:4:3 杂志感 Bento 首屏 ==================== */
@@ -1227,15 +1228,27 @@ onMounted(() => {
   gap: 14px;
   background: linear-gradient(
     145deg,
-    rgba(43, 140, 255, 0.12) 0%,
-    rgba(0, 196, 167, 0.06) 55%,
+    rgba(43, 140, 255, 0.14) 0%,
+    rgba(0, 196, 167, 0.07) 52%,
     var(--bg-card) 100%
   );
+  border-color: rgba(43, 140, 255, 0.22);
+}
+
+:global(.scheme-watercolor_light) .bento-identity-card,
+:global(.scheme-light) .bento-identity-card {
+  background: linear-gradient(
+    145deg,
+    #e8f2ff 0%,
+    #eefaf7 52%,
+    rgba(255, 255, 255, 0.96) 100%
+  );
+  border-color: rgba(26, 115, 232, 0.18);
 }
 
 .bento-id-top {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
@@ -1277,13 +1290,13 @@ onMounted(() => {
 
 .bento-online-dot {
   position: absolute;
-  right: 2px;
-  bottom: 2px;
-  width: 11px;
-  height: 11px;
+  right: 1px;
+  bottom: 1px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  background: var(--accent-mint);
-  border: 2px solid var(--bg-base);
+  background: #10b981;
+  border: 2px solid var(--bg-elevated);
 }
 
 .bento-user-meta {
@@ -1302,13 +1315,13 @@ onMounted(() => {
 
 .bento-user-name {
   margin: 0;
-  font-size: 17px;
+  font-size: 17.5px;
   font-weight: 800;
   color: var(--text-main);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 165px;
+  max-width: 170px;
 }
 
 .bento-lv-badge {
@@ -1318,6 +1331,7 @@ onMounted(() => {
   font-weight: 800;
   color: var(--accent-mint);
   background: var(--accent-mint-soft);
+  border: 1px solid rgba(16, 185, 129, 0.22);
 }
 
 .bento-vip-badge {
@@ -1332,11 +1346,13 @@ onMounted(() => {
 .bento-vip-badge.active {
   color: var(--accent-gold);
   background: var(--accent-gold-soft);
+  border: 1px solid rgba(245, 158, 11, 0.28);
 }
 
 .bento-user-sub {
-  font-size: 11.5px;
-  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-sub);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1345,7 +1361,7 @@ onMounted(() => {
 .bento-id-actions {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   flex-shrink: 0;
 }
 
@@ -1353,15 +1369,22 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 6px 11px;
+  height: 32px;
+  padding: 0 12px;
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
-  color: var(--text-sub);
+  color: var(--text-main);
   background: var(--bg-glass);
   border: 1px solid var(--border-subtle);
   cursor: pointer;
   transition: all 0.2s ease;
+}
+
+:global(.scheme-watercolor_light) .bento-pill-btn:not(.sync-btn),
+:global(.scheme-light) .bento-pill-btn:not(.sync-btn) {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(15, 23, 42, 0.12);
 }
 
 .bento-pill-btn:hover:not(:disabled) {
@@ -1381,23 +1404,32 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 12px 15px;
+  gap: 18px;
+  padding: 12px 16px;
   border-radius: 15px;
   background: var(--bg-glass);
   border: 1px solid var(--border-subtle);
+}
+
+:global(.scheme-watercolor_light) .bento-listen-box,
+:global(.scheme-light) .bento-listen-box {
+  background: rgba(255, 255, 255, 0.78);
+  border-color: rgba(26, 115, 232, 0.12);
 }
 
 .bento-listen-left {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding-right: 18px;
+  border-right: 1px solid var(--border-subtle);
+  flex-shrink: 0;
 }
 
 .bento-listen-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-sub);
 }
 
 .bento-listen-value {
@@ -1408,55 +1440,59 @@ onMounted(() => {
 }
 
 .bento-listen-value strong {
-  font-size: 21px;
+  font-size: 22px;
   font-weight: 800;
   letter-spacing: -0.02em;
   color: var(--primary);
 }
 
 .bento-listen-value .unit {
-  font-size: 11.5px;
+  font-size: 12px;
+  font-weight: 700;
   color: var(--text-sub);
   margin-right: 4px;
 }
 
 .bento-listen-right {
   flex: 1;
-  max-width: 210px;
+  min-width: 170px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
 }
 
 .bento-level-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
-  font-weight: 700;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 800;
   color: var(--accent-mint);
 }
 
 .bento-level-meta .hint {
-  font-weight: 600;
-  color: var(--text-muted);
+  font-weight: 700;
+  color: var(--text-sub);
+  white-space: nowrap;
 }
 
 .bento-level-track {
-  height: 6px;
+  height: 7px;
   border-radius: 999px;
-  background: rgba(120, 145, 185, 0.18);
+  background: rgba(120, 145, 185, 0.22);
   overflow: hidden;
 }
 
 .bento-level-fill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--primary), var(--accent-mint));
+  background: linear-gradient(90deg, var(--primary) 0%, #00c4a7 100%);
+  box-shadow: 0 0 10px rgba(43, 140, 255, 0.35);
   transition: width 0.35s ease;
 }
 
-/* 内嵌概念版 VIP 黑金/流金权益条 */
+/* 内嵌概念版 VIP 黑金/香槟金权益条 */
 .bento-vip-strip {
   display: flex;
   align-items: center;
@@ -1474,9 +1510,15 @@ onMounted(() => {
   transition: transform 0.2s ease, border-color 0.2s ease;
 }
 
+:global(.scheme-watercolor_light) .bento-vip-strip,
+:global(.scheme-light) .bento-vip-strip {
+  background: linear-gradient(135deg, #fef7e0 0%, #fdecc4 100%);
+  border-color: rgba(180, 83, 9, 0.22);
+}
+
 .bento-vip-strip:hover {
   transform: translateY(-1px);
-  border-color: rgba(255, 213, 79, 0.52);
+  border-color: rgba(245, 158, 11, 0.5);
 }
 
 .bento-vip-left {
@@ -1491,10 +1533,17 @@ onMounted(() => {
   height: 32px;
   border-radius: 10px;
   background: rgba(255, 213, 79, 0.2);
+  color: #ffd54f;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+:global(.scheme-watercolor_light) .bento-vip-orb,
+:global(.scheme-light) .bento-vip-orb {
+  background: rgba(217, 119, 6, 0.16);
+  color: #b45309;
 }
 
 .bento-vip-copy {
@@ -1511,15 +1560,21 @@ onMounted(() => {
 }
 
 .bento-vip-sub {
-  font-size: 11px;
+  font-size: 11.5px;
+  font-weight: 600;
   color: var(--text-sub);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+:global(.scheme-watercolor_light) .bento-vip-sub,
+:global(.scheme-light) .bento-vip-sub {
+  color: #78350f;
+}
+
 .bento-vip-cta {
-  padding: 6px 12px;
+  padding: 6px 13px;
   border-radius: 999px;
   font-size: 11.5px;
   font-weight: 800;
@@ -1534,7 +1589,14 @@ onMounted(() => {
 .bento-vip-cta.claimed {
   background: var(--accent-gold-soft);
   color: var(--accent-gold);
-  border: 1px solid rgba(255, 213, 79, 0.35);
+  border: 1px solid rgba(245, 158, 11, 0.34);
+}
+
+:global(.scheme-watercolor_light) .bento-vip-cta.claimed,
+:global(.scheme-light) .bento-vip-cta.claimed {
+  background: rgba(255, 255, 255, 0.88);
+  color: #92400e;
+  border-color: rgba(180, 83, 9, 0.28);
 }
 
 /* 中 4 栅格：我喜欢的音乐（珊瑚粉水彩 / 暗夜瑰红渐变主视觉卡） */
@@ -1547,21 +1609,32 @@ onMounted(() => {
   cursor: pointer;
   background: linear-gradient(
     145deg,
-    rgba(255, 107, 91, 0.16) 0%,
-    rgba(255, 126, 157, 0.08) 55%,
+    rgba(255, 107, 107, 0.18) 0%,
+    rgba(236, 72, 153, 0.09) 55%,
     var(--bg-card) 100%
   );
-  border-color: rgba(255, 107, 91, 0.28);
+  border-color: rgba(255, 107, 107, 0.28);
+}
+
+:global(.scheme-watercolor_light) .bento-liked-card,
+:global(.scheme-light) .bento-liked-card {
+  background: linear-gradient(
+    145deg,
+    #ffeef2 0%,
+    #fce7f3 48%,
+    rgba(255, 255, 255, 0.96) 100%
+  );
+  border-color: rgba(225, 29, 72, 0.18);
 }
 
 .bento-liked-card:hover {
   transform: translateY(-2px);
-  border-color: rgba(255, 107, 91, 0.48);
+  border-color: rgba(244, 63, 94, 0.45);
 }
 
 .bento-liked-top {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
@@ -1575,36 +1648,49 @@ onMounted(() => {
 
 .bento-cover-stack {
   position: relative;
-  width: 78px;
+  width: 90px;
   height: 70px;
   flex-shrink: 0;
 }
 
 .stack-img {
   position: absolute;
-  top: 0;
+  top: 2px;
   left: 0;
   width: 66px;
   height: 66px;
   border-radius: 15px;
   object-fit: cover;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
+  border: 1.5px solid rgba(255, 255, 255, 0.36);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.22);
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .stack-img.layer-3 {
-  transform: translate(14px, 6px) scale(0.84);
-  opacity: 0.45;
+  z-index: 1;
+  transform: translate(22px, 4px) rotate(8deg) scale(0.84);
+  opacity: 0.65;
 }
 
 .stack-img.layer-2 {
-  transform: translate(7px, 3px) scale(0.92);
-  opacity: 0.72;
+  z-index: 2;
+  transform: translate(11px, 2px) rotate(4deg) scale(0.92);
+  opacity: 0.85;
 }
 
 .stack-img.layer-1 {
+  z-index: 3;
   position: relative;
   overflow: hidden;
-  background: linear-gradient(135deg, #ff6b5b, #e84362);
+  background: linear-gradient(135deg, #ff6b6b, #e11d48);
+}
+
+.bento-liked-card:hover .stack-img.layer-3 {
+  transform: translate(26px, 4px) rotate(11deg) scale(0.85);
+}
+
+.bento-liked-card:hover .stack-img.layer-2 {
+  transform: translate(13px, 2px) rotate(5.5deg) scale(0.93);
 }
 
 .stack-img.layer-1 img {
@@ -1628,7 +1714,7 @@ onMounted(() => {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: #ff5252;
+  background: #e11d48;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1665,18 +1751,19 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .bento-title-row h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: 18.5px;
   font-weight: 800;
   color: var(--text-main);
 }
 
 .bento-title-row h4 {
   margin: 0;
-  font-size: 15.5px;
+  font-size: 16px;
   font-weight: 800;
   color: var(--text-main);
 }
@@ -1705,6 +1792,7 @@ onMounted(() => {
 
 .bento-liked-stats {
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-sub);
 }
 
@@ -1716,8 +1804,8 @@ onMounted(() => {
 }
 
 .bento-icon-circle {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   background: var(--bg-glass);
   border: 1px solid var(--border-subtle);
@@ -1729,14 +1817,21 @@ onMounted(() => {
   transition: all 0.2s ease;
 }
 
+:global(.scheme-watercolor_light) .bento-icon-circle,
+:global(.scheme-light) .bento-icon-circle {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(225, 29, 72, 0.16);
+}
+
 .bento-icon-circle:hover {
   color: var(--accent-coral);
   border-color: var(--accent-coral);
+  transform: scale(1.05);
 }
 
 .bento-play-fab {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   border: none;
   display: flex;
@@ -1752,8 +1847,8 @@ onMounted(() => {
 }
 
 .bento-play-fab.coral {
-  background: linear-gradient(135deg, #ff6b5b, #e84362);
-  box-shadow: 0 8px 20px rgba(255, 107, 91, 0.35);
+  background: linear-gradient(135deg, #ff6b6b, #e11d48);
+  box-shadow: 0 8px 20px rgba(225, 29, 72, 0.34);
 }
 
 .bento-play-fab.blue {
@@ -1762,13 +1857,13 @@ onMounted(() => {
 }
 
 .bento-play-fab.violet {
-  background: linear-gradient(135deg, #9688ff, #6c5ce7);
-  box-shadow: 0 6px 16px rgba(150, 136, 255, 0.32);
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  box-shadow: 0 6px 16px rgba(109, 40, 217, 0.3);
 }
 
 .bento-play-fab.mini {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
 }
 
 .bento-liked-tracks {
@@ -1781,7 +1876,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 10px;
+  padding: 7px 11px;
   border-radius: 12px;
   background: var(--bg-glass);
   border: 1px solid var(--border-subtle);
@@ -1789,16 +1884,22 @@ onMounted(() => {
   transition: all 0.2s ease;
 }
 
+:global(.scheme-watercolor_light) .bento-mini-track,
+:global(.scheme-light) .bento-mini-track {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(225, 29, 72, 0.1);
+}
+
 .bento-mini-track:hover,
 .bento-mini-track.playing {
-  border-color: rgba(255, 107, 91, 0.42);
+  border-color: rgba(244, 63, 94, 0.42);
   background: var(--accent-coral-soft);
 }
 
 .mini-track-cover {
-  width: 30px;
-  height: 30px;
-  border-radius: 7px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
   object-fit: cover;
   flex-shrink: 0;
 }
@@ -1808,11 +1909,11 @@ onMounted(() => {
   min-width: 0;
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 7px;
 }
 
 .mini-track-title {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--text-main);
   white-space: nowrap;
@@ -1822,6 +1923,7 @@ onMounted(() => {
 
 .mini-track-artist {
   font-size: 11.5px;
+  font-weight: 600;
   color: var(--text-sub);
   white-space: nowrap;
   overflow: hidden;
@@ -1829,10 +1931,10 @@ onMounted(() => {
 }
 
 .mini-track-tag {
-  font-size: 9.5px;
+  font-size: 10px;
   font-weight: 800;
-  padding: 1px 6px;
-  border-radius: 5px;
+  padding: 2px 7px;
+  border-radius: 6px;
   flex-shrink: 0;
 }
 
@@ -1850,7 +1952,8 @@ onMounted(() => {
   padding: 14px;
   border-radius: 12px;
   background: var(--bg-glass);
-  font-size: 12px;
+  font-size: 12.5px;
+  font-weight: 600;
   color: var(--text-sub);
   text-align: center;
 }
@@ -1877,11 +1980,22 @@ onMounted(() => {
 .bento-recent-card {
   background: linear-gradient(
     145deg,
-    rgba(43, 140, 255, 0.15) 0%,
-    rgba(0, 196, 167, 0.08) 65%,
+    rgba(43, 140, 255, 0.16) 0%,
+    rgba(0, 196, 167, 0.08) 62%,
     var(--bg-card) 100%
   );
   border-color: rgba(43, 140, 255, 0.26);
+}
+
+:global(.scheme-watercolor_light) .bento-recent-card,
+:global(.scheme-light) .bento-recent-card {
+  background: linear-gradient(
+    145deg,
+    #e6f3ff 0%,
+    #e8fbf7 55%,
+    rgba(255, 255, 255, 0.96) 100%
+  );
+  border-color: rgba(26, 115, 232, 0.2);
 }
 
 .bento-recent-card:hover {
@@ -1892,34 +2006,46 @@ onMounted(() => {
 .bento-focus-card {
   background: linear-gradient(
     145deg,
-    rgba(150, 136, 255, 0.16) 0%,
-    rgba(108, 92, 231, 0.08) 65%,
+    rgba(150, 136, 255, 0.18) 0%,
+    rgba(108, 92, 231, 0.09) 62%,
     var(--bg-card) 100%
   );
   border-color: rgba(150, 136, 255, 0.28);
 }
 
+:global(.scheme-watercolor_light) .bento-focus-card,
+:global(.scheme-light) .bento-focus-card {
+  background: linear-gradient(
+    145deg,
+    #f1ecff 0%,
+    #eaf0ff 55%,
+    rgba(255, 255, 255, 0.96) 100%
+  );
+  border-color: rgba(109, 40, 217, 0.2);
+}
+
 .bento-focus-card:hover {
   transform: translateY(-2px);
-  border-color: rgba(150, 136, 255, 0.48);
+  border-color: rgba(139, 92, 246, 0.48);
 }
 
 .bento-compact-main {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 13px;
   min-width: 0;
 }
 
 .bento-compact-cover {
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
+  width: 50px;
+  height: 50px;
+  border-radius: 15px;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.18);
 }
 
 .bento-compact-cover img {
@@ -1933,7 +2059,7 @@ onMounted(() => {
 }
 
 .bento-compact-cover.violet {
-  background: linear-gradient(135deg, #9688ff, #6c5ce7);
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
 }
 
 .bento-compact-copy {
@@ -1944,7 +2070,8 @@ onMounted(() => {
 }
 
 .bento-compact-sub {
-  font-size: 11.5px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-sub);
   white-space: nowrap;
   overflow: hidden;
@@ -1955,7 +2082,7 @@ onMounted(() => {
 .library-fullwidth-gallery {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 20px;
 }
 
 .lib-gallery-toolbar {
@@ -1963,7 +2090,7 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 6px 4px 10px;
+  padding: 6px 4px 12px;
   border-bottom: 1px solid var(--border-subtle);
   flex-wrap: wrap;
 }
@@ -1971,7 +2098,7 @@ onMounted(() => {
 .lib-toolbar-left {
   display: flex;
   align-items: center;
-  gap: 22px;
+  gap: 20px;
   flex-wrap: wrap;
 }
 
@@ -1986,14 +2113,18 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 8px 14px 11px;
+  padding: 8px 14px 12px;
   background: none;
   border: none;
   color: var(--text-sub);
-  font-size: 14.5px;
+  font-size: 15px;
   font-weight: 700;
   cursor: pointer;
   transition: color 0.2s ease;
+}
+
+.lib-tab-btn:hover {
+  color: var(--text-main);
 }
 
 .lib-tab-btn.active {
@@ -2004,23 +2135,25 @@ onMounted(() => {
 .lib-tab-btn .tab-num {
   font-size: 11.5px;
   font-weight: 800;
-  padding: 1px 7px;
+  padding: 2px 8px;
   border-radius: 999px;
   background: var(--bg-glass);
-  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-sub);
 }
 
 .lib-tab-btn.active .tab-num {
-  color: var(--text-main);
+  color: var(--primary);
   background: var(--primary-soft);
+  border-color: var(--border-accent);
 }
 
 .lib-tab-btn .tab-indicator {
   position: absolute;
   left: 14px;
   right: 14px;
-  bottom: 0;
-  height: 3px;
+  bottom: -1px;
+  height: 3.5px;
   border-radius: 999px;
   transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
 }
@@ -2029,12 +2162,18 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
-  border-radius: 999px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 12px;
   background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-muted);
-  width: 230px;
+  border: 1px solid var(--border-card);
+  color: var(--text-sub);
+  width: 245px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
+
+.lib-filter-box:focus-within {
+  border-color: var(--border-accent);
 }
 
 .lib-filter-box input {
@@ -2042,8 +2181,13 @@ onMounted(() => {
   background: none;
   outline: none;
   color: var(--text-main);
-  font-size: 12.5px;
+  font-size: 13px;
+  font-weight: 600;
   width: 100%;
+}
+
+.lib-filter-box input::placeholder {
+  color: var(--text-muted);
 }
 
 .filter-clear-btn {
@@ -2051,7 +2195,7 @@ onMounted(() => {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .lib-toolbar-right {
@@ -2064,13 +2208,14 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 14px;
-  border-radius: 11px;
-  font-size: 12.5px;
+  height: 36px;
+  padding: 0 15px;
+  border-radius: 12px;
+  font-size: 13px;
   font-weight: 700;
   background: var(--bg-card);
   color: var(--text-main);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-card);
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -2078,6 +2223,7 @@ onMounted(() => {
 .lib-tool-btn:hover {
   border-color: var(--border-accent);
   color: var(--primary);
+  background: var(--bg-card-hover);
 }
 
 .lib-tool-btn.primary {
@@ -2092,12 +2238,12 @@ onMounted(() => {
 }
 
 .lib-tool-icon-btn {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
   background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-sub);
+  border: 1px solid var(--border-card);
+  color: var(--text-main);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2105,16 +2251,17 @@ onMounted(() => {
   transition: all 0.2s ease;
 }
 
-.lib-tool-icon-btn:hover {
+.lib-tool-icon-btn:hover:not(:disabled) {
   color: var(--primary);
   border-color: var(--border-accent);
+  background: var(--primary-soft);
 }
 
-/* 海报宫格与双列宽幅列表 */
+/* 海报宫格（黄金 6~7 列宽幅呼吸排版）与双列宽幅列表 */
 .lib-playlist-poster-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(186px, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(214px, 1fr));
+  gap: 20px;
 }
 
 .lib-playlist-wide-list {
@@ -2127,14 +2274,15 @@ onMounted(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 11px;
+  padding: 13px;
   border-radius: 18px;
   background: var(--bg-card);
   border: 1px solid var(--border-card);
+  box-shadow: var(--shadow-card);
   cursor: pointer;
-  transition: transform 0.22s ease, border-color 0.22s ease,
-    box-shadow 0.22s ease;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.22s ease, box-shadow 0.22s ease;
 }
 
 .lib-playlist-wide-list .lib-pl-card {
@@ -2144,9 +2292,9 @@ onMounted(() => {
 }
 
 .lib-pl-card:hover {
-  transform: translateY(-3px);
+  transform: translateY(-4px);
   border-color: var(--border-accent);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-elevated);
 }
 
 .lib-pl-cover-wrap {
@@ -2157,11 +2305,12 @@ onMounted(() => {
   overflow: hidden;
   background: var(--bg-glass);
   flex-shrink: 0;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.14);
 }
 
 .lib-playlist-wide-list .lib-pl-cover-wrap {
-  width: 68px;
-  height: 68px;
+  width: 70px;
+  height: 70px;
 }
 
 .lib-pl-cover {
@@ -2189,34 +2338,54 @@ onMounted(() => {
   background: var(--accent-gold-soft);
 }
 
-.lib-pl-count-tag {
+/* 专属防冲突右上角曲目数胶囊（彻底杜绝 bottom 继承拉伸） */
+.bento-pl-count-pill {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  padding: 2px 8px;
+  top: 9px;
+  right: 9px;
+  bottom: auto;
+  left: auto;
+  width: auto;
+  height: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
   border-radius: 999px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 800;
-  color: #fff;
-  background: rgba(10, 14, 23, 0.68);
+  line-height: 1.25;
+  color: #ffffff;
+  background: rgba(10, 15, 26, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   backdrop-filter: blur(8px);
+  z-index: 2;
+  pointer-events: none;
 }
 
-.lib-pl-count-tag.gold {
+.lib-playlist-wide-list .bento-pl-count-pill {
+  display: none;
+}
+
+.bento-pl-count-pill.gold {
   color: #ffd54f;
-  border: 1px solid rgba(255, 213, 79, 0.35);
+  border-color: rgba(255, 213, 79, 0.38);
 }
 
 .lib-pl-hover-mask {
   position: absolute;
   inset: 0;
-  background: rgba(10, 14, 23, 0.28);
+  background: linear-gradient(
+    180deg,
+    rgba(10, 14, 23, 0.04) 40%,
+    rgba(10, 14, 23, 0.42) 100%
+  );
   display: flex;
   align-items: flex-end;
   justify-content: flex-end;
   padding: 10px;
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.22s ease;
+  z-index: 3;
 }
 
 .lib-pl-card:hover .lib-pl-hover-mask {
@@ -2224,8 +2393,8 @@ onMounted(() => {
 }
 
 .lib-pl-play-btn {
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   border: none;
   background: var(--primary);
@@ -2233,7 +2402,12 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 6px 16px rgba(43, 140, 255, 0.4);
+  box-shadow: 0 8px 18px rgba(26, 115, 232, 0.42);
+  transition: transform 0.2s ease;
+}
+
+.lib-pl-play-btn:hover {
+  transform: scale(1.08);
 }
 
 .lib-pl-play-btn.gold {
@@ -2245,20 +2419,29 @@ onMounted(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  justify-content: space-between;
+  gap: 5px;
 }
 
 .lib-pl-title {
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 800;
+  line-height: 1.38;
   color: var(--text-main);
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-word;
+}
+
+.lib-playlist-wide-list .lib-pl-title {
+  -webkit-line-clamp: 1;
 }
 
 .lib-pl-sub {
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-sub);
   white-space: nowrap;
   overflow: hidden;
@@ -2267,12 +2450,13 @@ onMounted(() => {
 
 .lib-pl-item-actions {
   position: absolute;
-  top: 18px;
-  left: 18px;
+  top: 21px;
+  left: 21px;
   display: flex;
   gap: 6px;
   opacity: 0;
   transition: opacity 0.2s ease;
+  z-index: 4;
 }
 
 .lib-playlist-wide-list .lib-pl-item-actions {
@@ -2284,16 +2468,23 @@ onMounted(() => {
 }
 
 .pl-mini-act-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(10, 14, 23, 0.72);
+  width: 29px;
+  height: 29px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(10, 15, 26, 0.76);
   color: #fff;
+  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.pl-mini-act-btn:hover {
+  background: var(--primary);
+  border-color: var(--primary);
 }
 
 .pl-mini-act-btn.danger:hover {
@@ -2304,8 +2495,8 @@ onMounted(() => {
 /* 关注歌手卡片 */
 .lib-artist-poster-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 20px;
 }
 
 .lib-artist-card {
@@ -2314,10 +2505,11 @@ onMounted(() => {
   align-items: center;
   text-align: center;
   gap: 10px;
-  padding: 18px 14px;
+  padding: 20px 14px;
   border-radius: 18px;
   background: var(--bg-card);
   border: 1px solid var(--border-card);
+  box-shadow: var(--shadow-card);
   cursor: pointer;
   transition: all 0.22s ease;
 }
@@ -2334,11 +2526,11 @@ onMounted(() => {
 }
 
 .lib-artist-avatar-wrap {
-  width: 84px;
-  height: 84px;
+  width: 86px;
+  height: 86px;
   border-radius: 50%;
   overflow: hidden;
-  border: 2px solid var(--accent-mint-soft);
+  border: 2.5px solid var(--accent-mint-soft);
   flex-shrink: 0;
 }
 
@@ -2369,21 +2561,22 @@ onMounted(() => {
 }
 
 .lib-artist-name {
-  font-size: 14.5px;
+  font-size: 15px;
   font-weight: 800;
   color: var(--text-main);
 }
 
 .lib-artist-sub {
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-sub);
   margin-top: 2px;
 }
 
 .lib-artist-enter-btn {
-  padding: 5px 12px;
+  padding: 5px 13px;
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   background: var(--accent-mint-soft);
   color: var(--accent-mint);
@@ -2401,8 +2594,22 @@ onMounted(() => {
   border-radius: 20px;
   background: var(--bg-card);
   border: 1px dashed var(--border-subtle);
-  color: var(--text-muted);
+  color: var(--text-sub);
   font-size: 13.5px;
+  font-weight: 600;
+}
+
+.spin-anim {
+  animation: libSpin 0.9s linear infinite;
+}
+
+@keyframes libSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 1180px) {

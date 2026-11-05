@@ -1201,22 +1201,15 @@ impl KugouApiService {
             format!("{} 分钟", mins)
         };
 
-        let (level_progress_pct, next_level_remain_min) = if max_next_score > max_base_score && max_score >= max_base_score {
-            let span = (max_next_score - max_base_score).max(1) as f32;
-            let cur = (max_score - max_base_score).max(0) as f32;
-            let pct = ((cur / span) * 100.0).clamp(2.0, 99.0);
-            let rem = if remain_sec_server > 0 {
-                (remain_sec_server / 60).max(1)
-            } else {
-                ((max_next_score - max_score).max(1) * 6).max(10)
-            };
-            (pct, rem)
-        } else {
-            let step_mins = ((max_grade.max(1) as i64) * 300).max(300);
-            let in_level = total_min % step_mins;
-            let pct = (((in_level as f32) / (step_mins as f32)) * 100.0).clamp(5.0, 98.0);
-            (pct, (step_mins - in_level).max(1))
-        };
+        let (level_progress_pct, next_level_remain_min) = Self::compute_level_progress_and_remain(
+            max_grade,
+            total_min,
+            total_sec,
+            max_score,
+            max_next_score,
+            max_base_score,
+            remain_sec_server,
+        );
 
         let vip_info = self.fetch_vip_status().await.unwrap_or(VipStatusInfo {
             is_vip: false,
@@ -1258,6 +1251,121 @@ impl KugouApiService {
             level_progress_pct,
             next_level_remain_min,
         })
+    }
+
+    /// 严格 1:1 复刻 Android 端 UserGradeInfo.computeLevelProgressAndRemain：
+    /// 酷狗 p_current_point / p_next_grade_point / p_grade_point 本身即为分钟单位，
+    /// 严禁乘以 6，并提供 Lv.0 ~ Lv.20 官方分钟阶梯表兜底校准。
+    fn compute_level_progress_and_remain(
+        level: i32,
+        total_minutes: i64,
+        total_seconds: i64,
+        score: i64,
+        next_score: i64,
+        current_base_score: i64,
+        remain_seconds_from_server: i64,
+    ) -> (f32, i64) {
+        const LEVEL_MIN_THRESHOLDS: [i64; 21] = [
+            0,         // Lv.0: 0h
+            60,        // Lv.1: 1h
+            300,       // Lv.2: 5h
+            900,       // Lv.3: 15h
+            1_800,     // Lv.4: 30h
+            3_600,     // Lv.5: 60h
+            7_200,     // Lv.6: 120h
+            15_000,    // Lv.7: 250h
+            30_000,    // Lv.8: 500h
+            60_000,    // Lv.9: 1000h
+            108_000,   // Lv.10: 1800h
+            150_000,   // Lv.11: 2500h
+            222_000,   // Lv.12: 3700h
+            330_000,   // Lv.13: 5500h
+            450_000,   // Lv.14: 7500h
+            600_000,   // Lv.15: 10000h
+            780_000,   // Lv.16: 13000h
+            990_000,   // Lv.17: 16500h
+            1_230_000, // Lv.18: 20500h
+            1_500_000, // Lv.19: 25000h
+            1_800_000, // Lv.20: 30000h
+        ];
+        let last_idx = LEVEL_MIN_THRESHOLDS.len() - 1;
+        let safe_mins = if total_seconds > 0 {
+            total_seconds / 60
+        } else {
+            total_minutes
+        }
+        .max(0);
+        let lv_idx = (level.max(0) as usize).min(last_idx - 1);
+
+        if remain_seconds_from_server > 0 && total_seconds > 0 {
+            let remain_mins = (remain_seconds_from_server / 60).max(1);
+            let base_min = if current_base_score >= 1 && current_base_score <= safe_mins {
+                current_base_score
+            } else {
+                LEVEL_MIN_THRESHOLDS[lv_idx].min(safe_mins)
+            };
+            let target_min = safe_mins + remain_mins;
+            let span = (target_min - base_min).max(1);
+            let pct = (((safe_mins - base_min) as f64 / span as f64) * 100.0) as f32;
+            return (pct.clamp(5.0, 99.0), remain_mins);
+        }
+
+        if next_score > 100 && (score > 0 || safe_mins > 0) {
+            let effective_current = if score > 0
+                && safe_mins > score
+                && safe_mins < next_score
+                && (safe_mins - score) <= 10_000
+            {
+                safe_mins
+            } else if score > 0 {
+                score
+            } else {
+                safe_mins
+            };
+            if next_score > effective_current {
+                let base = if current_base_score >= 1 && current_base_score <= effective_current {
+                    current_base_score
+                } else if LEVEL_MIN_THRESHOLDS[lv_idx] < effective_current {
+                    LEVEL_MIN_THRESHOLDS[lv_idx]
+                } else {
+                    0
+                };
+                let span = (next_score - base).max(1);
+                let pct = (((effective_current - base) as f64 / span as f64) * 100.0) as f32;
+                let remain_mins = (next_score - effective_current).max(0);
+                return (pct.clamp(5.0, 99.0), remain_mins);
+            }
+        }
+
+        let mut lower_min = LEVEL_MIN_THRESHOLDS[lv_idx];
+        let mut upper_min = LEVEL_MIN_THRESHOLDS[(lv_idx + 1).min(last_idx)];
+        if safe_mins < lower_min || safe_mins >= upper_min {
+            let mut matched_idx = 0usize;
+            for i in 0..last_idx {
+                if safe_mins >= LEVEL_MIN_THRESHOLDS[i] {
+                    matched_idx = i;
+                } else {
+                    break;
+                }
+            }
+            lower_min = LEVEL_MIN_THRESHOLDS[matched_idx];
+            upper_min = if matched_idx + 1 <= last_idx && safe_mins < LEVEL_MIN_THRESHOLDS[matched_idx + 1] {
+                LEVEL_MIN_THRESHOLDS[matched_idx + 1]
+            } else {
+                lower_min + 72_000
+            };
+        }
+        let span_sec = ((upper_min - lower_min) * 60).max(60);
+        let cur_sec = (if total_seconds > 0 {
+            total_seconds
+        } else {
+            safe_mins * 60
+        })
+        .max(lower_min * 60);
+        let gained_sec = (cur_sec - lower_min * 60).max(0);
+        let duration_pct = (((gained_sec as f64) / (span_sec as f64)) * 100.0) as f32;
+        let duration_remain_mins = ((upper_min * 60 - cur_sec).max(0)) / 60;
+        (duration_pct.clamp(5.0, 99.0), duration_remain_mins)
     }
 
     fn normalize_vip_record_day(raw_day: &str) -> String {

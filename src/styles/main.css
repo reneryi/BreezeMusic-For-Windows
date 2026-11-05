@@ -9,12 +9,15 @@
 
 :root,
 .scheme-abyssal_dark {
+  color-scheme: dark;
   /* 安卓端 Color.kt / Theme.kt 1:1 幽邃微蓝 (Abyssal Dark) 配色体系 */
   --bg-base: #0a0e17;
   --bg-surface: rgba(18, 25, 39, 0.88);
   --bg-card: #141c2b;
   --bg-card-hover: #1c263b;
   --bg-elevated: #222e46;
+  --bg-glass: rgba(255, 255, 255, 0.055);
+  --bg-glass-hover: rgba(255, 255, 255, 0.1);
   --bg-pill: rgba(43, 140, 255, 0.14);
   --bg-pill-hover: rgba(43, 140, 255, 0.24);
 
@@ -26,42 +29,75 @@
   --violet: #9688ff;
   --gold: #ffd54f;
 
-  --text-primary: #f4f7fb;
-  --text-secondary: #9aa7bd;
-  --text-muted: #5a677d;
+  /* 语义化辅色与柔光底色令牌 */
+  --accent-mint: #26debf;
+  --accent-mint-soft: rgba(38, 222, 191, 0.15);
+  --accent-coral: #ff6b6b;
+  --accent-coral-soft: rgba(255, 107, 107, 0.16);
+  --accent-violet: #a29bfe;
+  --accent-violet-soft: rgba(162, 155, 254, 0.16);
+  --accent-gold: #ffd54f;
+  --accent-gold-soft: rgba(255, 213, 79, 0.15);
 
-  --border-subtle: rgba(255, 255, 255, 0.06);
+  --text-primary: #f4f7fb;
+  --text-main: #f4f7fb;
+  --text-secondary: #a3b1c6;
+  --text-sub: #a3b1c6;
+  --text-muted: #6e7e96;
+
+  --border-subtle: rgba(255, 255, 255, 0.075);
+  --border-card: rgba(148, 184, 255, 0.11);
+  --border-accent: rgba(43, 140, 255, 0.38);
   --shadow-soft: 0 12px 32px rgba(2, 6, 18, 0.36);
+  --shadow-card: 0 14px 34px -8px rgba(2, 6, 18, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   --shadow-elevated: 0 20px 48px rgba(2, 6, 18, 0.52);
   --shadow-glow: 0 10px 28px rgba(43, 140, 255, 0.28);
 }
 
-/* 水彩浸润浅色主题（严格对齐安卓端 LightBgBase #F2F6FC 水彩纸底 + 高对比度可读性） */
+/* 水彩浸润浅色主题（严格对齐安卓端 LightBgBase #F2F6FC 水彩纸底 + WCAG AA 高对比度可读性） */
 .scheme-watercolor_light,
 .scheme-light {
+  color-scheme: light;
   --bg-base: #f2f6fc;
-  --bg-surface: rgba(255, 255, 255, 0.90);
-  --bg-card: rgba(255, 255, 255, 0.94);
-  --bg-card-hover: #e5effd;
+  --bg-surface: rgba(255, 255, 255, 0.92);
+  --bg-card: rgba(255, 255, 255, 0.88);
+  --bg-card-hover: #eaf2fe;
   --bg-elevated: #ffffff;
-  --bg-pill: rgba(26, 115, 232, 0.10);
+  --bg-glass: rgba(241, 246, 253, 0.86);
+  --bg-glass-hover: rgba(226, 236, 250, 0.95);
+  --bg-pill: rgba(26, 115, 232, 0.1);
   --bg-pill-hover: rgba(26, 115, 232, 0.18);
 
   --primary: #1a73e8;
   --primary-soft: rgba(26, 115, 232, 0.12);
   --cyan: #00897b;
-  --mint: #00a884;
-  --coral: #e53935;
-  --violet: #6c5ce7;
-  --gold: #b87900;
+  --mint: #047857;
+  --coral: #e11d48;
+  --violet: #6d28d9;
+  --gold: #92400e;
 
-  --text-primary: #121824;
-  --text-secondary: #5e6b82;
-  --text-muted: #93a1b8;
+  /* 浅色水彩浸润高对比彩墨令牌（保证白底/浅色底 ≥ 4.5:1 对比度） */
+  --accent-mint: #047857;
+  --accent-mint-soft: rgba(16, 185, 129, 0.14);
+  --accent-coral: #e11d48;
+  --accent-coral-soft: rgba(244, 63, 94, 0.12);
+  --accent-violet: #6d28d9;
+  --accent-violet-soft: rgba(124, 58, 237, 0.12);
+  --accent-gold: #92400e;
+  --accent-gold-soft: rgba(245, 158, 11, 0.16);
 
-  --border-subtle: rgba(26, 115, 232, 0.09);
+  --text-primary: #0f172a;
+  --text-main: #0f172a;
+  --text-secondary: #475569;
+  --text-sub: #475569;
+  --text-muted: #64748b;
+
+  --border-subtle: rgba(15, 23, 42, 0.085);
+  --border-card: rgba(26, 86, 196, 0.11);
+  --border-accent: rgba(26, 115, 232, 0.34);
   --shadow-soft: 0 10px 28px rgba(26, 55, 110, 0.07);
-  --shadow-elevated: 0 18px 44px rgba(26, 55, 110, 0.13);
+  --shadow-card: 0 10px 28px -6px rgba(26, 55, 110, 0.085), inset 0 1px 0 rgba(255, 255, 255, 0.94);
+  --shadow-elevated: 0 18px 44px rgba(26, 55, 110, 0.14);
   --shadow-glow: 0 10px 28px rgba(26, 115, 232, 0.22);
 }
 
@@ -127,6 +163,7 @@ button {
   height: 100vh;
   display: flex;
   flex-direction: column;
+  color: var(--text-primary);
   /* 幽邃微蓝 (Abyssal Dark)：非纯黑，四角与中心微透深海蓝呼吸光晕 */
   background:
     radial-gradient(circle at 12% 8%, rgba(22, 40, 68, 0.85) 0%, transparent 46%),
@@ -4628,19 +4665,24 @@ button {
 
 .toast-banner {
   position: fixed;
-  top: 72px;
+  top: 58px;
   left: 50%;
   transform: translateX(-50%);
-  padding: 10px 20px;
+  padding: 8px 18px;
   border-radius: 999px;
-  background: var(--bg-elevated);
+  background: var(--bg-floating-capsule, var(--bg-elevated));
+  color: var(--text-primary);
+  border: 1px solid var(--border-accent);
+  backdrop-filter: blur(16px);
   box-shadow: var(--shadow-elevated);
-  z-index: 150;
+  z-index: 260;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 15.5px;
-  font-weight: 800;
+  font-size: 13.5px;
+  font-weight: 700;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 /* 迷你桌面黑胶挂件模式 */
@@ -9199,7 +9241,7 @@ body {
   font-weight: 900;
 }
 
-.lib-pl-cover-wrap {
+.lib-pl-grid-item .lib-pl-cover-wrap {
   position: relative;
   width: 100%;
   aspect-ratio: 1 / 1;
@@ -9208,14 +9250,14 @@ body {
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
 }
 
-.lib-pl-cover {
+.lib-pl-grid-item .lib-pl-cover {
   width: 100%;
   height: 100%;
   object-fit: cover;
   pointer-events: none;
 }
 
-.lib-pl-count-tag {
+.lib-pl-grid-item .lib-pl-count-tag {
   position: absolute;
   right: 6px;
   bottom: 6px;

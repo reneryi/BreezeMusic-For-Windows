@@ -567,13 +567,13 @@ withDefaults(
         stroke-linejoin="round"
       />
     </template>
-    <template v-else-if="name === 'grid'">
+    <template v-else-if="name === 'grid' || name === 'grid-view'">
       <rect x="3.5" y="3.5" width="7.2" height="7.2" rx="2.6" :fill="color" />
       <rect x="13.3" y="3.5" width="7.2" height="7.2" rx="2.6" :fill="accent" />
       <rect x="3.5" y="13.3" width="7.2" height="7.2" rx="2.6" :fill="color" />
       <rect x="13.3" y="13.3" width="7.2" height="7.2" rx="2.6" :fill="color" />
     </template>
-    <template v-else-if="name === 'list'">
+    <template v-else-if="name === 'list' || name === 'list-view'">
       <rect x="3.5" y="5" width="17" height="3.4" rx="1.7" :fill="color" />
       <rect x="3.5" y="10.3" width="17" height="3.4" rx="1.7" :fill="accent" />
       <rect x="3.5" y="15.6" width="17" height="3.4" rx="1.7" :fill="color" />
@@ -739,7 +739,7 @@ withDefaults(
         stroke-linejoin="round"
       />
     </template>
-    <template v-else-if="name === 'music'">
+    <template v-else-if="name === 'music' || name === 'music-note'">
       <path
         d="M9 17.5V6.5L19 4.5V15.5"
         :stroke="color"
@@ -749,6 +749,48 @@ withDefaults(
       />
       <circle cx="6.5" cy="17.5" r="2.8" :fill="accent" />
       <circle cx="16.5" cy="15.5" r="2.8" :fill="color" />
+    </template>
+    <template v-else-if="name === 'edit' || name === 'pen'">
+      <path
+        d="M15.2 4.4C16.2 3.4 17.8 3.4 18.8 4.4L19.6 5.2C20.6 6.2 20.6 7.8 19.6 8.8L9.8 18.6L4.6 19.8L5.8 14.6L15.2 4.4Z"
+        :fill="color"
+        fill-opacity="0.22"
+        :stroke="color"
+        stroke-width="2.3"
+        stroke-linejoin="round"
+      />
+      <path
+        d="M13.6 6.2L17.8 10.4"
+        :stroke="accent"
+        stroke-width="2.4"
+        stroke-linecap="round"
+      />
+    </template>
+    <template v-else-if="name === 'import'">
+      <path
+        d="M4.2 13.8V17.4C4.2 18.8 5.4 20 6.8 20H17.2C18.6 20 19.8 18.8 19.8 17.4V13.8"
+        :stroke="color"
+        stroke-width="2.5"
+        stroke-linecap="round"
+      />
+      <path
+        d="M12 4V14.2M12 14.2L8.3 10.6M12 14.2L15.7 10.6"
+        :stroke="accent"
+        stroke-width="2.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </template>
+    <template v-else-if="name === 'headphones' || name === 'meditate'">
+      <path
+        d="M4.6 13.2V11.8C4.6 7.6 7.9 4.2 12 4.2C16.1 4.2 19.4 7.6 19.4 11.8V13.2"
+        :stroke="color"
+        stroke-width="2.6"
+        stroke-linecap="round"
+      />
+      <rect x="3.2" y="12.2" width="4.4" height="7.4" rx="2.2" :fill="color" />
+      <rect x="16.4" y="12.2" width="4.4" height="7.4" rx="2.2" :fill="accent" />
+      <circle cx="12" cy="11.2" r="1.7" :fill="accent" />
     </template>
     <template v-else>
       <circle cx="12" cy="12" r="8" :fill="color" fill-opacity="0.25" />

@@ -206,7 +206,10 @@ export const useAppStore = defineStore("breezeApp", () => {
   const activeRank = ref<RankItem | null>(null);
   const activeRankSongs = ref<Song[]>([]);
   const isLoadingRankSongs = ref(false);
+  const isLoadingMoreRankSongs = ref(false);
   const rankSearchKeyword = ref<string>("");
+  const rankSongsCache = new Map<number, Song[]>();
+  let rankLoadEpoch = 0;
 
   const fmChannels = ref<FmChannel[]>([]);
   const selectedFmCategory = ref<string>("全部");
@@ -2315,7 +2318,30 @@ export const useAppStore = defineStore("breezeApp", () => {
     setTimeout(reset, 24);
   }
 
-  async function openRankDetail(rank: RankItem) {
+  function syncRankPreviewAndTotal(rankId: number, songs: Song[]) {
+    if (songs.length === 0) return;
+    const previews = songs.slice(0, 3).map((s) =>
+      s.artist && s.artist !== "未知歌手" ? `${s.title} - ${s.artist}` : s.title
+    );
+    rankList.value = rankList.value.map((r) => {
+      if (r.rankId !== rankId) return r;
+      return {
+        ...r,
+        totalSongs: Math.max(r.totalSongs || 0, songs.length),
+        topSongsPreview: previews.length > 0 ? previews : r.topSongsPreview,
+        songPreviews: previews.length > 0 ? previews : r.songPreviews,
+      };
+    });
+    if (activeRank.value && activeRank.value.rankId === rankId) {
+      activeRank.value = {
+        ...activeRank.value,
+        totalSongs: Math.max(activeRank.value.totalSongs || 0, songs.length),
+      };
+    }
+  }
+
+  async function openRankDetail(rank: RankItem, forceRefresh = false) {
+    const myEpoch = ++rankLoadEpoch;
     activeRank.value = rank;
     rankSearchKeyword.value = "";
     discoverSubView.value = "rank";
@@ -2323,18 +2349,68 @@ export const useAppStore = defineStore("breezeApp", () => {
     isNowPlayingOpen.value = false;
     isRankGridModalOpen.value = false;
     scrollStageToTop();
-    isLoadingRankSongs.value = true;
-    try {
-      activeRankSongs.value = await kugouClient.getRankSongs(
-        rank.rankId,
-        1,
-        80
-      );
-    } catch (e: any) {
-      notify(`加载榜单曲目失败：${String(e)}`);
-    } finally {
+
+    const cached = !forceRefresh ? rankSongsCache.get(rank.rankId) : undefined;
+    const needsFull500 =
+      rank.rankId === 8888 ||
+      (rank.name || rank.rankName || "").includes("500") ||
+      (rank.totalSongs || 0) > 100;
+
+    if (cached && cached.length > 0) {
+      activeRankSongs.value = cached;
       isLoadingRankSongs.value = false;
+      if (!needsFull500 || cached.length >= 200) {
+        isLoadingMoreRankSongs.value = false;
+        return;
+      }
+    } else {
+      activeRankSongs.value = [];
+      isLoadingRankSongs.value = true;
     }
+
+    try {
+      // 第一阶段：极速获取首屏第 1 页（100 首），实现瞬时首屏渲染
+      if (!cached || cached.length === 0) {
+        const firstPage = await kugouClient.getRankSongs(rank.rankId, 1, 100);
+        if (myEpoch !== rankLoadEpoch) return;
+        activeRankSongs.value = firstPage;
+        rankSongsCache.set(rank.rankId, firstPage);
+        syncRankPreviewAndTotal(rank.rankId, firstPage);
+        isLoadingRankSongs.value = false;
+
+        // 若第 1 页曲目已不足 85 首且并非多页大榜，说明本榜已全部加载完毕
+        if (firstPage.length < 85 && !needsFull500) {
+          isLoadingMoreRankSongs.value = false;
+          return;
+        }
+      }
+
+      // 第二阶段：拉取全量曲目（最高 500 首，如酷狗 TOP500 完整获取 500 首）
+      isLoadingMoreRankSongs.value = true;
+      const fullSongs = await kugouClient.getRankSongs(rank.rankId, 1, 500);
+      if (myEpoch !== rankLoadEpoch) return;
+      if (fullSongs.length >= activeRankSongs.value.length) {
+        activeRankSongs.value = fullSongs;
+        rankSongsCache.set(rank.rankId, fullSongs);
+        syncRankPreviewAndTotal(rank.rankId, fullSongs);
+      }
+    } catch (e: any) {
+      if (myEpoch === rankLoadEpoch && activeRankSongs.value.length === 0) {
+        notify(`加载榜单曲目失败：${String(e)}`);
+      }
+    } finally {
+      if (myEpoch === rankLoadEpoch) {
+        isLoadingRankSongs.value = false;
+        isLoadingMoreRankSongs.value = false;
+      }
+    }
+  }
+
+  async function refreshActiveRank() {
+    if (!activeRank.value) return;
+    rankSongsCache.delete(activeRank.value.rankId);
+    await openRankDetail(activeRank.value, true);
+    notify(`已同步「${activeRank.value.name || activeRank.value.rankName}」最新完整曲库（${activeRankSongs.value.length} 首）✨`);
   }
 
   function resolveFmChannelCovers() {
@@ -2393,14 +2469,39 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   async function playRankDirectly(rank: RankItem) {
     try {
-      notify(`正在加载「${rank.name}」曲目...`);
-      const songs = await kugouClient.getRankSongs(rank.rankId, 1, 50);
-      if (songs.length > 0) {
+      const cached = rankSongsCache.get(rank.rankId);
+      if (cached && cached.length > 0) {
         activeRank.value = rank;
-        activeRankSongs.value = songs;
-        playSongFromList(songs[0], songs);
+        activeRankSongs.value = cached;
+        playSongFromList(cached[0], cached, rank.name || rank.rankName);
+        return;
+      }
+      notify(`正在加载「${rank.name || rank.rankName}」曲目...`);
+      const firstBatch = await kugouClient.getRankSongs(rank.rankId, 1, 100);
+      if (firstBatch.length > 0) {
+        activeRank.value = rank;
+        activeRankSongs.value = firstBatch;
+        rankSongsCache.set(rank.rankId, firstBatch);
+        syncRankPreviewAndTotal(rank.rankId, firstBatch);
+        playSongFromList(firstBatch[0], firstBatch, rank.name || rank.rankName);
+
+        // 后台静默补齐完整榜单曲目（如 TOP500 全量 500 首）
+        if (firstBatch.length >= 85 || rank.rankId === 8888 || (rank.totalSongs || 0) > 100) {
+          kugouClient
+            .getRankSongs(rank.rankId, 1, 500)
+            .then((fullSongs) => {
+              if (fullSongs.length >= firstBatch.length) {
+                rankSongsCache.set(rank.rankId, fullSongs);
+                syncRankPreviewAndTotal(rank.rankId, fullSongs);
+                if (activeRank.value?.rankId === rank.rankId) {
+                  activeRankSongs.value = fullSongs;
+                }
+              }
+            })
+            .catch(() => {});
+        }
       } else {
-        notify(`「${rank.name}」暂无可播曲目`);
+        notify(`「${rank.name || rank.rankName}」暂无可播曲目`);
       }
     } catch (e: any) {
       notify(`加载榜单失败：${String(e)}`);
@@ -5078,6 +5179,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     activeRank,
     activeRankSongs,
     isLoadingRankSongs,
+    isLoadingMoreRankSongs,
     rankSearchKeyword,
     isRankGridModalOpen,
     selectedRankCategory,
@@ -5252,6 +5354,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     refreshAllNewSongTags,
     loadRankList,
     openRankDetail,
+    refreshActiveRank,
     resolveFmChannelCovers,
     refreshDiscoverAll,
     openDailyRecommendPage,

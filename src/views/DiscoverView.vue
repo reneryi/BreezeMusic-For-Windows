@@ -587,12 +587,33 @@
           </div>
         </section>
 
-        <!-- 2. 巅峰排行榜 -->
+        <!-- 2. 巅峰排行榜（重构概念版多彩渐变榜单卡 + 顶部分类快选 + 规范化前三名预览） -->
         <section class="discover-block">
-          <div class="block-header">
+          <div class="block-header rank-home-header">
             <div class="block-title-with-tabs">
               <h3 class="block-title">巅峰排行榜</h3>
               <span class="block-sub-date">/ 官方权威潮流风向标</span>
+
+              <div class="app-sliding-tabs rank-sliding-tabs">
+                <button
+                  v-for="cat in rankHomeCategoryTabs"
+                  :key="cat.id"
+                  type="button"
+                  class="app-sliding-tab-btn"
+                  :class="{ active: homeRankCategory === cat.id }"
+                  @click="homeRankCategory = cat.id"
+                >
+                  <span class="tab-label">{{ cat.label }}</span>
+                  <span
+                    class="tab-bottom-indicator"
+                    :style="{
+                      backgroundColor: cat.color,
+                      opacity: homeRankCategory === cat.id ? 1 : 0,
+                      transform: homeRankCategory === cat.id ? 'scaleX(1)' : 'scaleX(0.2)',
+                    }"
+                  ></span>
+                </button>
+              </div>
             </div>
             <div class="block-right-frameless-actions">
               <button
@@ -609,51 +630,72 @@
               </button>
               <button
                 class="frameless-hover-btn"
-                @click="store.isRankGridModalOpen = true"
+                @click="openAllRanksOverview"
               >
-                <span>全部榜单</span>
+                <span>全部榜单 ({{ store.rankList.length || 57 }})</span>
                 <PlumpIcon name="chevron-right" :size="15" />
               </button>
             </div>
           </div>
 
-          <!-- 巅峰榜单 Bento 卡片矩阵（2行 × 4列 = 8张卡片） -->
+          <!-- 巅峰榜单概念版卡片矩阵（2行 × 4列 = 8张卡片） -->
           <div class="rank-double-row-grid">
             <div
               v-for="(rk, rIdx) in homeDoubleRowRanks"
               :key="rk.rankId"
-              class="rank-bento-card"
-              :class="`rank-accent-${(rIdx % 4) + 1}`"
+              class="rank-concept-card"
+              :class="getRankThemeClass(rk, rIdx)"
               @click="store.openRankDetail(rk)"
             >
-              <div class="rbc-cover-stage">
-                <img :src="rk.coverUrl" class="rbc-cover-img" loading="lazy" draggable="false" alt="" />
+              <div class="rcc-top-header">
+                <div class="rcc-cover-wrap">
+                  <img
+                    v-if="rk.coverUrl"
+                    :src="rk.coverUrl"
+                    class="rcc-cover-img"
+                    loading="lazy"
+                    draggable="false"
+                    alt=""
+                  />
+                  <div v-else class="rcc-cover-fallback">
+                    <PlumpIcon name="trophy" :size="24" color="#fff" />
+                  </div>
+                </div>
+
+                <div class="rcc-head-meta">
+                  <h4 class="rcc-title">{{ rk.name || rk.rankName }}</h4>
+                  <div class="rcc-sub-line">
+                    <span class="rcc-accent-dot"></span>
+                    <span class="rcc-sub-text">
+                      {{ rk.category || "官方热榜" }} · {{ rk.updateFrequency || "每天更新" }}
+                    </span>
+                  </div>
+                </div>
+
                 <button
-                  class="rbc-play-fab"
+                  type="button"
+                  class="rcc-play-circle-btn"
                   title="直接播放该榜单"
                   @click.stop="store.playRankDirectly(rk)"
                 >
-                  <PlumpIcon name="play" :size="14" color="#fff" />
+                  <PlumpIcon name="play" :size="15" color="#fff" />
                 </button>
               </div>
 
-              <div class="rbc-body">
-                <div class="rbc-head-row">
-                  <h4 class="rbc-title">{{ rk.name }}</h4>
-                  <span class="rbc-freq-pill">{{ rk.updateFrequency || rk.category || "每日更新" }}</span>
-                </div>
+              <div class="rcc-divider"></div>
 
-                <div class="rbc-tracks-list">
-                  <div
-                    v-for="(item, lIdx) in getRankPreviewStructured(rk)"
-                    :key="lIdx"
-                    class="rbc-track-row"
-                  >
-                    <span class="rbc-rank-num" :class="'top-' + (lIdx + 1)">
-                      {{ String(lIdx + 1).padStart(2, "0") }}
-                    </span>
-                    <span class="rbc-song-name">{{ item.title }}</span>
-                    <span v-if="item.artist" class="rbc-song-artist">{{ item.artist }}</span>
+              <div class="rcc-tracks-list">
+                <div
+                  v-for="(item, lIdx) in getRankPreviewStructured(rk)"
+                  :key="lIdx"
+                  class="rcc-track-row"
+                >
+                  <span class="rcc-rank-num" :class="'top-' + (lIdx + 1)">
+                    {{ lIdx + 1 }}
+                  </span>
+                  <div class="rcc-track-main">
+                    <span class="rcc-song-name">{{ item.title }}</span>
+                    <span v-if="item.artist" class="rcc-song-artist"> - {{ item.artist }}</span>
                   </div>
                 </div>
               </div>
@@ -946,39 +988,47 @@
       </div>
     </div>
 
-    <!-- ==================== 二级页面 B：双栏巅峰排行榜详情工作台 (左栏快速切榜 + 右栏榜单曲库) ==================== -->
-    <div v-else-if="store.discoverSubView === 'rank'" class="discover-subpage frameless-subpage">
-      <div class="subpage-frameless-header">
+    <!-- ==================== 二级页面 B：巅峰排行榜独立全宽详情页（去除冗余左侧切榜栏 · 开放式大视野头部 + 全量500首分段导航） ==================== -->
+    <div v-else-if="store.discoverSubView === 'rank'" class="discover-subpage frameless-subpage rank-standalone-page">
+      <!-- 顶部无框导航与工具条（预留右上角窗口控制胶囊安全边距） -->
+      <div class="subpage-frameless-header rank-open-topbar">
         <div class="sfh-left">
-          <button class="frameless-hover-btn" @click="store.discoverSubView = 'home'">
+          <button
+            type="button"
+            class="frameless-hover-btn"
+            @click="store.discoverSubView = 'home'"
+          >
             <PlumpIcon name="back" :size="17" />
             <span>返回发现</span>
           </button>
-          <img
-            v-if="store.activeRank?.coverUrl"
-            :src="store.activeRank.coverUrl"
-            class="sfh-rank-cover"
-            alt=""
-          />
-          <div>
-            <h2 class="sfh-title">{{ store.activeRank?.name || "巅峰排行榜" }}</h2>
-            <div class="sfh-sub">
-              {{ store.activeRank?.updateFrequency || "官方实时更新" }} · 共 {{ store.activeRankSongs.length }} 首上榜曲目
-            </div>
+
+          <div class="rank-topbar-breadcrumb">
+            <span class="rtb-cat-tag" :class="getRankThemeClass(store.activeRank)">
+              {{ store.activeRank?.category || "官方热榜" }}
+            </span>
+            <span class="rtb-divider">/</span>
+            <span class="rtb-name">{{ store.activeRank?.name || store.activeRank?.rankName || "巅峰排行榜" }}</span>
           </div>
         </div>
 
         <div class="sfh-right">
-          <div class="frameless-sublist-search">
-            <PlumpIcon name="search" :size="15" />
-            <input
-              v-model="store.rankSearchKeyword"
-              type="text"
-              placeholder="筛选榜单内歌曲 / 歌手..."
+          <button
+            type="button"
+            class="frameless-icon-square-btn discover-refresh-icon-btn"
+            :disabled="store.isLoadingRankSongs || store.isLoadingMoreRankSongs"
+            title="刷新当前榜单完整曲库"
+            @click="store.refreshActiveRank()"
+          >
+            <PlumpIcon
+              name="refresh"
+              :size="19"
+              :class="{ 'is-spinning': store.isLoadingRankSongs || store.isLoadingMoreRankSongs }"
             />
-          </div>
+          </button>
+
           <button
             v-if="isCurrentSongInList(store.activeRankSongs)"
+            type="button"
             class="frameless-hover-btn"
             title="定位当前播放歌曲"
             @click="scrollToCurrentPlayingRankSong"
@@ -986,134 +1036,233 @@
             <PlumpIcon name="locate" :size="15" />
             <span>定位在播</span>
           </button>
+
           <button
-            class="frameless-hover-btn"
-            @click="store.isRankGridModalOpen = true"
+            type="button"
+            class="frameless-hover-btn primary-tint"
+            @click="openAllRanksOverview"
           >
             <PlumpIcon name="grid" :size="16" />
-            <span>榜单总览</span>
-          </button>
-          <button
-            class="frameless-hover-btn primary-tint"
-            @click="playAllActiveRank"
-          >
-            <PlumpIcon name="play" :size="16" />
-            <span>播放全部</span>
+            <span>榜单总览 ({{ store.rankList.length || 57 }})</span>
           </button>
         </div>
       </div>
 
-      <!-- 双栏榜单工作台：左侧榜单快速切换抽屉 + 右侧双列无框榜单曲库 -->
-      <div class="rank-detail-workspace">
-        <aside class="rank-left-sidebar">
-          <div class="rank-hero-box">
+      <!-- 开放式旗舰榜单横幅舞台（对齐 Android RankDetailScreen 开放式头部 + 桌面端高密度交互） -->
+      <div class="rank-hero-banner-card" :class="getRankThemeClass(store.activeRank)">
+        <div class="rhb-left">
+          <div class="rhb-cover-box">
             <img
-              v-if="store.activeRank?.coverUrl"
-              :src="store.activeRank.coverUrl"
-              class="rank-big-cover"
+              v-if="activeRankCover"
+              :src="activeRankCover"
+              class="rhb-cover-img"
+              draggable="false"
               alt=""
             />
-            <div v-else class="rank-big-cover-fallback">
-              <PlumpIcon name="trophy" :size="36" color="var(--gold)" />
+            <div v-else class="rhb-cover-fallback">
+              <PlumpIcon name="trophy" :size="42" color="#fff" />
             </div>
-            <div class="rank-side-title">{{ store.activeRank?.name || "巅峰排行榜" }}</div>
-            <div class="rank-side-sub">
-              {{ store.activeRank?.updateFrequency || "每日实时更新" }} ·
-              {{ store.activeRankSongs.length }} 首
+            <span class="rhb-count-badge">
+              {{ store.activeRankSongs.length || store.activeRank?.totalSongs || 100 }} 首
+            </span>
+          </div>
+
+          <div class="rhb-info-col">
+            <div class="rhb-eyebrow-row">
+              <span class="rhb-pill accent">
+                <span class="rhb-dot"></span>
+                {{ store.activeRank?.category || "官方热榜" }}
+              </span>
+              <span class="rhb-pill">
+                {{ store.activeRank?.updateFrequency || "每天更新" }}
+              </span>
+              <span class="rhb-pill">
+                共 {{ store.activeRankSongs.length }} 首上榜曲目
+              </span>
+              <span v-if="activeRankHiResCount > 0" class="rhb-pill highlight">
+                {{ activeRankHiResCount }} 首无损 / Hi-Res
+              </span>
+              <span v-if="store.isLoadingMoreRankSongs" class="rhb-pill syncing">
+                <PlumpIcon name="refresh" :size="12" class="is-spinning" />
+                <span>正在同步完整榜单曲库...</span>
+              </span>
             </div>
+
+            <h1 class="rhb-title">
+              {{ store.activeRank?.name || store.activeRank?.rankName || "巅峰排行榜" }}
+            </h1>
+
+            <div class="rhb-cta-row">
+              <button
+                type="button"
+                class="rhb-primary-play-btn"
+                :disabled="filteredRankSongsWithIndex.length === 0"
+                @click="playAllActiveRank"
+              >
+                <PlumpIcon name="play" :size="16" color="#fff" />
+                <span>播放全部 ({{ filteredRankSongsWithIndex.length }})</span>
+              </button>
+
+              <button
+                type="button"
+                class="rhb-secondary-btn"
+                :disabled="filteredRankSongsWithIndex.length === 0"
+                @click="shufflePlayActiveRank"
+              >
+                <PlumpIcon name="shuffle" :size="15" />
+                <span>随机漫游</span>
+              </button>
+
+              <button
+                type="button"
+                class="rhb-secondary-btn"
+                @click="openAllRanksOverview"
+              >
+                <PlumpIcon name="grid" :size="15" />
+                <span>切换榜单</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="rhb-right">
+          <div class="rhb-search-box">
+            <PlumpIcon name="search" :size="15" />
+            <input
+              v-model="store.rankSearchKeyword"
+              type="text"
+              placeholder="筛选本榜歌曲 / 歌手 / 专辑..."
+            />
             <button
-              class="coral-play-all-pill sm"
-              style="width: 100%; margin-top: 4px"
-              @click="playAllActiveRank"
+              v-if="store.rankSearchKeyword"
+              type="button"
+              class="clear-inline-btn"
+              @click="store.rankSearchKeyword = ''"
             >
-              <PlumpIcon name="play" :size="15" color="#fff" />
-              <span>播放全榜</span>
+              ×
             </button>
           </div>
 
-          <div class="rank-quick-switcher">
-            <div class="rqs-label">快速切换官方榜单 ({{ store.rankList.length }})</div>
+          <!-- 多页大榜（如 TOP500 共 500 首）快速区间分段导航条 -->
+          <div
+            v-if="rankRangeSegments.length > 1 && !store.rankSearchKeyword.trim()"
+            class="rank-range-pills"
+          >
             <button
-              v-for="rk in store.rankList"
-              :key="rk.rankId"
-              class="rqs-item"
-              :class="{ active: store.activeRank?.rankId === rk.rankId }"
-              @click="store.openRankDetail(rk)"
+              v-for="seg in rankRangeSegments"
+              :key="seg.key"
+              type="button"
+              class="rank-range-pill"
+              :class="{ active: activeRankRangeKey === seg.key }"
+              @click="activeRankRangeKey = seg.key"
             >
-              <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
-                {{ rk.name }}
-              </span>
-              <span class="rqs-cat">{{ rk.category || "官方" }}</span>
+              {{ seg.label }}
             </button>
           </div>
-        </aside>
+        </div>
+      </div>
 
-        <div class="rank-right-tracks">
-          <div class="frameless-songs-grid-2col">
-            <div
-              v-for="(song, idx) in filteredRankSongs"
-              :key="song.hash + '_' + idx"
-              :data-rank-song-hash="song.hash"
-              class="frameless-song-row"
-              :class="{ active: store.currentSong?.hash === song.hash }"
-              @click="store.playSongFromList(song, store.activeRankSongs)"
-              @contextmenu.prevent="store.openSongContextMenu($event, song, store.activeRankSongs)"
-            >
-              <span class="fs-index" :class="idx < 3 ? 'rank-top-' + (idx + 1) : ''">
-                {{ idx + 1 }}
-              </span>
-              <div class="fs-cover-wrap">
-                <img :src="song.coverUrl" class="fs-cover" loading="lazy" alt="" />
-                <div class="fs-cover-play">
-                  <PlumpIcon
-                    :name="store.currentSong?.hash === song.hash && store.isPlaying ? 'pause' : 'play'"
-                    :size="15"
-                    color="#fff"
-                  />
-                </div>
+      <!-- 全宽双列无框榜单曲目网格 -->
+      <div v-if="store.isLoadingRankSongs && store.activeRankSongs.length === 0" class="ns-empty-hint">
+        <PlumpIcon name="refresh" :size="20" class="is-spinning" />
+        <span>正在同步「{{ store.activeRank?.name || "巅峰榜单" }}」实时权威曲库...</span>
+      </div>
+
+      <div v-else-if="filteredRankSongsWithIndex.length === 0" class="ns-empty-hint">
+        <span>未找到匹配的榜单曲目，可清空筛选词或点击右上角刷新重试</span>
+      </div>
+
+      <div v-else class="rank-fullwidth-tracks">
+        <div class="frameless-songs-grid-2col">
+          <div
+            v-for="item in filteredRankSongsWithIndex"
+            :key="item.song.hash + '_' + item.rankNo"
+            :data-rank-song-hash="item.song.hash"
+            class="frameless-song-row"
+            :class="{ active: store.currentSong?.hash === item.song.hash }"
+            @click="store.playSongFromList(item.song, store.activeRankSongs, store.activeRank?.name || '巅峰榜单')"
+            @contextmenu.prevent="store.openSongContextMenu($event, item.song, store.activeRankSongs)"
+          >
+            <span class="fs-index" :class="item.rankNo <= 3 ? 'rank-top-' + item.rankNo : ''">
+              <template v-if="store.currentSong?.hash === item.song.hash && store.isPlaying">
+                <span class="mini-eq-bars"><i></i><i></i><i></i></span>
+              </template>
+              <template v-else>
+                {{ item.rankNo }}
+              </template>
+            </span>
+
+            <div class="fs-cover-wrap">
+              <img :src="item.song.coverUrl" class="fs-cover" loading="lazy" alt="" />
+              <div class="fs-cover-play">
+                <PlumpIcon
+                  :name="store.currentSong?.hash === item.song.hash && store.isPlaying ? 'pause' : 'play'"
+                  :size="15"
+                  color="#fff"
+                />
               </div>
-              <div class="fs-meta">
-                <div class="fs-title-line">
-                  <span class="fs-title">{{ song.title }}</span>
-                  <span v-if="song.hasHiRes || song.isHiRes" class="fs-badge hires">Hi-Res</span>
-                  <span v-else-if="song.hasSq || song.isLossless" class="fs-badge sq">SQ</span>
-                  <span v-if="song.isVip" class="fs-badge vip">VIP</span>
-                </div>
-                <div class="fs-sub-line">
-                  <button
-                    class="inline-meta-btn"
-                    title="点击进入歌手独立主页"
-                    @click.stop="store.navigateToSongArtist(song)"
-                  >
-                    {{ song.artist }}
-                  </button>
-                  <button
-                    v-if="song.album"
-                    class="inline-meta-btn fs-album"
-                    title="点击进入专辑独立页面"
-                    @click.stop="store.navigateToSongAlbum(song)"
-                  >
-                    · {{ song.album }}
-                  </button>
-                </div>
+            </div>
+
+            <div class="fs-meta">
+              <div class="fs-title-line">
+                <span class="fs-title">{{ item.song.title }}</span>
+                <span v-if="item.song.hasHiRes || item.song.isHiRes" class="fs-badge hires">Hi-Res</span>
+                <span v-else-if="item.song.hasSq || item.song.isLossless" class="fs-badge sq">SQ</span>
+                <span v-if="item.song.isVip" class="fs-badge vip">VIP</span>
               </div>
-              <div class="fs-actions" @click.stop>
+              <div class="fs-sub-line">
                 <button
-                  class="fs-icon-btn"
-                  :class="{ liked: store.isSongLiked(song.hash) }"
-                  @click="store.toggleFavoriteSong(song)"
+                  type="button"
+                  class="inline-meta-btn"
+                  title="点击进入歌手独立主页"
+                  @click.stop="store.navigateToSongArtist(item.song)"
                 >
-                  <PlumpIcon
-                    :name="store.isSongLiked(song.hash) ? 'heart-filled' : 'heart'"
-                    :size="16"
-                  />
+                  {{ item.song.artist }}
                 </button>
-                <button class="fs-icon-btn" @click="store.addToPlaylistModalSong = song">
-                  <PlumpIcon name="plus" :size="16" />
+                <button
+                  v-if="item.song.album"
+                  type="button"
+                  class="inline-meta-btn fs-album"
+                  title="点击进入专辑独立页面"
+                  @click.stop="store.navigateToSongAlbum(item.song)"
+                >
+                  · {{ item.song.album }}
                 </button>
               </div>
-              <span class="fs-duration">{{ formatDuration(song) }}</span>
             </div>
+
+            <div class="fs-actions" @click.stop>
+              <button
+                type="button"
+                class="fs-icon-btn"
+                :class="{ liked: store.isSongLiked(item.song.hash) }"
+                title="喜欢"
+                @click="store.toggleFavoriteSong(item.song)"
+              >
+                <PlumpIcon
+                  :name="store.isSongLiked(item.song.hash) ? 'heart-filled' : 'heart'"
+                  :size="16"
+                />
+              </button>
+              <button
+                type="button"
+                class="fs-icon-btn"
+                title="查看评论"
+                @click="store.openCommentsModal(item.song)"
+              >
+                <PlumpIcon name="comment" :size="15" />
+              </button>
+              <button
+                type="button"
+                class="fs-icon-btn"
+                title="添加到歌单"
+                @click="store.addToPlaylistModalSong = item.song"
+              >
+                <PlumpIcon name="plus" :size="16" />
+              </button>
+            </div>
+
+            <span class="fs-duration">{{ formatDuration(item.song) }}</span>
           </div>
         </div>
       </div>
@@ -1305,46 +1454,132 @@
       </div>
     </div>
 
-    <!-- 全部榜单网格选择弹窗 -->
+    <!-- 全部榜单分类总览弹窗（五维分类 + 搜索过滤 + 概念版横向榜单卡片） -->
     <transition name="fade-pop">
       <div
         v-if="store.isRankGridModalOpen"
-        class="modal-backdrop"
+        class="modal-backdrop rank-overview-backdrop"
         @click.self="store.isRankGridModalOpen = false"
       >
-        <div class="rank-all-modal glass-popover">
-          <div class="modal-top-bar">
-            <h3>全部官方巅峰榜单</h3>
-            <button class="frameless-hover-btn" @click="store.isRankGridModalOpen = false">
-              <PlumpIcon name="close" :size="16" />
-            </button>
-          </div>
-          <div class="rank-modal-grid">
-            <div
-              v-for="(rk, rIdx) in store.rankList"
-              :key="rk.rankId"
-              class="rank-bento-card"
-              :class="`rank-accent-${(rIdx % 4) + 1}`"
-              @click="store.openRankDetail(rk)"
-            >
-              <div class="rbc-cover-stage sm">
-                <img :src="rk.coverUrl" class="rbc-cover-img" loading="lazy" draggable="false" alt="" />
+        <div class="rank-overview-dialog glass-popover">
+          <div class="rom-header">
+            <div class="rom-title-group">
+              <h3>全部官方巅峰榜单</h3>
+              <span class="rom-total-pill">共 {{ store.rankList.length }} 个权威榜单</span>
+            </div>
+
+            <div class="rom-header-right">
+              <div class="rom-search-box">
+                <PlumpIcon name="search" :size="14" class="rom-search-icon" />
+                <input
+                  v-model="rankModalSearchKeyword"
+                  type="text"
+                  placeholder="搜索榜单名称或热歌..."
+                  class="rom-search-input"
+                />
                 <button
-                  class="rbc-play-fab"
-                  @click.stop="store.playRankDirectly(rk)"
+                  v-if="rankModalSearchKeyword"
+                  class="rom-search-clear"
+                  @click="rankModalSearchKeyword = ''"
                 >
-                  <PlumpIcon name="play" :size="14" color="#fff" />
+                  <PlumpIcon name="close" :size="11" />
                 </button>
               </div>
-              <div class="rbc-body">
-                <div class="rbc-head-row">
-                  <h4 class="rbc-title">{{ rk.name }}</h4>
-                </div>
-                <span class="rbc-freq-pill" style="align-self: flex-start">
-                  {{ rk.updateFrequency || "每日更新" }}
-                </span>
-              </div>
+              <button class="frameless-hover-btn rom-close-btn" @click="store.isRankGridModalOpen = false" title="关闭">
+                <PlumpIcon name="close" :size="16" />
+              </button>
             </div>
+          </div>
+
+          <!-- 分类胶囊导航栏 -->
+          <div class="rom-category-tabs">
+            <button
+              v-for="cat in rankOverviewCategories"
+              :key="cat.key"
+              class="rom-cat-pill"
+              :class="{ active: rankModalCategory === cat.key }"
+              @click="rankModalCategory = cat.key"
+            >
+              <span>{{ cat.label }}</span>
+              <span class="rom-cat-count">{{ cat.count }}</span>
+            </button>
+          </div>
+
+          <!-- 分类榜单分组滚动区 -->
+          <div class="rom-scroll-body">
+            <div
+              v-if="groupedModalRankSections.length === 0"
+              class="rom-empty-state"
+            >
+              没有找到匹配的榜单
+            </div>
+
+            <section
+              v-for="group in groupedModalRankSections"
+              :key="group.category"
+              class="rom-category-section"
+            >
+              <div class="rom-sec-header">
+                <div class="rom-sec-title-wrap">
+                  <span class="rom-sec-accent-bar"></span>
+                  <h4 class="rom-sec-title">{{ group.category }}</h4>
+                  <span class="rom-sec-sub">{{ group.subtitle }}</span>
+                </div>
+                <span class="rom-sec-badge">{{ group.ranks.length }} 个榜单</span>
+              </div>
+
+              <div class="rom-cards-grid">
+                <div
+                  v-for="(rk, rIdx) in group.ranks"
+                  :key="rk.rankId"
+                  class="rank-overview-card"
+                  :class="[
+                    getRankThemeClass(rk, rIdx),
+                    { 'is-active-rank': store.activeRank?.rankId === rk.rankId }
+                  ]"
+                  @click="store.openRankDetail(rk)"
+                >
+                  <div class="roc-cover-wrap">
+                    <img
+                      v-if="rk.coverUrl"
+                      :src="rk.coverUrl"
+                      class="roc-cover-img"
+                      loading="lazy"
+                      draggable="false"
+                      alt=""
+                    />
+                    <div v-else class="roc-cover-fallback">
+                      <span>{{ (rk.name || rk.rankName || "榜单").slice(0, 4) }}</span>
+                    </div>
+                  </div>
+
+                  <div class="roc-info">
+                    <div class="roc-title-row">
+                      <h5 class="roc-title" :title="rk.name || rk.rankName">{{ rk.name || rk.rankName }}</h5>
+                    </div>
+                    <div class="roc-meta-row">
+                      <span class="roc-freq-tag">{{ rk.updateFrequency || "定期更新" }}</span>
+                      <span v-if="rk.totalSongs > 0" class="roc-count-tag">{{ rk.totalSongs }}首</span>
+                    </div>
+                    <p
+                      v-if="getRankFirstPreviewText(rk)"
+                      class="roc-top1-preview"
+                      :title="getRankFirstPreviewText(rk)"
+                    >
+                      TOP1 · {{ getRankFirstPreviewText(rk) }}
+                    </p>
+                  </div>
+
+                  <button
+                    class="roc-play-btn"
+                    title="直接播放此榜单"
+                    @click.stop="store.playRankDirectly(rk)"
+                  >
+                    <PlumpIcon name="play" :size="13" color="currentColor" />
+                  </button>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
       </div>
@@ -1698,12 +1933,141 @@ function toggleAllDateGroups() {
   collapsedDateKeys.value = nextMap;
 }
 
-// ==================== 巅峰排行榜：结构化提取前三名歌名与歌手 ====================
-const homeDoubleRowRanks = computed(() => store.rankList.slice(0, 8));
+// ==================== 巅峰排行榜：五维分类、概念版卡片、全量榜单总览与详情页 ====================
+const RANK_CATEGORY_METAS = [
+  { key: "官方热榜", label: "官方热榜", subtitle: "全站潮流核心风向标，实时捕捉热播单曲" },
+  { key: "特色音乐", label: "特色音乐", subtitle: "短视频、影视综艺、ACG 与世代热歌精选" },
+  { key: "曲风流派", label: "曲风流派", subtitle: "电音、说唱、摇滚、民谣、国风与纯音乐垂类榜单" },
+  { key: "地区语种", label: "地区语种", subtitle: "华语、粤语、欧美、日韩及小语种地区热歌榜" },
+  { key: "全球权威", label: "全球权威", subtitle: "Billboard、Oricon、UK、Melon 等国际权威榜单" },
+] as const;
+
+const homeRankCategory = ref<string>("featured");
+const rankHomeCategoryTabs = [
+  { id: "featured", key: "featured", label: "精选推荐", color: "#ff5b6b" },
+  { id: "官方热榜", key: "官方热榜", label: "官方热榜", color: "#ff5b6b" },
+  { id: "特色音乐", key: "特色音乐", label: "特色音乐", color: "#10b981" },
+  { id: "曲风流派", key: "曲风流派", label: "曲风流派", color: "#9b6bff" },
+  { id: "地区语种", key: "地区语种", label: "地区语种", color: "#18bfff" },
+  { id: "全球权威", key: "全球权威", label: "全球权威", color: "#f59e0b" },
+];
+
+const homeDoubleRowRanks = computed(() => {
+  if (homeRankCategory.value === "featured") {
+    return store.rankList.slice(0, 8);
+  }
+  const matched = store.rankList.filter((r) => (r.category || "特色音乐") === homeRankCategory.value);
+  return (matched.length > 0 ? matched : store.rankList).slice(0, 8);
+});
+
+const rankModalCategory = ref<string>("all");
+const rankModalSearchKeyword = ref<string>("");
+
+function openAllRanksOverview() {
+  rankModalSearchKeyword.value = "";
+  store.isRankGridModalOpen = true;
+}
+
+const rankOverviewCategories = computed(() => {
+  const total = store.rankList.length;
+  const counts: Record<string, number> = {};
+  for (const r of store.rankList) {
+    const c = r.category || "特色音乐";
+    counts[c] = (counts[c] || 0) + 1;
+  }
+  return [
+    { key: "all", label: "全部榜单", count: total },
+    ...RANK_CATEGORY_METAS.map((m) => ({
+      key: m.key,
+      label: m.label,
+      count: counts[m.key] || 0,
+    })).filter((item) => item.count > 0),
+  ];
+});
+
+const groupedModalRankSections = computed(() => {
+  const kw = rankModalSearchKeyword.value.trim().toLowerCase();
+  const targetCat = rankModalCategory.value;
+
+  const filtered = store.rankList.filter((rk) => {
+    if (targetCat !== "all" && (rk.category || "特色音乐") !== targetCat) {
+      return false;
+    }
+    if (!kw) return true;
+    const displayName = (rk.name || rk.rankName || "").toLowerCase();
+    const inName = displayName.includes(kw);
+    const inCat = (rk.category || "").toLowerCase().includes(kw);
+    const previews = rk.songPreviews || rk.topSongsPreview || [];
+    const inPreview = previews.some((p) => p.toLowerCase().includes(kw));
+    return inName || inCat || inPreview;
+  });
+
+  const sections: Array<{ category: string; subtitle: string; ranks: RankItem[] }> = [];
+  for (const meta of RANK_CATEGORY_METAS) {
+    const items = filtered.filter((r) => (r.category || "特色音乐") === meta.key);
+    if (items.length > 0) {
+      sections.push({
+        category: meta.label,
+        subtitle: meta.subtitle,
+        ranks: items,
+      });
+    }
+  }
+
+  // 兜底：若存在未归入预设五类的榜单，追加显示
+  const knownKeys = new Set<string>(RANK_CATEGORY_METAS.map((m) => m.key));
+  const others = filtered.filter((r) => !knownKeys.has(r.category || "特色音乐"));
+  if (others.length > 0) {
+    sections.push({
+      category: "其他榜单",
+      subtitle: "更多垂直领域特色榜单",
+      ranks: others,
+    });
+  }
+
+  return sections;
+});
+
+function getRankThemeClass(rk: RankItem | null | undefined, fallbackIdx = 0): string {
+  if (!rk) return "rank-theme-coral";
+  const name = rk.name || rk.rankName || "";
+  const cat = rk.category || "";
+  if (name.includes("飙升") || name.includes("TOP500") || name.includes("热歌")) {
+    return "rank-theme-coral";
+  }
+  if (name.includes("新歌") || cat === "地区语种") {
+    return "rank-theme-cyan";
+  }
+  if (cat === "曲风流派" || name.includes("电音") || name.includes("说唱") || name.includes("ACG")) {
+    return "rank-theme-violet";
+  }
+  if (cat === "全球权威" || name.includes("Billboard") || name.includes("UK") || name.includes("金曲")) {
+    return "rank-theme-amber";
+  }
+  if (cat === "特色音乐") {
+    return "rank-theme-emerald";
+  }
+  const themes = [
+    "rank-theme-coral",
+    "rank-theme-cyan",
+    "rank-theme-violet",
+    "rank-theme-amber",
+    "rank-theme-emerald",
+  ];
+  return themes[fallbackIdx % themes.length];
+}
+
+function sanitizePreviewRawLine(raw: string): string {
+  return (raw || "")
+    .trim()
+    .replace(/^\d+\s*[.、．\-\s]\s*/, "")
+    .trim();
+}
 
 function getRankPreviewLines(rk: RankItem): string[] {
-  if (rk.songPreviews && rk.songPreviews.length > 0) {
-    return rk.songPreviews.slice(0, 3);
+  const previews = rk.songPreviews && rk.songPreviews.length > 0 ? rk.songPreviews : rk.topSongsPreview;
+  if (previews && previews.length > 0) {
+    return previews.slice(0, 3).map(sanitizePreviewRawLine).filter(Boolean);
   }
   const fallbackPool = store.recommendSongs.length > 0 ? store.recommendSongs : store.newSongs;
   if (fallbackPool.length >= 3) {
@@ -1716,7 +2080,7 @@ function getRankPreviewLines(rk: RankItem): string[] {
 function getRankPreviewStructured(rk: RankItem): Array<{ title: string; artist: string }> {
   const lines = getRankPreviewLines(rk);
   return lines.map((line) => {
-    const clean = (line || "").trim();
+    const clean = sanitizePreviewRawLine(line);
     const sepIdx = clean.indexOf(" - ");
     if (sepIdx > 0) {
       return {
@@ -1728,20 +2092,92 @@ function getRankPreviewStructured(rk: RankItem): Array<{ title: string; artist: 
   });
 }
 
-const filteredRankSongs = computed(() => {
+function getRankFirstPreviewText(rk: RankItem): string {
+  const previews = rk.songPreviews && rk.songPreviews.length > 0 ? rk.songPreviews : rk.topSongsPreview;
+  if (previews && previews.length > 0) {
+    return sanitizePreviewRawLine(previews[0]);
+  }
+  return "";
+}
+
+const activeRankRangeKey = ref<string>("all");
+
+watch(
+  () => store.activeRank?.rankId,
+  () => {
+    activeRankRangeKey.value = "all";
+  }
+);
+
+const rankRangeSegments = computed(() => {
+  const total = store.activeRankSongs.length;
+  if (total <= 100) return [];
+  const segs: Array<{ key: string; label: string; start: number; end: number }> = [
+    { key: "all", label: `全部 (${total})`, start: 1, end: total },
+  ];
+  const step = 100;
+  for (let start = 1; start <= total; start += step) {
+    const end = Math.min(total, start + step - 1);
+    segs.push({
+      key: `${start}-${end}`,
+      label: `${start}-${end}`,
+      start,
+      end,
+    });
+  }
+  return segs;
+});
+
+const activeRankCover = computed(() => {
+  if (store.activeRank?.coverUrl) return store.activeRank.coverUrl;
+  const firstWithCover = store.activeRankSongs.find((s) => Boolean(s.coverUrl));
+  return firstWithCover?.coverUrl || "";
+});
+
+const activeRankHiResCount = computed(
+  () =>
+    store.activeRankSongs.filter(
+      (s) => s.hasHiRes || s.hasSq || s.isLossless || s.isHiRes
+    ).length
+);
+
+const filteredRankSongsWithIndex = computed<Array<{ song: Song; rankNo: number }>>(() => {
   const kw = store.rankSearchKeyword.trim().toLowerCase();
-  if (!kw) return store.activeRankSongs;
-  return store.activeRankSongs.filter(
-    (s) =>
-      s.title.toLowerCase().includes(kw) ||
-      s.artist.toLowerCase().includes(kw)
-  );
+  const allWithRank = store.activeRankSongs.map((song, idx) => ({
+    song,
+    rankNo: idx + 1,
+  }));
+
+  if (kw) {
+    return allWithRank.filter(
+      ({ song }) =>
+        song.title.toLowerCase().includes(kw) ||
+        song.artist.toLowerCase().includes(kw) ||
+        (song.album && song.album.toLowerCase().includes(kw))
+    );
+  }
+
+  if (activeRankRangeKey.value !== "all") {
+    const parts = activeRankRangeKey.value.split("-").map(Number);
+    if (parts.length === 2 && !Number.isNaN(parts[0]) && !Number.isNaN(parts[1])) {
+      const [start, end] = parts;
+      return allWithRank.filter(({ rankNo }) => rankNo >= start && rankNo <= end);
+    }
+  }
+
+  return allWithRank;
 });
 
 function playAllActiveRank() {
   if (store.activeRankSongs.length > 0) {
     store.playSongFromList(store.activeRankSongs[0], store.activeRankSongs);
   }
+}
+
+function shufflePlayActiveRank() {
+  if (store.activeRankSongs.length === 0) return;
+  const rndIdx = Math.floor(Math.random() * store.activeRankSongs.length);
+  store.playSongFromList(store.activeRankSongs[rndIdx], store.activeRankSongs);
 }
 
 // ==================== 精选场景电台 & 电台广场 ====================

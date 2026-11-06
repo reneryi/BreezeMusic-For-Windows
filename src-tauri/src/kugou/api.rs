@@ -2987,13 +2987,18 @@ impl KugouApiService {
                         .or_else(|| o.get("songs"))
                         .and_then(|v| v.as_array())
                     {
-                        for (idx, s) in s_arr.iter().take(3).enumerate() {
+                        for s in s_arr.iter().take(3) {
                             let sname = {
                                 let n = Self::val_str(s, "songname");
                                 if !n.is_empty() {
                                     n
                                 } else {
-                                    Self::val_str(s, "name")
+                                    let n2 = Self::val_str(s, "name");
+                                    if !n2.is_empty() {
+                                        n2
+                                    } else {
+                                        Self::val_str(s, "filename")
+                                    }
                                 }
                             };
                             let singer = {
@@ -3004,28 +3009,18 @@ impl KugouApiService {
                                     Self::val_str(s, "author_name")
                                 }
                             };
-                            if !sname.is_empty() {
-                                if !singer.is_empty() && !sname.contains(&singer) {
-                                    previews.push(format!("{}. {} - {}", idx + 1, sname, singer));
-                                } else {
-                                    previews.push(format!("{}. {}", idx + 1, sname));
-                                }
+                            if let Some(formatted) = Self::format_rank_preview_line(&sname, &singer) {
+                                previews.push(formatted);
                             }
                         }
                     }
 
-                    let freq = {
-                        let f = Self::val_str(o, "update_frequency");
-                        if !f.is_empty() {
-                            f
-                        } else {
-                            "实时更新".to_string()
-                        }
-                    };
+                    let freq = Self::normalize_rank_update_freq(&Self::val_str(o, "update_frequency"), &name);
                     let category = Self::classify_rank_category(id as i32, &name);
-                    let default_total = if id == 8888 { 500 } else { 100 };
+                    let default_total = if id == 8888 || name.contains("500") { 500 } else { 100 };
                     let raw_total = Self::val_i64(o, "songcount")
                         .or_else(|| Self::val_i64(o, "total"))
+                        .or_else(|| Self::val_i64(o, "count"))
                         .unwrap_or(default_total) as i32;
                     ranks.push(RankItem {
                         rank_id: id as i32,
@@ -3034,8 +3029,96 @@ impl KugouApiService {
                         update_frequency: freq,
                         top_songs_preview: previews,
                         category,
-                        total_songs: if raw_total > 0 { raw_total } else { default_total as i32 },
+                        total_songs: if id == 8888 {
+                            500
+                        } else if raw_total > 0 {
+                            raw_total
+                        } else {
+                            default_total as i32
+                        },
                     });
+                }
+            }
+        }
+
+        // 通道 2: 对齐 MakcRe/KuGouMusicApi module/rank_list.js (/ocean/v6/rank/list) 兜底
+        if ranks.is_empty() {
+            let session = self.store.session();
+            let mut ocean_query = HashMap::new();
+            ocean_query.insert("plat".to_string(), "2".to_string());
+            ocean_query.insert("withsong".to_string(), "1".to_string());
+            ocean_query.insert("parentid".to_string(), "0".to_string());
+            if let Ok(resp) = self
+                .transport
+                .call(
+                    "/ocean/v6/rank/list",
+                    &dev,
+                    session.as_ref(),
+                    ocean_query,
+                    None,
+                    "https://gateway.kugou.com",
+                    "GET",
+                    false,
+                    HashMap::new(),
+                    true,
+                    true,
+                )
+                .await
+            {
+                let info_arr = resp
+                    .data()
+                    .get("data")
+                    .and_then(|d| d.get("info"))
+                    .and_then(|v| v.as_array())
+                    .or_else(|| resp.data().get("info").and_then(|v| v.as_array()));
+                if let Some(arr) = info_arr {
+                    let mut seen_ids = HashSet::new();
+                    for o in arr {
+                        let Some(id) = Self::val_i64(o, "rankid") else {
+                            continue;
+                        };
+                        if id <= 0 || !seen_ids.insert(id) {
+                            continue;
+                        }
+                        let name = Self::val_str(o, "rankname");
+                        if name.is_empty() {
+                            continue;
+                        }
+                        let cover_raw = [
+                            Self::val_str(o, "imgurl"),
+                            Self::val_str(o, "pic"),
+                            Self::val_str(o, "banner7url"),
+                        ]
+                        .into_iter()
+                        .find(|s| !s.is_empty())
+                        .unwrap_or_default();
+                        let mut previews = Vec::new();
+                        if let Some(s_arr) = o
+                            .get("songinfo")
+                            .or_else(|| o.get("songs"))
+                            .and_then(|v| v.as_array())
+                        {
+                            for s in s_arr.iter().take(3) {
+                                let sname = Self::val_str(s, "songname");
+                                let singer = Self::val_str(s, "singername");
+                                if let Some(formatted) = Self::format_rank_preview_line(&sname, &singer) {
+                                    previews.push(formatted);
+                                }
+                            }
+                        }
+                        let freq = Self::normalize_rank_update_freq(&Self::val_str(o, "update_frequency"), &name);
+                        let category = Self::classify_rank_category(id as i32, &name);
+                        let default_total = if id == 8888 || name.contains("500") { 500 } else { 100 };
+                        ranks.push(RankItem {
+                            rank_id: id as i32,
+                            rank_name: name,
+                            cover_url: signer::normalize_image_url(Some(&cover_raw)),
+                            update_frequency: freq,
+                            top_songs_preview: previews,
+                            category,
+                            total_songs: default_total as i32,
+                        });
+                    }
                 }
             }
         }
@@ -3048,9 +3131,9 @@ impl KugouApiService {
                     cover_url: "https://imge.kugou.com/commendpic/20210729/20210729175317789524.jpg".to_string(),
                     update_frequency: "每天更新".to_string(),
                     top_songs_preview: vec![
-                        "1. 瞬 - 告五人".to_string(),
-                        "2. 奢香夫人 - 凤凰传奇".to_string(),
-                        "3. 离别开出花 - 就是南方凯".to_string(),
+                        "瞬 - 告五人".to_string(),
+                        "奢香夫人 - 凤凰传奇".to_string(),
+                        "离别开出花 - 就是南方凯".to_string(),
                     ],
                     category: "官方热榜".to_string(),
                     total_songs: 100,
@@ -3061,9 +3144,9 @@ impl KugouApiService {
                     cover_url: "https://imge.kugou.com/commendpic/20210729/20210729175249561655.jpg".to_string(),
                     update_frequency: "每天更新".to_string(),
                     top_songs_preview: vec![
-                        "1. 晴天 - 周杰伦".to_string(),
-                        "2. 爱在西元前 - 周杰伦".to_string(),
-                        "3. 篇章 - 张韶涵".to_string(),
+                        "晴天 - 周杰伦".to_string(),
+                        "爱在西元前 - 周杰伦".to_string(),
+                        "篇章 - 张韶涵".to_string(),
                     ],
                     category: "官方热榜".to_string(),
                     total_songs: 500,
@@ -3074,9 +3157,9 @@ impl KugouApiService {
                     cover_url: "https://imge.kugou.com/commendpic/20210729/20210729175344315250.jpg".to_string(),
                     update_frequency: "每天更新".to_string(),
                     top_songs_preview: vec![
-                        "1. 悬溺 - 葛东琪".to_string(),
-                        "2. 若把你 - Kirsty刘瑾睿".to_string(),
-                        "3. 晚风告白 - 星野".to_string(),
+                        "悬溺 - 葛东琪".to_string(),
+                        "若把你 - Kirsty刘瑾睿".to_string(),
+                        "晚风告白 - 星野".to_string(),
                     ],
                     category: "官方热榜".to_string(),
                     total_songs: 100,
@@ -3087,48 +3170,48 @@ impl KugouApiService {
                     cover_url: "https://imge.kugou.com/commendpic/20210729/20210729175317789524.jpg".to_string(),
                     update_frequency: "每天更新".to_string(),
                     top_songs_preview: vec![
-                        "1. 向云端 - 小霞".to_string(),
-                        "2. 笼 - 张碧晨".to_string(),
-                        "3. 想见你想见你想见你 - 八三夭".to_string(),
+                        "向云端 - 小霞".to_string(),
+                        "笼 - 张碧晨".to_string(),
+                        "想见你想见你想见你 - 八三夭".to_string(),
                     ],
                     category: "官方热榜".to_string(),
                     total_songs: 100,
                 },
                 RankItem {
                     rank_id: 24971,
-                    rank_name: "粤语金曲榜".to_string(),
+                    rank_name: "DJ热歌榜".to_string(),
                     cover_url: "https://imge.kugou.com/commendpic/20210729/20210729175409477029.jpg".to_string(),
-                    update_frequency: "每周更新".to_string(),
+                    update_frequency: "每周四更新".to_string(),
                     top_songs_preview: vec![
-                        "1. 富士山下 - 陈奕迅".to_string(),
-                        "2. 月半小夜曲 - 李克勤".to_string(),
-                        "3. 海阔天空 - Beyond".to_string(),
+                        "富士山下 - 陈奕迅".to_string(),
+                        "月半小夜曲 - 李克勤".to_string(),
+                        "海阔天空 - Beyond".to_string(),
                     ],
-                    category: "特色曲风".to_string(),
+                    category: "特色音乐".to_string(),
                     total_songs: 100,
                 },
                 RankItem {
                     rank_id: 33162,
-                    rank_name: "欧美金曲榜".to_string(),
+                    rank_name: "ACG新歌榜".to_string(),
                     cover_url: "https://imge.kugou.com/commendpic/20210729/20210729175249561655.jpg".to_string(),
-                    update_frequency: "每周更新".to_string(),
+                    update_frequency: "每周四更新".to_string(),
                     top_songs_preview: vec![
-                        "1. Cruel Summer - Taylor Swift".to_string(),
-                        "2. Counting Stars - OneRepublic".to_string(),
-                        "3. Flowers - Miley Cyrus".to_string(),
+                        "Cruel Summer - Taylor Swift".to_string(),
+                        "Counting Stars - OneRepublic".to_string(),
+                        "Flowers - Miley Cyrus".to_string(),
                     ],
-                    category: "特色曲风".to_string(),
+                    category: "特色音乐".to_string(),
                     total_songs: 100,
                 },
                 RankItem {
                     rank_id: 4681,
                     rank_name: "美国BillBoard榜".to_string(),
                     cover_url: "https://imge.kugou.com/commendpic/20210729/20210729175344315250.jpg".to_string(),
-                    update_frequency: "每周更新".to_string(),
+                    update_frequency: "每周三更新".to_string(),
                     top_songs_preview: vec![
-                        "1. Die With A Smile - Lady Gaga".to_string(),
-                        "2. Birds of a Feather - Billie Eilish".to_string(),
-                        "3. Espresso - Sabrina Carpenter".to_string(),
+                        "Die With A Smile - Lady Gaga".to_string(),
+                        "Birds of a Feather - Billie Eilish".to_string(),
+                        "Espresso - Sabrina Carpenter".to_string(),
                     ],
                     category: "全球权威".to_string(),
                     total_songs: 100,
@@ -3137,11 +3220,11 @@ impl KugouApiService {
                     rank_id: 4673,
                     rank_name: "日本公信榜".to_string(),
                     cover_url: "https://imge.kugou.com/commendpic/20210729/20210729175409477029.jpg".to_string(),
-                    update_frequency: "每周更新".to_string(),
+                    update_frequency: "每周五更新".to_string(),
                     top_songs_preview: vec![
-                        "1. Idol - YOASOBI".to_string(),
-                        "2. Lemon - 米津玄师".to_string(),
-                        "3. 怪兽的花呗 - Vaundy".to_string(),
+                        "Idol - YOASOBI".to_string(),
+                        "Lemon - 米津玄师".to_string(),
+                        "怪兽的花呗 - Vaundy".to_string(),
                     ],
                     category: "全球权威".to_string(),
                     total_songs: 100,
@@ -3149,19 +3232,10 @@ impl KugouApiService {
             ];
         }
 
-        // 对齐 Android MusicRepository.rankList 优先级排序，且不截断榜单数量
-        let priority_ids = [
-            6666, 8888, 59703, 52144, 23784, 31308, 31313, 31310, 31311, 31312, 24971, 33162,
-            33160, 33161, 44412, 4681, 4673, 4680, 4672, 33163,
-        ];
-        ranks.sort_by_key(|r| {
-            priority_ids
-                .iter()
-                .position(|&pid| pid == r.rank_id)
-                .unwrap_or(999)
-        });
+        // 智能优先级排序：让发现页首屏 8 张卡片覆盖最具代表性的多元旗舰榜单，且完整保留全量官方榜单
+        ranks.sort_by_key(|r| Self::rank_home_priority_score(r.rank_id, &r.rank_name, &r.category));
 
-        // 并发补全缺失 Top 3 歌曲预览的榜单，确保任意榜单卡片展示真实实时前三名
+        // 并发补全缺失 Top 3 歌曲预览的榜单，确保任意榜单卡片展示真实实时前三名（格式统一为：歌名 - 歌手）
         let missing_indices: Vec<(usize, i32)> = ranks
             .iter()
             .enumerate()
@@ -3184,12 +3258,11 @@ impl KugouApiService {
                         ranks[idx].top_songs_preview = songs
                             .into_iter()
                             .take(3)
-                            .enumerate()
-                            .map(|(i, s)| {
+                            .map(|s| {
                                 if !s.artist.is_empty() && s.artist != "未知歌手" {
-                                    format!("{}. {} - {}", i + 1, s.title, s.artist)
+                                    format!("{} - {}", s.title, s.artist)
                                 } else {
-                                    format!("{}. {}", i + 1, s.title)
+                                    s.title
                                 }
                             })
                             .collect();
@@ -3204,12 +3277,14 @@ impl KugouApiService {
     async fn resolve_latest_rank_vol_id(&self, rank_id: i32) -> i64 {
         let dev = self.store.device();
         let minute_stamp = (Utc::now().timestamp() / 60).to_string();
+
+        // 通道 1: /api/v3/rank/vol
         let mut query = HashMap::new();
         query.insert("plat".to_string(), "0".to_string());
         query.insert("ranktype".to_string(), "2".to_string());
         query.insert("rankid".to_string(), rank_id.to_string());
         query.insert("with_res_tag".to_string(), "0".to_string());
-        query.insert("_t".to_string(), minute_stamp);
+        query.insert("_t".to_string(), minute_stamp.clone());
         if let Ok(resp) = self
             .transport
             .call(
@@ -3244,6 +3319,50 @@ impl KugouApiService {
                 }
             }
         }
+
+        // 通道 2: 对齐 MakcRe/KuGouMusicApi module/rank_vol.js (/ocean/v6/rank/vol)
+        let session = self.store.session();
+        let mut ocean_query = HashMap::new();
+        ocean_query.insert("rank_cid".to_string(), "0".to_string());
+        ocean_query.insert("rankid".to_string(), rank_id.to_string());
+        ocean_query.insert("ranktype".to_string(), "1".to_string());
+        ocean_query.insert("type".to_string(), "0".to_string());
+        ocean_query.insert("plat".to_string(), "2".to_string());
+        if let Ok(resp) = self
+            .transport
+            .call(
+                "/ocean/v6/rank/vol",
+                &dev,
+                session.as_ref(),
+                ocean_query,
+                None,
+                "https://gateway.kugou.com",
+                "GET",
+                false,
+                HashMap::new(),
+                true,
+                true,
+            )
+            .await
+        {
+            let arr = resp
+                .data()
+                .get("data")
+                .and_then(|d| d.get("info"))
+                .and_then(|v| v.as_array())
+                .or_else(|| resp.data().get("info").and_then(|v| v.as_array()))
+                .or_else(|| resp.data().get("vol_list").and_then(|v| v.as_array()));
+            if let Some(first) = arr.and_then(|a| a.first()) {
+                if let Some(vid) =
+                    Self::val_i64(first, "volid").or_else(|| Self::val_i64(first, "rank_cid"))
+                {
+                    if vid > 0 {
+                        return vid;
+                    }
+                }
+            }
+        }
+
         0
     }
 
@@ -3257,7 +3376,7 @@ impl KugouApiService {
         let dev = self.store.device();
         let minute_stamp = (Utc::now().timestamp() / 60).to_string();
 
-        // 通道 1: /api/v3/rank/song
+        // 通道 1a: /api/v3/rank/song (带最新 volid)
         let mut query = HashMap::new();
         query.insert("version".to_string(), "9108".to_string());
         query.insert("ranktype".to_string(), "2".to_string());
@@ -3294,43 +3413,88 @@ impl KugouApiService {
             }
         }
 
-        // 通道 2: /openapi/kmr/v2/rank/audio
-        let session = self.store.session();
-        let body = json!({
-            "show_portrait_mv": 1,
-            "show_type_total": 1,
-            "filter_original_remarks": 1,
-            "area_code": 1,
-            "pagesize": page_size,
-            "rank_cid": latest_vol_id,
-            "type": 1,
-            "page": page,
-            "rank_id": rank_id
-        });
-        let mut headers = HashMap::new();
-        headers.insert("x-router".to_string(), "openapi.kugou.com".to_string());
-        headers.insert("kg-tid".to_string(), "369".to_string());
+        // 通道 1b: 若带 volid 请求未返回，对齐 Android MusicRepository.rankSongs 不带 volid 直连最新默认期
+        if latest_vol_id > 0 {
+            let mut fallback_query = HashMap::new();
+            fallback_query.insert("version".to_string(), "9108".to_string());
+            fallback_query.insert("rankid".to_string(), rank_id.to_string());
+            fallback_query.insert("page".to_string(), page.to_string());
+            fallback_query.insert("pagesize".to_string(), page_size.to_string());
+            fallback_query.insert("plat".to_string(), "0".to_string());
+            fallback_query.insert("area_code".to_string(), "1".to_string());
+            fallback_query.insert("_t".to_string(), minute_stamp.clone());
 
-        if let Ok(resp) = self
-            .transport
-            .call(
-                "/openapi/kmr/v2/rank/audio",
-                &dev,
-                session.as_ref(),
-                HashMap::new(),
-                Some(body),
-                "https://gateway.kugou.com",
-                "POST",
-                false,
-                headers,
-                true,
-                true,
-            )
-            .await
-        {
-            let songs = Self::parse_songs(resp.data());
-            if !songs.is_empty() {
-                return songs;
+            if let Ok(resp) = self
+                .transport
+                .call(
+                    "/api/v3/rank/song",
+                    &dev,
+                    None,
+                    fallback_query,
+                    None,
+                    "http://mobilecdnbj.kugou.com",
+                    "GET",
+                    false,
+                    HashMap::new(),
+                    false,
+                    false,
+                )
+                .await
+            {
+                let songs = Self::parse_songs(resp.data());
+                if !songs.is_empty() {
+                    return songs;
+                }
+            }
+        }
+
+        // 通道 2: 对齐 MakcRe/KuGouMusicApi module/rank_audio.js (/openapi/kmr/v2/rank/audio)
+        let session = self.store.session();
+        let cid_candidates: &[i64] = if latest_vol_id > 0 {
+            &[latest_vol_id, 0]
+        } else {
+            &[0]
+        };
+        for &cid in cid_candidates {
+            let body = json!({
+                "show_portrait_mv": 1,
+                "show_type_total": 1,
+                "filter_original_remarks": 1,
+                "area_code": 1,
+                "pagesize": page_size,
+                "rank_cid": cid,
+                "type": 1,
+                "page": page,
+                "rank_id": rank_id
+            });
+            let mut headers = HashMap::new();
+            headers.insert("x-router".to_string(), "openapi.kugou.com".to_string());
+            headers.insert("kg-tid".to_string(), "369".to_string());
+
+            if let Ok(resp) = self
+                .transport
+                .call(
+                    "/openapi/kmr/v2/rank/audio",
+                    &dev,
+                    session.as_ref(),
+                    HashMap::new(),
+                    Some(body),
+                    "https://gateway.kugou.com",
+                    "POST",
+                    false,
+                    headers,
+                    true,
+                    true,
+                )
+                .await
+            {
+                let mut songs = Self::parse_songs(resp.data());
+                if songs.is_empty() {
+                    songs = Self::parse_songs(&resp.body);
+                }
+                if !songs.is_empty() {
+                    return songs;
+                }
             }
         }
 
@@ -3373,34 +3537,71 @@ impl KugouApiService {
         page_size: u32,
     ) -> Result<Vec<Song>, String> {
         let latest_vol_id = self.resolve_latest_rank_vol_id(rank_id).await;
-        if page == 1 && page_size >= 100 {
-            let max_pages = if rank_id == 8888 && page_size >= 200 { 5 } else { 2 };
-            let mut all_songs = Vec::new();
-            let mut seen = HashSet::new();
+        if page == 1 && page_size > 100 {
+            let max_pages = ((page_size + 99) / 100).clamp(1, 5);
+            let mut page_futs = Vec::with_capacity(max_pages as usize);
             for p in 1..=max_pages {
-                let batch = self
-                    .fetch_rank_songs_single_page(rank_id, p, 100, latest_vol_id)
-                    .await;
+                page_futs.push(async move {
+                    let batch = self
+                        .fetch_rank_songs_single_page(rank_id, p, 100, latest_vol_id)
+                        .await;
+                    (p, batch)
+                });
+            }
+            let mut page_results = futures_join_vec(page_futs).await;
+            page_results.sort_by_key(|(p, _)| *p);
+
+            let mut all_songs: Vec<Song> = Vec::with_capacity(page_size as usize);
+            let mut seen_page_signatures: HashSet<String> = HashSet::new();
+
+            for (p, batch) in page_results {
                 if batch.is_empty() {
                     break;
                 }
                 let batch_len = batch.len();
-                let mut added = 0usize;
-                for s in batch {
-                    let k = if !s.hash.is_empty() {
-                        s.hash.to_lowercase()
-                    } else {
-                        format!("{}_{}", s.title, s.artist).to_lowercase()
-                    };
-                    if seen.insert(k) {
-                        all_songs.push(s);
-                        added += 1;
+                // 检测非 500 首榜单在请求后续页时是否重复返回了第 1 页的完全相同内容
+                let first = &batch[0];
+                let last = &batch[batch_len - 1];
+                let page_sig = format!(
+                    "{}:{}:{}:{}",
+                    first.hash.to_lowercase(),
+                    first.title.to_lowercase(),
+                    last.hash.to_lowercase(),
+                    last.title.to_lowercase()
+                );
+                let is_new_page_sig = seen_page_signatures.insert(page_sig);
+                if p > 1 && !is_new_page_sig {
+                    break;
+                }
+
+                // 若当前页超过 85% 曲目已存在于前序页（例如 100 首榜单在 page=2 重复返回前序曲目），立即终止
+                if p > 1 && !all_songs.is_empty() {
+                    let dup_count = batch
+                        .iter()
+                        .filter(|s| {
+                            !s.hash.is_empty()
+                                && all_songs
+                                    .iter()
+                                    .any(|e| e.hash.eq_ignore_ascii_case(&s.hash) && e.title == s.title)
+                        })
+                        .count();
+                    if dup_count * 100 >= batch_len * 85 {
+                        break;
                     }
                 }
-                if added == 0 || batch_len < 30 || all_songs.len() >= page_size as usize {
+
+                for s in batch {
+                    all_songs.push(s);
+                    if all_songs.len() >= page_size as usize {
+                        break;
+                    }
+                }
+
+                if batch_len < 20 || all_songs.len() >= page_size as usize {
                     break;
                 }
             }
+
             return Ok(self.enrich_songs_privilege_lite(all_songs).await);
         }
 
@@ -6893,32 +7094,231 @@ impl KugouApiService {
         }
     }
 
-    fn classify_rank_category(rank_id: i32, name: &str) -> String {
-        if matches!(rank_id, 4681 | 4673 | 4680 | 4672 | 33163)
-            || name.contains("BillBoard")
-            || name.contains("公信")
-            || name.contains("英国")
-            || name.contains("全球")
-            || name.contains("美国")
-            || name.contains("日本")
-            || name.contains("韩国")
+    /// 格式化排行榜卡片 Top 3 歌曲预览文本：统一清洗前缀序号与「歌手 - 歌名」倒置结构，输出标准「歌名 - 歌手」
+    fn format_rank_preview_line(raw_songname: &str, raw_singer: &str) -> Option<String> {
+        let mut sname = raw_songname
+            .replace("<em>", "")
+            .replace("</em>", "")
+            .trim()
+            .to_string();
+        // 剥离可能自带的 "1. " / "01 " 等前缀序号
+        if let Some(rest) = sname
+            .strip_prefix("1.")
+            .or_else(|| sname.strip_prefix("2."))
+            .or_else(|| sname.strip_prefix("3."))
+            .or_else(|| sname.strip_prefix("01"))
+            .or_else(|| sname.strip_prefix("02"))
+            .or_else(|| sname.strip_prefix("03"))
         {
-            "全球权威".to_string()
-        } else if matches!(rank_id, 24971 | 33162 | 33160 | 33161 | 44412)
-            || name.contains("粤语")
-            || name.contains("欧美")
-            || name.contains("国风")
-            || name.contains("ACG")
+            sname = rest.trim().to_string();
+        }
+        if sname.is_empty() {
+            return None;
+        }
+        let singer = raw_singer
+            .replace("<em>", "")
+            .replace("</em>", "")
+            .trim()
+            .to_string();
+
+        // 酷狗 /api/v3/rank/list 的 songinfo.songname 默认格式为 "歌手 - 歌名" 且 singername 为空
+        if singer.is_empty() {
+            if let Some((left_artist, right_title)) = sname.split_once(" - ") {
+                let art = left_artist.trim();
+                let tit = right_title.trim();
+                if !tit.is_empty() && !art.is_empty() {
+                    return Some(format!("{} - {}", tit, art));
+                }
+            }
+            if let Some((left_artist, right_title)) = sname.split_once('-') {
+                let art = left_artist.trim();
+                let tit = right_title.trim();
+                if !tit.is_empty() && !art.is_empty() {
+                    return Some(format!("{} - {}", tit, art));
+                }
+            }
+            return Some(sname);
+        }
+
+        // 若 singer 不为空，检查 sname 是否包含 "singer - title"
+        if let Some((left_part, right_part)) = sname.split_once(" - ") {
+            let l = left_part.trim();
+            let r = right_part.trim();
+            if l.eq_ignore_ascii_case(&singer) || l.contains(&singer) || singer.contains(l) {
+                return Some(format!("{} - {}", r, singer));
+            }
+            if r.eq_ignore_ascii_case(&singer) || r.contains(&singer) || singer.contains(r) {
+                return Some(format!("{} - {}", l, singer));
+            }
+        }
+
+        Some(format!("{} - {}", sname, singer))
+    }
+
+    fn normalize_rank_update_freq(raw_freq: &str, name: &str) -> String {
+        let f = raw_freq.trim();
+        if f.is_empty() {
+            if name.contains("飙升") || name.contains("TOP") || name.contains("热歌") || name.contains("新歌") {
+                return "每天更新".to_string();
+            }
+            return "实时更新".to_string();
+        }
+        match f {
+            "每天" | "每日" => "每天更新".to_string(),
+            "工作日" => "工作日更新".to_string(),
+            "周一" | "周二" | "周三" | "周四" | "周五" | "周六" | "周日" => {
+                format!("每{}更新", f)
+            }
+            _ => f.to_string(),
+        }
+    }
+
+    fn rank_home_priority_score(rank_id: i32, name: &str, category: &str) -> usize {
+        // 发现页首屏 8 张卡片优先展示最具代表性的核心榜单与多元热榜
+        if rank_id == 6666 || name == "飙升榜" || name == "酷狗飙升榜" {
+            return 1;
+        }
+        if rank_id == 8888 || name.contains("TOP500") {
+            return 2;
+        }
+        if name == "新歌榜" || name == "华语新歌榜" {
+            return 3;
+        }
+        if rank_id == 23784 || name.contains("网络热歌") || name.contains("网络红歌") {
+            return 4;
+        }
+        if rank_id == 59703 || name.contains("短视频热歌") {
+            return 5;
+        }
+        if name.contains("DJ热歌") {
+            return 6;
+        }
+        if name.contains("粤语金曲") {
+            return 7;
+        }
+        if rank_id == 4681 || name.contains("BillBoard") || name.contains("Billboard") {
+            return 8;
+        }
+        if name == "内地榜" {
+            return 9;
+        }
+        if name.contains("影视金曲") {
+            return 10;
+        }
+        if name.contains("ACG新歌") {
+            return 11;
+        }
+        if name.contains("欧美榜") || name.contains("欧美金曲") {
+            return 12;
+        }
+        if name.contains("韩国榜") {
+            return 13;
+        }
+        if name.contains("日本榜") || rank_id == 4673 {
+            return 14;
+        }
+        if name.contains("说唱先锋") || name.contains("电音榜") || name.contains("国潮") {
+            return 15;
+        }
+        match category {
+            "官方热榜" => 100,
+            "特色音乐" => 200,
+            "曲风流派" => 300,
+            "地区语种" => 400,
+            "全球权威" => 500,
+            _ => 600,
+        }
+    }
+
+    /// 酷狗全量 57+ 官方巅峰榜单五维精准分类：
+    /// 1. 官方热榜  2. 特色音乐  3. 曲风流派  4. 地区语种  5. 全球权威
+    fn classify_rank_category(rank_id: i32, name: &str) -> String {
+        // 1. 全球权威榜（国际权威机构与海外主流音乐平台官方榜）
+        if matches!(rank_id, 4681 | 4673 | 4680 | 4672 | 38623 | 42807)
+            || name.contains("BillBoard")
+            || name.contains("Billboard")
+            || name.contains("公告牌")
+            || name.contains("公信")
+            || name.contains("Oricon")
+            || name.contains("英国")
+            || name.contains("UK")
+            || name.contains("美国")
+            || name.contains("Melon")
+            || name.contains("JOOX")
+            || name.contains("KKBOX")
+            || name.contains("Beatport")
+            || name.contains("SPACE SHOWER")
+            || name.contains("日本SS")
+            || name.contains("全球")
+        {
+            return "全球权威".to_string();
+        }
+
+        // 2. 曲风流派榜（垂直音乐流派与传统戏曲器乐）
+        if matches!(rank_id, 33160 | 33161 | 44412)
             || name.contains("电音")
             || name.contains("说唱")
+            || name.contains("国潮")
+            || name.contains("国风")
+            || name.contains("国乐")
             || name.contains("民谣")
+            || name.contains("摇滚")
             || name.contains("纯音乐")
-            || name.contains("影视")
+            || name.contains("轻音乐")
+            || name.contains("R&B")
+            || name.contains("爵士")
+            || name.contains("乡村")
+            || name.contains("古典")
+            || name.contains("粤剧")
+            || name.contains("京剧")
+            || name.contains("南音")
+            || name.contains("戏曲")
+            || name.contains("古风")
+            || name.contains("蓝调")
         {
-            "特色曲风".to_string()
-        } else {
-            "官方热榜".to_string()
+            return "曲风流派".to_string();
         }
+
+        // 3. 地区语种榜（华语各地区及海外语种分榜）
+        if matches!(rank_id, 31310 | 31311 | 31312 | 31313 | 54848)
+            || name.contains("内地")
+            || name.contains("香港")
+            || name.contains("台湾")
+            || name.contains("欧美")
+            || name.contains("韩国")
+            || name.contains("日本")
+            || name.contains("粤语")
+            || name.contains("闽南")
+            || name.contains("成都")
+            || name.contains("小语种")
+            || name.contains("越南")
+            || name.contains("泰语")
+            || name.contains("俄语")
+            || name.contains("法语")
+        {
+            return "地区语种".to_string();
+        }
+
+        // 4. 特色音乐榜（ACG、影视、综艺、年代金曲、DJ、原创、情绪主题）
+        if matches!(rank_id, 33162 | 33163 | 46910)
+            || name.contains("DJ")
+            || name.contains("ACG")
+            || name.contains("影视")
+            || name.contains("综艺")
+            || name.contains("原创")
+            || name.contains("音乐人")
+            || name.contains("80后")
+            || name.contains("90后")
+            || name.contains("00后")
+            || name.contains("伤感")
+            || name.contains("儿歌")
+            || name.contains("游戏")
+        {
+            return "特色音乐".to_string();
+        }
+
+        // 5. 官方热榜（飙升榜、TOP500、新歌榜、网络热歌、短视频、视频号、收藏、识曲、会员等核心大榜）
+        "官方热榜".to_string()
     }
 
     fn is_valid_iso_date(d: &str) -> bool {

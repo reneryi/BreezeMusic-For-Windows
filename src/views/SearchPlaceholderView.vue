@@ -23,7 +23,6 @@ const activeBoardIndex = ref(0);
 const expandedFoldKeys = reactive(new Set<string>());
 
 const artistRegions = [
-  { id: 0, label: "全部" },
   { id: 1, label: "华语" },
   { id: 2, label: "欧美" },
   { id: 3, label: "日韩" },
@@ -40,7 +39,9 @@ const resultCategoryTabs = computed<
 ]);
 
 const visibleHotBoards = computed(() =>
-  (store.searchDiscovery.hotBoards || []).slice(0, 5)
+  (store.searchDiscovery.hotBoards || [])
+    .filter((b) => b.name !== "热搜榜" && b.entries && b.entries.length > 0)
+    .slice(0, 8)
 );
 
 const currentBoardEntries = computed(() => {
@@ -161,11 +162,12 @@ function submitSearch(customKw?: string) {
     customKw !== undefined ? customKw : store.searchKeyword
   ).trim();
   if (!target) {
-    store.openSearchLanding(false);
+    store.openSearchLanding(true);
     return;
   }
   searchFocused.value = false;
   expandedFoldKeys.clear();
+  store.searchCategoryTab = "all";
   store.executeSearch(target);
 }
 
@@ -284,11 +286,26 @@ function handleOutsideMouseDown(e: MouseEvent) {
   }
 }
 
-onMounted(() => {
-  store.loadSearchDiscovery(false);
-  if (!store.searchKeyword.trim()) {
-    store.searchViewMode = "landing";
+watch(
+  () => store.searchViewMode,
+  (mode) => {
+    if (mode === "landing") {
+      store.searchKeyword = "";
+      store.searchSuggestions = [];
+      searchFocused.value = false;
+    }
   }
+);
+
+onMounted(() => {
+  if (![1, 2, 3].includes(store.hotArtistCategory)) {
+    store.hotArtistCategory = 1;
+  }
+  if (store.searchViewMode === "landing") {
+    store.searchKeyword = "";
+    store.searchSuggestions = [];
+  }
+  store.loadSearchDiscovery(false);
   window.addEventListener("mousedown", handleOutsideMouseDown);
   nextTick(() => {
     setupInfiniteObserver();
@@ -314,120 +331,126 @@ onBeforeUnmount(() => {
 <template>
   <div class="page-scroll-canvas search-hub-page" @click="store.closeSongContextMenu()">
     <!-- ==================== 顶部核心搜索栏 ==================== -->
-    <div ref="searchFormWrapRef" class="search-command-shell">
-      <div class="search-command-row">
-        <button
-          v-if="store.searchViewMode === 'results'"
-          type="button"
-          class="search-back-landing-btn"
-          title="返回搜索探索页"
-          @click="store.openSearchLanding(false)"
-        >
-          <PlumpIcon name="arrow-left" :size="16" />
-          <span>返回探索</span>
-        </button>
-
-        <form
-          role="search"
-          class="search-hero-form"
-          :class="{ focused: searchFocused }"
-          @submit.prevent="submitSearch()"
-        >
-          <label class="visually-hidden" for="independent-search-input">
-            搜索歌曲、歌手、专辑、歌单
-          </label>
-          <PlumpIcon
-            name="nav-search"
-            :size="19"
-            color="var(--primary)"
-            accent="var(--cyan, #00e5ff)"
-            class="shf-leading-icon"
-          />
-          <input
-            id="independent-search-input"
-            ref="searchInputRef"
-            v-model="store.searchKeyword"
-            type="search"
-            name="q"
-            class="shf-input"
-            placeholder="搜索歌曲、歌手、专辑、歌单..."
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="off"
-            spellcheck="false"
-            @focus="searchFocused = true"
-            @keydown="handleSearchKeydown"
-          />
-          <button
-            v-if="store.searchKeyword"
-            type="button"
-            class="shf-clear-btn"
-            aria-label="清空搜索词"
-            title="清空"
-            @click="clearSearchInput"
-          >
-            <PlumpIcon name="close" :size="13" />
-          </button>
-          <button type="submit" class="shf-submit-btn">
-            <span>搜索</span>
-          </button>
-        </form>
-      </div>
-
-      <!-- 实时联想词浮层 -->
-      <transition name="fade-pop">
-        <div v-if="showSuggestPopover" class="shf-suggest-popover">
-          <button
-            v-for="(sug, idx) in store.searchSuggestions"
-            :key="`${sug}_${idx}`"
-            type="button"
-            class="shf-suggest-item"
-            @click="submitSearch(sug)"
-          >
-            <PlumpIcon name="nav-search" :size="15" />
-            <span>{{ sug }}</span>
-          </button>
-        </div>
-      </transition>
-
-      <!-- 最近搜索历史（仅在探索态展示，简洁清爽） -->
-      <div
-        v-if="
-          store.searchViewMode === 'landing' && store.searchHistory.length > 0
-        "
-        class="search-history-bar"
+    <div
+      ref="searchFormWrapRef"
+      class="search-command-shell"
+      :class="{ 'is-results-mode': store.searchViewMode === 'results' }"
+    >
+      <button
+        v-if="store.searchViewMode === 'results'"
+        type="button"
+        class="search-back-landing-btn"
+        aria-label="返回搜索探索页"
+        title="返回搜索页"
+        @click="store.openSearchLanding(true)"
       >
-        <span class="shb-title">历史记录</span>
-        <div class="shb-pills">
-          <div
-            v-for="item in store.searchHistory.slice(0, 12)"
-            :key="item"
-            class="shb-pill"
+        <PlumpIcon name="arrow-left" :size="18" />
+      </button>
+
+      <div class="search-command-center">
+        <div class="search-command-row">
+          <form
+            role="search"
+            class="search-hero-form"
+            :class="{ focused: searchFocused }"
+            @submit.prevent="submitSearch()"
           >
+            <label class="visually-hidden" for="independent-search-input">
+              搜索歌曲、歌手、专辑、歌单
+            </label>
+            <PlumpIcon
+              name="nav-search"
+              :size="19"
+              color="var(--primary)"
+              accent="var(--cyan, #00e5ff)"
+              class="shf-leading-icon"
+            />
+            <input
+              id="independent-search-input"
+              ref="searchInputRef"
+              v-model="store.searchKeyword"
+              type="search"
+              name="q"
+              class="shf-input"
+              placeholder="搜索歌曲、歌手、专辑、歌单..."
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              @focus="searchFocused = true"
+              @keydown="handleSearchKeydown"
+            />
             <button
+              v-if="store.searchKeyword"
               type="button"
-              class="shb-pill-text"
-              @click="submitSearch(item)"
+              class="shf-clear-btn"
+              aria-label="清空搜索词"
+              title="清空"
+              @click="clearSearchInput"
             >
-              {{ item }}
+              <PlumpIcon name="close" :size="13" />
             </button>
+            <button type="submit" class="shf-submit-btn">
+              <span>搜索</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- 实时联想词浮层 -->
+        <transition name="fade-pop">
+          <div v-if="showSuggestPopover" class="shf-suggest-popover">
             <button
+              v-for="(sug, idx) in store.searchSuggestions"
+              :key="`${sug}_${idx}`"
               type="button"
-              class="shb-pill-del"
-              aria-label="删除该条历史"
-              @click.stop="removeSingleHistory(item)"
+              class="shf-suggest-item"
+              @click="submitSearch(sug)"
             >
-              ×
+              <PlumpIcon name="nav-search" :size="15" />
+              <span>{{ sug }}</span>
             </button>
           </div>
-        </div>
-        <button
-          type="button"
-          class="shb-clear-all"
-          @click="store.clearSearchHistory()"
+        </transition>
+
+        <!-- 最近搜索历史（仅在探索态展示，简洁清爽） -->
+        <div
+          v-if="
+            store.searchViewMode === 'landing' && store.searchHistory.length > 0
+          "
+          class="search-history-bar"
         >
-          清空
-        </button>
+          <span class="shb-title">历史记录</span>
+          <div class="shb-pills">
+            <div
+              v-for="item in store.searchHistory.slice(0, 12)"
+              :key="item"
+              class="shb-pill"
+            >
+              <button
+                type="button"
+                class="shb-pill-text"
+                @click="submitSearch(item)"
+              >
+                {{ item }}
+              </button>
+              <button
+                type="button"
+                class="shb-pill-del"
+                aria-label="删除该条历史"
+                @click.stop="removeSingleHistory(item)"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="shb-clear-all"
+            @click="store.clearSearchHistory()"
+          >
+            清空
+          </button>
+        </div>
       </div>
     </div>
 
@@ -626,7 +649,7 @@ onBeforeUnmount(() => {
                   {{ board.name }}
                 </button>
               </template>
-              <h3 v-else class="sl-panel-title">热搜榜</h3>
+              <h3 v-else class="sl-panel-title">飙升榜</h3>
             </div>
           </div>
 
@@ -1347,41 +1370,67 @@ onBeforeUnmount(() => {
 /* ==================== 顶部沉浸搜索框 ==================== */
 .search-command-shell {
   position: relative;
+  width: 100%;
+  margin: 12px 0 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.search-command-center {
+  position: relative;
   max-width: 780px;
   width: 100%;
-  margin: 12px auto 0;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
+@media (max-width: 920px) {
+  .search-command-shell.is-results-mode .search-command-center {
+    max-width: min(780px, calc(100% - 108px));
+  }
+}
+
 .search-command-row {
   display: flex;
   align-items: center;
-  gap: 10px;
   width: 100%;
 }
 
 .search-back-landing-btn {
-  height: 46px;
-  padding: 0 16px;
-  border-radius: 999px;
+  position: absolute;
+  left: 0;
+  top: 3px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
   border: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
   background: var(--bg-card);
   color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 600;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.2s ease, transform 0.2s ease;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+  z-index: 5;
+  transition: background 0.2s ease, transform 0.2s ease, color 0.2s ease;
+}
+
+:global(.scheme-watercolor_light) .search-back-landing-btn,
+:global(.scheme-light) .search-back-landing-btn {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(15, 23, 42, 0.09);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
 }
 
 .search-back-landing-btn:hover {
   background: var(--bg-card-hover);
-  transform: translateY(-1px);
+  color: var(--primary);
+  transform: translateX(-2px);
 }
 
 .search-hero-form {

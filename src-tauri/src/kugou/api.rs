@@ -4150,6 +4150,75 @@ impl KugouApiService {
             if expected_total == 0 && raw_len < 30 {
                 break;
             }
+            // 若已知歌单总曲目数且剩余多页，采用 4 页并发拉取大幅提速大歌单加载
+            if expected_total > all_songs.len() && raw_len >= 30 {
+                let step = raw_len;
+                let mut futs = Vec::new();
+                for batch_i in 0..4 {
+                    let cur_begin = begin_idx + batch_i * step;
+                    if cur_begin >= expected_total {
+                        break;
+                    }
+                    let gid_cl = gid.clone();
+                    let dev_cl = dev.clone();
+                    let sess_cl = session.clone();
+                    futs.push(async move {
+                        let mut q = HashMap::new();
+                        q.insert("area_code".to_string(), "1".to_string());
+                        q.insert("begin_idx".to_string(), cur_begin.to_string());
+                        q.insert("plat".to_string(), "1".to_string());
+                        q.insert("type".to_string(), "1".to_string());
+                        q.insert("mode".to_string(), "1".to_string());
+                        q.insert("personal_switch".to_string(), "1".to_string());
+                        q.insert("pagesize".to_string(), page_size.to_string());
+                        q.insert("global_collection_id".to_string(), gid_cl);
+                        if let Ok(r) = self
+                            .transport
+                            .call(
+                                "/pubsongs/v2/get_other_list_file_nofilt",
+                                &dev_cl,
+                                sess_cl.as_ref(),
+                                q,
+                                None,
+                                "https://gateway.kugou.com",
+                                "GET",
+                                false,
+                                HashMap::new(),
+                                true,
+                                true,
+                            )
+                            .await
+                        {
+                            Self::parse_songs(r.data())
+                        } else {
+                            Vec::new()
+                        }
+                    });
+                }
+                if !futs.is_empty() {
+                    let pages_res = futures_join_vec(futs).await;
+                    let mut batch_total_raw = 0usize;
+                    let mut batch_added = 0usize;
+                    for p_songs in pages_res {
+                        batch_total_raw += p_songs.len();
+                        for song in p_songs {
+                            let k = if !song.hash.is_empty() {
+                                song.hash.to_lowercase()
+                            } else {
+                                song.id.to_lowercase()
+                            };
+                            if seen_keys.insert(k) {
+                                all_songs.push(song);
+                                batch_added += 1;
+                            }
+                        }
+                    }
+                    begin_idx += batch_total_raw;
+                    if batch_added == 0 || all_songs.len() >= expected_total {
+                        break;
+                    }
+                }
+            }
         }
 
         if !all_songs.is_empty() {
@@ -4296,7 +4365,7 @@ impl KugouApiService {
             "multitrack"
         ]);
 
-        let mut all_items: Vec<Value> = Vec::new();
+        let mut chunk_futs = Vec::new();
         for chunk in songs.chunks(80) {
             let mut resources = Vec::new();
             for s in chunk {
@@ -4333,35 +4402,46 @@ impl KugouApiService {
                 "resources": resources
             });
 
-            let mut headers = HashMap::new();
-            headers.insert("x-router".to_string(), "media.store.kugou.com".to_string());
-
-            if let Ok(resp) = self
-                .transport
-                .call(
-                    "/v2/get_res_privilege/lite",
-                    &dev,
-                    session.as_ref(),
-                    HashMap::new(),
-                    Some(body),
-                    "https://gateway.kugou.com",
-                    "POST",
-                    false,
-                    headers,
-                    true,
-                    true,
-                )
-                .await
-            {
-                let items_opt = resp
-                    .body
-                    .get("data")
-                    .and_then(|v| v.as_array())
-                    .or_else(|| resp.data().get("data").and_then(|v| v.as_array()))
-                    .or_else(|| resp.data().get("resource").and_then(|v| v.as_array()));
-                if let Some(items) = items_opt {
-                    all_items.extend(items.iter().cloned());
+            let dev_cl = dev.clone();
+            let sess_cl = session.clone();
+            chunk_futs.push(async move {
+                let mut headers = HashMap::new();
+                headers.insert("x-router".to_string(), "media.store.kugou.com".to_string());
+                if let Ok(resp) = self
+                    .transport
+                    .call(
+                        "/v2/get_res_privilege/lite",
+                        &dev_cl,
+                        sess_cl.as_ref(),
+                        HashMap::new(),
+                        Some(body),
+                        "https://gateway.kugou.com",
+                        "POST",
+                        false,
+                        headers,
+                        true,
+                        true,
+                    )
+                    .await
+                {
+                    let items_opt = resp
+                        .body
+                        .get("data")
+                        .and_then(|v| v.as_array())
+                        .or_else(|| resp.data().get("data").and_then(|v| v.as_array()))
+                        .or_else(|| resp.data().get("resource").and_then(|v| v.as_array()));
+                    if let Some(items) = items_opt {
+                        return items.clone();
+                    }
                 }
+                Vec::new()
+            });
+        }
+
+        let mut all_items: Vec<Value> = Vec::new();
+        if !chunk_futs.is_empty() {
+            for items in futures_join_vec(chunk_futs).await {
+                all_items.extend(items);
             }
         }
 
@@ -4557,7 +4637,31 @@ impl KugouApiService {
             .take(45)
             .collect();
 
-        if !missing_album_ids.is_empty() {
+        // 第二阶段：对缺少 album 且无有效 album_id、但有 album_audio_id / audio_id 的歌曲，通过 /kmr/v2/audio 补全
+        let missing_entities: Vec<i64> = songs
+            .iter()
+            .filter(|s| {
+                s.album.trim().is_empty()
+                    && (s.album_id.trim().is_empty() || s.album_id == "0")
+                    && (s.album_audio_id > 0 || s.audio_id > 0)
+            })
+            .map(|s| if s.album_audio_id > 0 { s.album_audio_id } else { s.audio_id })
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .take(40)
+            .collect();
+
+        if missing_album_ids.is_empty() && missing_entities.is_empty() {
+            return songs;
+        }
+
+        let dev_a = dev.clone();
+        let sess_a = session.clone();
+        let alb_fut = async move {
+            let mut alb_map: HashMap<String, (String, String)> = HashMap::new();
+            if missing_album_ids.is_empty() {
+                return alb_map;
+            }
             let data_arr: Vec<Value> = missing_album_ids
                 .iter()
                 .map(|aid| {
@@ -4581,8 +4685,8 @@ impl KugouApiService {
                 .transport
                 .call(
                     "/kmr/v2/albums",
-                    &dev,
-                    session.as_ref(),
+                    &dev_a,
+                    sess_a.as_ref(),
                     HashMap::new(),
                     Some(body),
                     "https://gateway.kugou.com",
@@ -4601,7 +4705,6 @@ impl KugouApiService {
                     .or_else(|| resp.data().as_array())
                     .or_else(|| resp.body.get("data").and_then(|v| v.as_array()))
                 {
-                    let mut alb_map: HashMap<String, (String, String)> = HashMap::new();
                     for obj in arr {
                         let aid = Self::val_str(obj, "album_id");
                         let aname = Self::val_str(obj, "album_name");
@@ -4611,34 +4714,18 @@ impl KugouApiService {
                             alb_map.insert(aid, (aname, pdate));
                         }
                     }
-                    for s in &mut songs {
-                        if let Some((aname, pdate)) = alb_map.get(s.album_id.trim()) {
-                            if s.album.trim().is_empty() {
-                                s.album = aname.clone();
-                            }
-                            if s.publish_date.trim().is_empty() && !pdate.is_empty() {
-                                s.publish_date = pdate.clone();
-                            }
-                        }
-                    }
                 }
             }
-        }
+            alb_map
+        };
 
-        // 第二阶段：对仍缺少 album 或 album_id 但有 album_audio_id / audio_id 的歌曲，通过 /kmr/v2/audio 补全
-        let missing_entities: Vec<i64> = songs
-            .iter()
-            .filter(|s| {
-                (s.album.trim().is_empty() || s.album_id.trim().is_empty() || s.album_id == "0")
-                    && (s.album_audio_id > 0 || s.audio_id > 0)
-            })
-            .map(|s| if s.album_audio_id > 0 { s.album_audio_id } else { s.audio_id })
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .take(40)
-            .collect();
-
-        if !missing_entities.is_empty() {
+        let dev_e = dev.clone();
+        let sess_e = session.clone();
+        let ent_fut = async move {
+            let mut entity_map: HashMap<i64, (String, String, String, String)> = HashMap::new();
+            if missing_entities.is_empty() {
+                return entity_map;
+            }
             let entity_arr: Vec<Value> = missing_entities
                 .iter()
                 .map(|&id| json!({ "entity_id": id }))
@@ -4655,8 +4742,8 @@ impl KugouApiService {
                 .transport
                 .call(
                     "/kmr/v2/audio",
-                    &dev,
-                    session.as_ref(),
+                    &dev_e,
+                    sess_e.as_ref(),
                     HashMap::new(),
                     Some(body),
                     "https://gateway.kugou.com",
@@ -4675,7 +4762,6 @@ impl KugouApiService {
                     .or_else(|| resp.data().as_array())
                     .or_else(|| resp.body.get("data").and_then(|v| v.as_array()))
                 {
-                    let mut entity_map: HashMap<i64, (String, String, String, String)> = HashMap::new();
                     for item in arr {
                         let base_obj = item.get("base").unwrap_or(item);
                         let alb_obj = item.get("album_info").unwrap_or(item);
@@ -4709,27 +4795,39 @@ impl KugouApiService {
                             entity_map.insert(aaid, (aid, aname, author_id, pdate));
                         }
                     }
-                    for s in &mut songs {
-                        let eid = if s.album_audio_id > 0 {
-                            s.album_audio_id
-                        } else {
-                            s.audio_id
-                        };
-                        if let Some((aid, aname, author_id, pdate)) = entity_map.get(&eid) {
-                            if (s.album_id.is_empty() || s.album_id == "0") && !aid.is_empty() && aid != "0" {
-                                s.album_id = aid.clone();
-                            }
-                            if s.album.is_empty() && !aname.is_empty() {
-                                s.album = aname.clone();
-                            }
-                            if (s.artist_id.is_empty() || s.artist_id == "0") && !author_id.is_empty() && author_id != "0" {
-                                s.artist_id = author_id.clone();
-                            }
-                            if s.publish_date.is_empty() && !pdate.is_empty() {
-                                s.publish_date = pdate.clone();
-                            }
-                        }
-                    }
+                }
+            }
+            entity_map
+        };
+
+        let (alb_map, entity_map) = tokio::join!(alb_fut, ent_fut);
+
+        for s in &mut songs {
+            if let Some((aname, pdate)) = alb_map.get(s.album_id.trim()) {
+                if s.album.trim().is_empty() {
+                    s.album = aname.clone();
+                }
+                if s.publish_date.trim().is_empty() && !pdate.is_empty() {
+                    s.publish_date = pdate.clone();
+                }
+            }
+            let eid = if s.album_audio_id > 0 {
+                s.album_audio_id
+            } else {
+                s.audio_id
+            };
+            if let Some((aid, aname, author_id, pdate)) = entity_map.get(&eid) {
+                if (s.album_id.is_empty() || s.album_id == "0") && !aid.is_empty() && aid != "0" {
+                    s.album_id = aid.clone();
+                }
+                if s.album.is_empty() && !aname.is_empty() {
+                    s.album = aname.clone();
+                }
+                if (s.artist_id.is_empty() || s.artist_id == "0") && !author_id.is_empty() && author_id != "0" {
+                    s.artist_id = author_id.clone();
+                }
+                if s.publish_date.is_empty() && !pdate.is_empty() {
+                    s.publish_date = pdate.clone();
                 }
             }
         }
@@ -8289,163 +8387,170 @@ impl KugouApiService {
     pub async fn fetch_artist_detail(&self, artist_id: &str) -> Result<FollowedArtist, String> {
         let dev = self.store.device();
         let session = self.store.session();
-        let mut gw_artist: Option<FollowedArtist> = None;
+        let aid_trimmed = artist_id.trim().to_string();
 
-        // 通道 1: /kmr/v3/author (概念版完整歌手百科与作品计数)
-        let mut headers = HashMap::new();
-        headers.insert("x-router".to_string(), "openapi.kugou.com".to_string());
-        headers.insert("kg-tid".to_string(), "36".to_string());
-        let author_val = if let Ok(n) = artist_id.trim().parse::<i64>() {
-            json!(n)
-        } else {
-            json!(artist_id.trim())
-        };
-        let body = json!({
-            "author_id": author_val
-        });
-        if let Ok(resp) = self
-            .transport
-            .call(
-                "/kmr/v3/author",
-                &dev,
-                session.as_ref(),
-                HashMap::new(),
-                Some(body),
-                "https://gateway.kugou.com",
-                "POST",
-                false,
-                headers,
-                true,
-                true,
-            )
-            .await
-        {
-            let d = resp.data().get("data").unwrap_or_else(|| resp.data());
-            let base = d.get("base").unwrap_or(d);
-            let extra = d.get("extra").unwrap_or(d);
-            let stat = d.get("stat").unwrap_or(d);
-            let name = Self::val_str(base, "author_name");
-            if !name.is_empty() {
-                let pic = {
-                    let p = Self::val_str(base, "sizable_avatar");
-                    if !p.is_empty() {
-                        p
-                    } else {
-                        Self::val_str(base, "avatar")
-                    }
-                };
-                let intro = {
-                    let li = Self::val_str(extra, "long_intro");
-                    if !li.is_empty() {
-                        li
-                    } else {
-                        Self::val_str(extra, "intro")
-                    }
-                };
-                let fans_val = Self::val_i64(extra, "fans_count")
-                    .or_else(|| Self::val_i64(extra, "fansnums"))
-                    .or_else(|| Self::val_i64(extra, "fans_num"))
-                    .or_else(|| Self::val_i64(base, "fans_count"))
-                    .or_else(|| Self::val_i64(base, "fansnums"))
-                    .or_else(|| Self::val_i64(stat, "fans_count"))
-                    .or_else(|| Self::val_i64(stat, "fansnums"))
-                    .or_else(|| Self::val_i64(d, "fansnums"))
-                    .or_else(|| Self::val_i64(d, "fans_count"))
-                    .or_else(|| Self::val_i64(d, "fanscount"))
-                    .unwrap_or(0) as i32;
-                gw_artist = Some(FollowedArtist {
-                    artist_id: artist_id.to_string(),
-                    target_user_id: String::new(),
-                    name,
-                    avatar_url: signer::normalize_image_url(Some(&pic)),
-                    song_count: Self::val_i64(extra, "audio_count")
-                        .or_else(|| Self::val_i64(base, "audio_count"))
-                        .or_else(|| Self::val_i64(d, "audio_count"))
-                        .unwrap_or(0) as i32,
-                    album_count: Self::val_i64(extra, "album_count")
-                        .or_else(|| Self::val_i64(base, "album_count"))
-                        .or_else(|| Self::val_i64(d, "album_count"))
-                        .unwrap_or(0) as i32,
-                    fans_count: fans_val,
-                    is_followed: false,
-                    intro,
-                });
-            }
-        }
-
-        // 通道 2: CDN /api/v3/singer/info
-        let mut query = HashMap::new();
-        query.insert("version".to_string(), "9108".to_string());
-        query.insert("singerid".to_string(), artist_id.to_string());
-        query.insert("plat".to_string(), "0".to_string());
-        query.insert("with_res_tag".to_string(), "1".to_string());
-
-        let mut merged_artist: Option<FollowedArtist> = None;
-
-        if let Ok(resp) = self
-            .transport
-            .call(
-                "/api/v3/singer/info",
-                &dev,
-                None,
-                query,
-                None,
-                "http://mobilecdnbj.kugou.com",
-                "GET",
-                false,
-                HashMap::new(),
-                false,
-                false,
-            )
-            .await
-        {
-            let d = resp.data().get("data").unwrap_or_else(|| resp.data());
-            let name = Self::val_str(d, "singername");
-            if !name.is_empty() {
-                let pic = Self::val_str(d, "imgurl");
-                let raw_intro = Self::val_str(d, "intro");
-                let raw_profile = Self::val_str(d, "profile");
-                let cdn_intro = if !raw_intro.is_empty() && !raw_profile.is_empty() && !raw_intro.contains(&raw_profile) {
-                    format!("{}\n\n{}", raw_intro, raw_profile)
-                } else if !raw_intro.is_empty() {
-                    raw_intro
-                } else {
-                    raw_profile
-                };
-                let cdn_artist = FollowedArtist {
-                    artist_id: artist_id.to_string(),
-                    target_user_id: Self::val_str(d, "userid"),
-                    name,
-                    avatar_url: signer::normalize_image_url(Some(&pic)),
-                    song_count: Self::val_i64(d, "songcount").unwrap_or(0) as i32,
-                    album_count: Self::val_i64(d, "albumcount").unwrap_or(0) as i32,
-                    fans_count: Self::val_i64(d, "fanscount")
+        // 并发请求通道 1 (/kmr/v3/author) 与通道 2 (CDN /api/v3/singer/info)，将两次串行 RTT 压缩为单次并行 RTT
+        let dev_gw = dev.clone();
+        let sess_gw = session.clone();
+        let aid_gw = aid_trimmed.clone();
+        let gw_fut = async move {
+            let mut headers = HashMap::new();
+            headers.insert("x-router".to_string(), "openapi.kugou.com".to_string());
+            headers.insert("kg-tid".to_string(), "36".to_string());
+            let author_val = if let Ok(n) = aid_gw.parse::<i64>() {
+                json!(n)
+            } else {
+                json!(aid_gw)
+            };
+            let body = json!({
+                "author_id": author_val
+            });
+            if let Ok(resp) = self
+                .transport
+                .call(
+                    "/kmr/v3/author",
+                    &dev_gw,
+                    sess_gw.as_ref(),
+                    HashMap::new(),
+                    Some(body),
+                    "https://gateway.kugou.com",
+                    "POST",
+                    false,
+                    headers,
+                    true,
+                    true,
+                )
+                .await
+            {
+                let d = resp.data().get("data").unwrap_or_else(|| resp.data());
+                let base = d.get("base").unwrap_or(d);
+                let extra = d.get("extra").unwrap_or(d);
+                let stat = d.get("stat").unwrap_or(d);
+                let name = Self::val_str(base, "author_name");
+                if !name.is_empty() {
+                    let pic = {
+                        let p = Self::val_str(base, "sizable_avatar");
+                        if !p.is_empty() {
+                            p
+                        } else {
+                            Self::val_str(base, "avatar")
+                        }
+                    };
+                    let intro = {
+                        let li = Self::val_str(extra, "long_intro");
+                        if !li.is_empty() {
+                            li
+                        } else {
+                            Self::val_str(extra, "intro")
+                        }
+                    };
+                    let fans_val = Self::val_i64(extra, "fans_count")
+                        .or_else(|| Self::val_i64(extra, "fansnums"))
+                        .or_else(|| Self::val_i64(extra, "fans_num"))
+                        .or_else(|| Self::val_i64(base, "fans_count"))
+                        .or_else(|| Self::val_i64(base, "fansnums"))
+                        .or_else(|| Self::val_i64(stat, "fans_count"))
+                        .or_else(|| Self::val_i64(stat, "fansnums"))
                         .or_else(|| Self::val_i64(d, "fansnums"))
-                        .unwrap_or(0) as i32,
-                    is_followed: false,
-                    intro: cdn_intro,
-                };
-                if let Some(gw) = gw_artist.take() {
-                    merged_artist = Some(FollowedArtist {
-                        artist_id: artist_id.to_string(),
-                        target_user_id: cdn_artist.target_user_id,
-                        name: if !gw.name.is_empty() { gw.name } else { cdn_artist.name },
-                        avatar_url: if !gw.avatar_url.is_empty() { gw.avatar_url } else { cdn_artist.avatar_url },
-                        song_count: gw.song_count.max(cdn_artist.song_count),
-                        album_count: gw.album_count.max(cdn_artist.album_count),
-                        fans_count: gw.fans_count.max(cdn_artist.fans_count),
+                        .or_else(|| Self::val_i64(d, "fans_count"))
+                        .or_else(|| Self::val_i64(d, "fanscount"))
+                        .unwrap_or(0) as i32;
+                    return Some(FollowedArtist {
+                        artist_id: aid_gw,
+                        target_user_id: String::new(),
+                        name,
+                        avatar_url: signer::normalize_image_url(Some(&pic)),
+                        song_count: Self::val_i64(extra, "audio_count")
+                            .or_else(|| Self::val_i64(base, "audio_count"))
+                            .or_else(|| Self::val_i64(d, "audio_count"))
+                            .unwrap_or(0) as i32,
+                        album_count: Self::val_i64(extra, "album_count")
+                            .or_else(|| Self::val_i64(base, "album_count"))
+                            .or_else(|| Self::val_i64(d, "album_count"))
+                            .unwrap_or(0) as i32,
+                        fans_count: fans_val,
                         is_followed: false,
-                        intro: if cdn_artist.intro.len() > gw.intro.len() { cdn_artist.intro } else { gw.intro },
+                        intro,
                     });
-                } else {
-                    merged_artist = Some(cdn_artist);
                 }
             }
-        }
+            None
+        };
 
-        if merged_artist.is_none() {
-            merged_artist = gw_artist;
-        }
+        let dev_cdn = dev.clone();
+        let aid_cdn = aid_trimmed.clone();
+        let cdn_fut = async move {
+            let mut query = HashMap::new();
+            query.insert("version".to_string(), "9108".to_string());
+            query.insert("singerid".to_string(), aid_cdn.clone());
+            query.insert("plat".to_string(), "0".to_string());
+            query.insert("with_res_tag".to_string(), "1".to_string());
+            if let Ok(resp) = self
+                .transport
+                .call(
+                    "/api/v3/singer/info",
+                    &dev_cdn,
+                    None,
+                    query,
+                    None,
+                    "http://mobilecdnbj.kugou.com",
+                    "GET",
+                    false,
+                    HashMap::new(),
+                    false,
+                    false,
+                )
+                .await
+            {
+                let d = resp.data().get("data").unwrap_or_else(|| resp.data());
+                let name = Self::val_str(d, "singername");
+                if !name.is_empty() {
+                    let pic = Self::val_str(d, "imgurl");
+                    let raw_intro = Self::val_str(d, "intro");
+                    let raw_profile = Self::val_str(d, "profile");
+                    let cdn_intro = if !raw_intro.is_empty() && !raw_profile.is_empty() && !raw_intro.contains(&raw_profile) {
+                        format!("{}\n\n{}", raw_intro, raw_profile)
+                    } else if !raw_intro.is_empty() {
+                        raw_intro
+                    } else {
+                        raw_profile
+                    };
+                    return Some(FollowedArtist {
+                        artist_id: aid_cdn,
+                        target_user_id: Self::val_str(d, "userid"),
+                        name,
+                        avatar_url: signer::normalize_image_url(Some(&pic)),
+                        song_count: Self::val_i64(d, "songcount").unwrap_or(0) as i32,
+                        album_count: Self::val_i64(d, "albumcount").unwrap_or(0) as i32,
+                        fans_count: Self::val_i64(d, "fanscount")
+                            .or_else(|| Self::val_i64(d, "fansnums"))
+                            .unwrap_or(0) as i32,
+                        is_followed: false,
+                        intro: cdn_intro,
+                    });
+                }
+            }
+            None
+        };
+
+        let (gw_artist, cdn_artist) = tokio::join!(gw_fut, cdn_fut);
+
+        let merged_artist = match (gw_artist, cdn_artist) {
+            (Some(gw), Some(cdn)) => Some(FollowedArtist {
+                artist_id: aid_trimmed.clone(),
+                target_user_id: cdn.target_user_id,
+                name: if !gw.name.is_empty() { gw.name } else { cdn.name },
+                avatar_url: if !gw.avatar_url.is_empty() { gw.avatar_url } else { cdn.avatar_url },
+                song_count: gw.song_count.max(cdn.song_count),
+                album_count: gw.album_count.max(cdn.album_count),
+                fans_count: gw.fans_count.max(cdn.fans_count),
+                is_followed: false,
+                intro: if cdn.intro.len() > gw.intro.len() { cdn.intro } else { gw.intro },
+            }),
+            (Some(gw), None) => Some(gw),
+            (None, Some(cdn)) => Some(cdn),
+            (None, None) => None,
+        };
 
         if let Some(mut final_artist) = merged_artist {
             // 通道 3: 若 /kmr/v3/author 与 /api/v3/singer/info 均未携带粉丝数 (fans_count == 0)，
@@ -8455,7 +8560,7 @@ impl KugouApiService {
                     let matched = paged
                         .items
                         .iter()
-                        .find(|a| a.artist_id == artist_id.trim())
+                        .find(|a| a.artist_id == aid_trimmed)
                         .or_else(|| {
                             paged.items.iter().find(|a| {
                                 a.name.trim().eq_ignore_ascii_case(final_artist.name.trim())
@@ -8494,92 +8599,107 @@ impl KugouApiService {
         let page_size = 100u32;
         let sort_val = if sort == "new" { "2" } else { "1" };
 
-        // 通道 1: /openapi/kmr/v2/audio_group/author (概念版歌手单曲，含替换后的 Hi-Res 资源)
-        let mut v2_query = HashMap::new();
-        v2_query.insert("author_id".to_string(), aid.to_string());
-        v2_query.insert("area_code".to_string(), "all".to_string());
-        v2_query.insert("Filter".to_string(), "filter".to_string());
-        v2_query.insert("page".to_string(), page.to_string());
-        v2_query.insert("pagesize".to_string(), page_size.to_string());
-        v2_query.insert("replace_api_version".to_string(), "1".to_string());
-        v2_query.insert("sort".to_string(), sort_val.to_string());
-        v2_query.insert("mvdata_need".to_string(), "1".to_string());
-        v2_query.insert("show_audio_honor".to_string(), "1".to_string());
-        v2_query.insert("show_audio_tag".to_string(), "1".to_string());
-        v2_query.insert("replace_need".to_string(), "1".to_string());
+        // 并发请求通道 1 (/openapi/kmr/v2/audio_group/author) 与通道 2 (/kmr/v1/audio_group/author)
+        let dev_v2 = dev.clone();
+        let sess_v2 = session.clone();
+        let aid_v2 = aid.to_string();
+        let sort_v2 = sort_val.to_string();
+        let v2_fut = async move {
+            let mut v2_query = HashMap::new();
+            v2_query.insert("author_id".to_string(), aid_v2);
+            v2_query.insert("area_code".to_string(), "all".to_string());
+            v2_query.insert("Filter".to_string(), "filter".to_string());
+            v2_query.insert("page".to_string(), page.to_string());
+            v2_query.insert("pagesize".to_string(), page_size.to_string());
+            v2_query.insert("replace_api_version".to_string(), "1".to_string());
+            v2_query.insert("sort".to_string(), sort_v2);
+            v2_query.insert("mvdata_need".to_string(), "1".to_string());
+            v2_query.insert("show_audio_honor".to_string(), "1".to_string());
+            v2_query.insert("show_audio_tag".to_string(), "1".to_string());
+            v2_query.insert("replace_need".to_string(), "1".to_string());
 
-        let mut v2_headers = HashMap::new();
-        v2_headers.insert("x-router".to_string(), "openapi.kugou.com".to_string());
-        v2_headers.insert("kg-tid".to_string(), "220".to_string());
+            let mut v2_headers = HashMap::new();
+            v2_headers.insert("x-router".to_string(), "openapi.kugou.com".to_string());
+            v2_headers.insert("kg-tid".to_string(), "220".to_string());
 
-        let mut v2_songs = Vec::new();
-        if let Ok(resp) = self
-            .transport
-            .call(
-                "/openapi/kmr/v2/audio_group/author",
-                &dev,
-                session.as_ref(),
-                v2_query,
-                None,
-                "https://gateway.kugou.com",
-                "GET",
-                false,
-                v2_headers,
-                true,
-                true,
-            )
-            .await
-        {
-            v2_songs = Self::parse_songs(resp.data());
-            if v2_songs.is_empty() {
-                v2_songs = Self::parse_songs(&resp.body);
+            if let Ok(resp) = self
+                .transport
+                .call(
+                    "/openapi/kmr/v2/audio_group/author",
+                    &dev_v2,
+                    sess_v2.as_ref(),
+                    v2_query,
+                    None,
+                    "https://gateway.kugou.com",
+                    "GET",
+                    false,
+                    v2_headers,
+                    true,
+                    true,
+                )
+                .await
+            {
+                let mut songs = Self::parse_songs(resp.data());
+                if songs.is_empty() {
+                    songs = Self::parse_songs(&resp.body);
+                }
+                return songs;
             }
-        }
+            Vec::new()
+        };
 
-        // 通道 2: /kmr/v1/audio_group/author
-        let now_sec = Utc::now().timestamp();
-        let v1_body = json!({
-            "appid": APP_ID,
-            "clientver": CLIENT_VERSION,
-            "clienttime": now_sec,
-            "key": signer::params_key(now_sec, ""),
-            "author_id": aid,
-            "pagesize": page_size,
-            "page": page,
-            "sort": if sort == "new" { 2 } else { 1 },
-            "area_code": "all",
-            "replace_api_version": 1,
-            "replace_need": 1,
-            "show_audio_honor": 1,
-            "show_audio_tag": 1
-        });
-        let mut v1_headers = HashMap::new();
-        v1_headers.insert("x-router".to_string(), "openapi.kugou.com".to_string());
-        v1_headers.insert("kg-tid".to_string(), "220".to_string());
+        let dev_v1 = dev.clone();
+        let sess_v1 = session.clone();
+        let aid_v1 = aid.to_string();
+        let sort_num = if sort == "new" { 2 } else { 1 };
+        let v1_fut = async move {
+            let now_sec = Utc::now().timestamp();
+            let v1_body = json!({
+                "appid": APP_ID,
+                "clientver": CLIENT_VERSION,
+                "clienttime": now_sec,
+                "key": signer::params_key(now_sec, ""),
+                "author_id": aid_v1,
+                "pagesize": page_size,
+                "page": page,
+                "sort": sort_num,
+                "area_code": "all",
+                "replace_api_version": 1,
+                "replace_need": 1,
+                "show_audio_honor": 1,
+                "show_audio_tag": 1
+            });
+            let mut v1_headers = HashMap::new();
+            v1_headers.insert("x-router".to_string(), "openapi.kugou.com".to_string());
+            v1_headers.insert("kg-tid".to_string(), "220".to_string());
 
-        let mut v1_songs = Vec::new();
-        if let Ok(resp) = self
-            .transport
-            .call(
-                "/kmr/v1/audio_group/author",
-                &dev,
-                session.as_ref(),
-                HashMap::new(),
-                Some(v1_body),
-                "https://gateway.kugou.com",
-                "POST",
-                false,
-                v1_headers,
-                true,
-                true,
-            )
-            .await
-        {
-            v1_songs = Self::parse_songs(resp.data());
-            if v1_songs.is_empty() {
-                v1_songs = Self::parse_songs(&resp.body);
+            if let Ok(resp) = self
+                .transport
+                .call(
+                    "/kmr/v1/audio_group/author",
+                    &dev_v1,
+                    sess_v1.as_ref(),
+                    HashMap::new(),
+                    Some(v1_body),
+                    "https://gateway.kugou.com",
+                    "POST",
+                    false,
+                    v1_headers,
+                    true,
+                    true,
+                )
+                .await
+            {
+                let mut songs = Self::parse_songs(resp.data());
+                if songs.is_empty() {
+                    songs = Self::parse_songs(&resp.body);
+                }
+                return songs;
             }
-        }
+            Vec::new()
+        };
+
+        let (mut v2_songs, v1_songs) = tokio::join!(v2_fut, v1_fut);
 
         let base_list = if !v2_songs.is_empty() && !v1_songs.is_empty() {
             let mut v1_by_title: HashMap<String, Song> = HashMap::new();
@@ -8614,6 +8734,11 @@ impl KugouApiService {
             }
             v2_songs
         } else if !v2_songs.is_empty() {
+            for s2 in &mut v2_songs {
+                if s2.artist_id.is_empty() || s2.artist_id == "0" {
+                    s2.artist_id = aid.to_string();
+                }
+            }
             v2_songs
         } else {
             v1_songs
@@ -8729,9 +8854,14 @@ impl KugouApiService {
                     added += 1;
                 }
             }
-            if added == 0 || batch_len < 15 {
+            if added == 0 || batch_len < 50 {
                 break;
             }
+        }
+
+        // 当网关通道 1 已成功获取曲目时直接走并发权限补全返回，仅当通道 1 为空时才启用 CDN 通道 2 兜底
+        if !all_songs.is_empty() {
+            return Ok(self.enrich_songs_privilege_lite(all_songs).await);
         }
 
         // 通道 2: CDN 专辑歌曲接口 (/api/v3/album/song)
@@ -8785,45 +8915,26 @@ impl KugouApiService {
                     added += 1;
                 }
             }
-            if added == 0 || batch_len < 15 {
+            if added == 0 || batch_len < 50 {
                 break;
             }
         }
 
-        let merged = if !all_songs.is_empty() {
-            let mut cdn_by_title: HashMap<String, Song> = HashMap::new();
-            for cs in cdn_songs {
-                cdn_by_title.insert(cs.title.trim().to_lowercase(), cs);
-            }
-            for gs in &mut all_songs {
-                if let Some(cs) = cdn_by_title.get(&gs.title.trim().to_lowercase()) {
-                    if gs.hash_flac.is_empty() && !cs.hash_flac.is_empty() {
-                        gs.hash_flac = cs.hash_flac.clone();
-                        gs.is_lossless = true;
-                    }
-                    if gs.hash320.is_empty() && !cs.hash320.is_empty() {
-                        gs.hash320 = cs.hash320.clone();
-                    }
-                }
-            }
-            all_songs
-        } else {
-            cdn_songs
-        };
-
-        Ok(self.enrich_songs_privilege_lite(merged).await)
+        Ok(self.enrich_songs_privilege_lite(cdn_songs).await)
     }
 
-    /// 26. 热搜榜、实时热门歌手与多维全量搜索（歌单 / 专辑 / 歌手，严格对齐 MakcRe/KuGouMusicApi）
-    pub async fn fetch_hot_search_boards(&self) -> Result<Vec<HotSearchBoard>, String> {
+    /// 26. 实时多维热榜、实时热搜歌手与多维全量搜索（歌单 / 专辑 / 歌手，严格对齐 MakcRe/KuGouMusicApi）
+    async fn fetch_raw_hot_search_tab_keywords(&self) -> Vec<String> {
         let dev = self.store.device();
         let session = self.store.session();
+        let fresh_ms = Utc::now().timestamp_millis().to_string();
 
         for plat_val in ["2", "0"] {
             let mut query = HashMap::new();
             query.insert("navid".to_string(), "1".to_string());
             query.insert("plat".to_string(), plat_val.to_string());
             query.insert("count".to_string(), "30".to_string());
+            query.insert("_t".to_string(), fresh_ms.clone());
             let mut headers = HashMap::new();
             headers.insert("x-router".to_string(), "msearch.kugou.com".to_string());
 
@@ -8844,70 +8955,113 @@ impl KugouApiService {
                 )
                 .await
             {
-                let mut boards = Vec::new();
+                let mut kws_out = Vec::new();
                 if let Some(list) = resp.data().get("list").and_then(|v| v.as_array()) {
                     for group in list {
-                        let board_name = Self::val_str(group, "name");
-                        let mut entries = Vec::new();
                         if let Some(kws) = group.get("keywords").and_then(|v| v.as_array()) {
                             for k in kws {
                                 let kw = Self::val_str(k, "keyword").trim().to_string();
-                                if kw.is_empty() {
-                                    continue;
+                                if !kw.is_empty() && !kws_out.contains(&kw) {
+                                    kws_out.push(kw);
                                 }
-                                let raw_reason = Self::val_str(k, "reason").trim().to_string();
-                                let clean_reason = {
-                                    let r_norm = raw_reason
-                                        .trim_end_matches("...")
-                                        .trim_end_matches('…')
-                                        .trim()
-                                        .to_lowercase();
-                                    let kw_norm = kw.trim().to_lowercase();
-                                    if r_norm.is_empty()
-                                        || r_norm == kw_norm
-                                        || kw_norm.starts_with(&r_norm)
-                                        || r_norm.starts_with(&kw_norm)
-                                        || kw_norm.contains(&r_norm)
-                                    {
-                                        String::new()
-                                    } else {
-                                        raw_reason
-                                    }
-                                };
-                                entries.push(HotSearchEntry {
-                                    keyword: kw,
-                                    reason: clean_reason,
-                                    icon_type: Self::val_i64(k, "icon").unwrap_or(0) as i32,
-                                });
                             }
-                        }
-                        if !entries.is_empty() {
-                            boards.push(HotSearchBoard {
-                                name: if board_name.is_empty() {
-                                    "热搜榜".to_string()
-                                } else {
-                                    board_name
-                                },
-                                entries,
-                            });
                         }
                     }
                 }
-                if !boards.is_empty() {
-                    return Ok(boards);
+                if !kws_out.is_empty() {
+                    return kws_out;
                 }
             }
         }
-        Ok(Vec::new())
+        Vec::new()
+    }
+
+    /// 搜索页右侧多维实时榜单（移除重复的“热搜榜”，并发拉取 8 大官方权威细分榜单实时 Top 18 曲目）
+    pub async fn fetch_hot_search_boards(&self) -> Result<Vec<HotSearchBoard>, String> {
+        let board_specs: [(&str, i32, i32, &str); 8] = [
+            ("飙升榜", 6666, 23784, "飙"),
+            ("抖音榜", 52144, 23784, "热"),
+            ("新歌榜", 31308, 21608, "新"),
+            ("DJ榜", 33160, 59703, "热"),
+            ("国风榜", 33161, 31308, "热"),
+            ("粤语榜", 31313, 24971, "热"),
+            ("欧美榜", 31310, 4681, "热"),
+            ("ACG榜", 33162, 4673, "新"),
+        ];
+
+        let mut futs = Vec::with_capacity(board_specs.len());
+        for (board_name, primary_rid, fallback_rid, badge_tag) in board_specs {
+            futs.push(async move {
+                let mut songs = self.fetch_rank_songs_single_page(primary_rid, 1, 24, 0).await;
+                if songs.len() < 18 && fallback_rid > 0 && fallback_rid != primary_rid {
+                    let fb_songs = self.fetch_rank_songs_single_page(fallback_rid, 1, 24, 0).await;
+                    let mut seen_titles: HashSet<String> = songs
+                        .iter()
+                        .map(|s| s.title.trim().to_lowercase())
+                        .collect();
+                    for fs in fb_songs {
+                        let tk = fs.title.trim().to_lowercase();
+                        if !tk.is_empty() && seen_titles.insert(tk) {
+                            songs.push(fs);
+                        }
+                        if songs.len() >= 18 {
+                            break;
+                        }
+                    }
+                }
+
+                let mut entries = Vec::new();
+                let mut seen_kw = HashSet::new();
+                for (idx, s) in songs.into_iter().enumerate() {
+                    let clean_title = s.title.trim();
+                    if clean_title.is_empty() || clean_title == "未知歌曲" {
+                        continue;
+                    }
+                    let clean_artist = s.artist.trim();
+                    let kw = if !clean_artist.is_empty() && clean_artist != "未知歌手" && !clean_title.contains(clean_artist) {
+                        format!("{} - {}", clean_title, clean_artist)
+                    } else {
+                        clean_title.to_string()
+                    };
+                    let norm_k = kw.to_lowercase();
+                    if !seen_kw.insert(norm_k) {
+                        continue;
+                    }
+                    entries.push(HotSearchEntry {
+                        keyword: kw,
+                        reason: if idx < 3 { badge_tag.to_string() } else { String::new() },
+                        icon_type: if idx < 3 { 1 } else { 0 },
+                    });
+                    if entries.len() >= 18 {
+                        break;
+                    }
+                }
+
+                HotSearchBoard {
+                    name: board_name.to_string(),
+                    entries,
+                }
+            });
+        }
+
+        let boards: Vec<HotSearchBoard> = futures_join_vec(futs)
+            .await
+            .into_iter()
+            .filter(|b| !b.entries.is_empty())
+            .collect();
+
+        Ok(boards)
     }
 
     pub async fn fetch_search_hot(&self) -> Result<Vec<String>, String> {
-        let mut keywords = Vec::new();
-        if let Ok(boards) = self.fetch_hot_search_boards().await {
-            for b in boards {
-                for entry in b.entries {
-                    if !entry.keyword.is_empty() && !keywords.contains(&entry.keyword) {
-                        keywords.push(entry.keyword);
+        let mut keywords = self.fetch_raw_hot_search_tab_keywords().await;
+        if keywords.is_empty() {
+            if let Ok(boards) = self.fetch_hot_search_boards().await {
+                for b in boards {
+                    for entry in b.entries {
+                        if !entry.keyword.is_empty() && !keywords.contains(&entry.keyword) {
+                            keywords.push(entry.keyword);
+                        }
                     }
                 }
             }
@@ -8932,8 +9086,8 @@ impl KugouApiService {
         Ok(keywords.into_iter().take(24).collect())
     }
 
-    /// 实时热门歌手榜单 (对齐 MakcRe/KuGouMusicApi module/singer_list.js -> /ocean/v6/singer/list + /api/v5/singer/list 兜底)
-    /// category: 0=全部, 1=华语, 2=欧美, 3=日韩, 4=其他
+    /// 实时最近热搜歌手榜单 (对齐 MakcRe/KuGouMusicApi module/singer_list.js -> /ocean/v6/singer/list + 实时飙升/热搜榜热度动态加权)
+    /// category: 1=华语 (默认), 2=欧美, 3=日韩
     pub async fn fetch_hot_artists(
         &self,
         category: u32,
@@ -8941,9 +9095,9 @@ impl KugouApiService {
     ) -> Result<Vec<FollowedArtist>, String> {
         let dev = self.store.device();
         let session = self.store.session();
+        let eff_cat = if category == 0 { 1 } else { category.min(6) };
         let hot_limit = count.clamp(6, 60);
-        let mut out = Vec::new();
-        let mut seen = HashSet::new();
+        let fresh_ms = Utc::now().timestamp_millis().to_string();
 
         let parse_singer_node = |o: &Value| -> Option<FollowedArtist> {
             let sid = [
@@ -9007,152 +9161,375 @@ impl KugouApiService {
             false
         };
 
-        let finalize_hot_candidates = |mut candidates: Vec<FollowedArtist>, limit: usize| -> Vec<FollowedArtist> {
-            if candidates.len() <= limit {
-                return candidates;
-            }
-            // 剔除酷狗热门分组中偶尔插队的极低粉丝量推广噪音（当候选充足时，要求至少具备一定粉丝基数或排在后置兜底）
-            let high_popularity: Vec<FollowedArtist> = candidates
-                .iter()
-                .filter(|a| a.fans_count == 0 || a.fans_count >= 500_000)
-                .cloned()
-                .collect();
-            if high_popularity.len() >= limit {
-                return high_popularity.into_iter().take(limit).collect();
-            }
-            candidates.truncate(limit);
-            candidates
-        };
+        let fetch_singer_list_by_type = |singer_type: u32| {
+            let dev_cl = dev.clone();
+            let sess_cl = session.clone();
+            let ts_cl = fresh_ms.clone();
+            async move {
+                let mut list_out = Vec::new();
+                let mut seen_ids = HashSet::new();
 
-        // 通道 1: /ocean/v6/singer/list (对齐 MakcRe/KuGouMusicApi module/singer_list.js)
-        let mut gw_query = HashMap::new();
-        gw_query.insert("version".to_string(), "9108".to_string());
-        gw_query.insert("showtype".to_string(), "2".to_string());
-        gw_query.insert("plat".to_string(), "0".to_string());
-        gw_query.insert("sextype".to_string(), "0".to_string());
-        gw_query.insert("sort".to_string(), "1".to_string());
-        gw_query.insert("pagesize".to_string(), "100".to_string());
-        gw_query.insert("type".to_string(), category.min(6).to_string());
-        gw_query.insert("page".to_string(), "1".to_string());
-        gw_query.insert("musician".to_string(), "0".to_string());
-        gw_query.insert("hotsize".to_string(), "100".to_string());
+                let mut gw_query = HashMap::new();
+                gw_query.insert("version".to_string(), "9108".to_string());
+                gw_query.insert("showtype".to_string(), "2".to_string());
+                gw_query.insert("plat".to_string(), "0".to_string());
+                gw_query.insert("sextype".to_string(), "0".to_string());
+                gw_query.insert("sort".to_string(), "1".to_string());
+                gw_query.insert("pagesize".to_string(), "100".to_string());
+                gw_query.insert("type".to_string(), singer_type.to_string());
+                gw_query.insert("page".to_string(), "1".to_string());
+                gw_query.insert("musician".to_string(), "0".to_string());
+                gw_query.insert("hotsize".to_string(), "100".to_string());
+                gw_query.insert("_t".to_string(), ts_cl.clone());
 
-        let mut gw_headers = HashMap::new();
-        gw_headers.insert("x-router".to_string(), "mobilecdnbj.kugou.com".to_string());
+                let mut gw_headers = HashMap::new();
+                gw_headers.insert("x-router".to_string(), "mobilecdnbj.kugou.com".to_string());
 
-        if let Ok(resp) = self
-            .transport
-            .call(
-                "/ocean/v6/singer/list",
-                &dev,
-                session.as_ref(),
-                gw_query,
-                None,
-                "https://gateway.kugou.com",
-                "GET",
-                false,
-                gw_headers,
-                true,
-                true,
-            )
-            .await
-        {
-            if resp.is_success() {
-                if let Some(info_arr) = resp.data().get("info").and_then(|v| v.as_array()) {
-                    for group in info_arr {
-                        if let Some(singers) = group.get("singer").and_then(|v| v.as_array()) {
-                            // 仅提取“热门”分组，严禁将 A~Z 字母索引分组（如阿杜、阿悄、aespa、A-Lin）串组拼入热门歌手
-                            if !out.is_empty() && is_alpha_index_group(group) {
-                                continue;
-                            }
-                            for s in singers {
-                                if let Some(artist) = parse_singer_node(s) {
-                                    if seen.insert(artist.artist_id.clone()) {
-                                        out.push(artist);
+                if let Ok(resp) = self
+                    .transport
+                    .call(
+                        "/ocean/v6/singer/list",
+                        &dev_cl,
+                        sess_cl.as_ref(),
+                        gw_query,
+                        None,
+                        "https://gateway.kugou.com",
+                        "GET",
+                        false,
+                        gw_headers,
+                        true,
+                        true,
+                    )
+                    .await
+                {
+                    if resp.is_success() {
+                        if let Some(info_arr) = resp.data().get("info").and_then(|v| v.as_array()) {
+                            for group in info_arr {
+                                if let Some(singers) = group.get("singer").and_then(|v| v.as_array()) {
+                                    if !list_out.is_empty() && is_alpha_index_group(group) {
+                                        continue;
+                                    }
+                                    for s in singers {
+                                        if let Some(artist) = parse_singer_node(s) {
+                                            if seen_ids.insert(artist.artist_id.clone()) {
+                                                list_out.push(artist);
+                                            }
+                                        }
+                                    }
+                                } else if let Some(artist) = parse_singer_node(group) {
+                                    if seen_ids.insert(artist.artist_id.clone()) {
+                                        list_out.push(artist);
                                     }
                                 }
                             }
-                        } else if let Some(artist) = parse_singer_node(group) {
-                            if seen.insert(artist.artist_id.clone()) {
-                                out.push(artist);
-                            }
                         }
                     }
                 }
-            }
-        }
 
-        if !out.is_empty() {
-            return Ok(finalize_hot_candidates(out, hot_limit));
-        }
+                if !list_out.is_empty() {
+                    return list_out;
+                }
 
-        // 通道 2: 未登录免鉴权 CDN 实时歌手热榜 (/api/v5/singer/list)
-        let mut cdn_query = HashMap::new();
-        cdn_query.insert("version".to_string(), "9108".to_string());
-        cdn_query.insert("showtype".to_string(), "2".to_string());
-        cdn_query.insert("plat".to_string(), "0".to_string());
-        cdn_query.insert("sextype".to_string(), "0".to_string());
-        cdn_query.insert("sort".to_string(), "1".to_string());
-        cdn_query.insert("pagesize".to_string(), "100".to_string());
-        cdn_query.insert("hotsize".to_string(), "100".to_string());
-        cdn_query.insert("type".to_string(), category.min(6).to_string());
-        cdn_query.insert("page".to_string(), "1".to_string());
-        cdn_query.insert("musician".to_string(), "0".to_string());
+                let mut cdn_query = HashMap::new();
+                cdn_query.insert("version".to_string(), "9108".to_string());
+                cdn_query.insert("showtype".to_string(), "2".to_string());
+                cdn_query.insert("plat".to_string(), "0".to_string());
+                cdn_query.insert("sextype".to_string(), "0".to_string());
+                cdn_query.insert("sort".to_string(), "1".to_string());
+                cdn_query.insert("pagesize".to_string(), "100".to_string());
+                cdn_query.insert("hotsize".to_string(), "100".to_string());
+                cdn_query.insert("type".to_string(), singer_type.to_string());
+                cdn_query.insert("page".to_string(), "1".to_string());
+                cdn_query.insert("musician".to_string(), "0".to_string());
+                cdn_query.insert("_t".to_string(), ts_cl);
 
-        if let Ok(resp) = self
-            .transport
-            .call(
-                "/api/v5/singer/list",
-                &dev,
-                None,
-                cdn_query,
-                None,
-                "http://mobilecdnbj.kugou.com",
-                "GET",
-                false,
-                HashMap::new(),
-                false,
-                false,
-            )
-            .await
-        {
-            if let Some(info_arr) = resp.data().get("info").and_then(|v| v.as_array()) {
-                for item in info_arr {
-                    if let Some(singers) = item.get("singer").and_then(|v| v.as_array()) {
-                        if !out.is_empty() && is_alpha_index_group(item) {
-                            continue;
-                        }
-                        for s in singers {
-                            if let Some(artist) = parse_singer_node(s) {
-                                if seen.insert(artist.artist_id.clone()) {
-                                    out.push(artist);
+                if let Ok(resp) = self
+                    .transport
+                    .call(
+                        "/api/v5/singer/list",
+                        &dev_cl,
+                        None,
+                        cdn_query,
+                        None,
+                        "http://mobilecdnbj.kugou.com",
+                        "GET",
+                        false,
+                        HashMap::new(),
+                        false,
+                        false,
+                    )
+                    .await
+                {
+                    if let Some(info_arr) = resp.data().get("info").and_then(|v| v.as_array()) {
+                        for item in info_arr {
+                            if let Some(singers) = item.get("singer").and_then(|v| v.as_array()) {
+                                if !list_out.is_empty() && is_alpha_index_group(item) {
+                                    continue;
+                                }
+                                for s in singers {
+                                    if let Some(artist) = parse_singer_node(s) {
+                                        if seen_ids.insert(artist.artist_id.clone()) {
+                                            list_out.push(artist);
+                                        }
+                                    }
+                                }
+                            } else if let Some(artist) = parse_singer_node(item) {
+                                if seen_ids.insert(artist.artist_id.clone()) {
+                                    list_out.push(artist);
                                 }
                             }
                         }
-                    } else if let Some(artist) = parse_singer_node(item) {
-                        if seen.insert(artist.artist_id.clone()) {
-                            out.push(artist);
+                    }
+                }
+                list_out
+            }
+        };
+
+        // 并发获取：1) 官方歌手热榜列表  2) 对应语种实时热搜词/实时飙升榜与热歌榜曲目（用于动态反映近期热搜歌手变化）
+        let (mut base_artists, trending_songs, hot_keywords) = match eff_cat {
+            2 => {
+                // 欧美：singer/list(type=2) + 欧美新歌榜(31310) + 美国BillBoard榜(4681)
+                let (singers, chart_a, chart_b) = tokio::join!(
+                    fetch_singer_list_by_type(2),
+                    self.fetch_rank_songs_single_page(31310, 1, 40, 0),
+                    self.fetch_rank_songs_single_page(4681, 1, 40, 0)
+                );
+                let mut songs = chart_a;
+                songs.extend(chart_b);
+                (singers, songs, Vec::new())
+            }
+            3 => {
+                // 日韩：并发拉取日本(type=3)/韩国(type=4)歌手榜 + 韩国榜(31311) + 日本榜(31312)
+                let (singers_jp, singers_kr, chart_kr, chart_jp) = tokio::join!(
+                    fetch_singer_list_by_type(3),
+                    fetch_singer_list_by_type(4),
+                    self.fetch_rank_songs_single_page(31311, 1, 40, 0),
+                    self.fetch_rank_songs_single_page(31312, 1, 40, 0)
+                );
+                let mut merged_singers = Vec::new();
+                let mut seen_s = HashSet::new();
+                let max_len = singers_jp.len().max(singers_kr.len());
+                for i in 0..max_len {
+                    if let Some(a) = singers_jp.get(i) {
+                        if seen_s.insert(a.artist_id.clone()) {
+                            merged_singers.push(a.clone());
+                        }
+                    }
+                    if let Some(b) = singers_kr.get(i) {
+                        if seen_s.insert(b.artist_id.clone()) {
+                            merged_singers.push(b.clone());
+                        }
+                    }
+                }
+                let mut songs = chart_kr;
+                songs.extend(chart_jp);
+                (merged_singers, songs, Vec::new())
+            }
+            _ => {
+                // 华语 (默认 eff_cat == 1)：singer/list(type=1) + 酷狗飙升榜(6666) + 酷狗TOP500(8888) + 实时热搜词榜(hot_tab)
+                let (singers, chart_soar, chart_top, hot_kws) = tokio::join!(
+                    fetch_singer_list_by_type(eff_cat),
+                    self.fetch_rank_songs_single_page(6666, 1, 40, 0),
+                    self.fetch_rank_songs_single_page(8888, 1, 40, 0),
+                    self.fetch_raw_hot_search_tab_keywords()
+                );
+                let mut songs = chart_soar;
+                songs.extend(chart_top);
+                (singers, songs, hot_kws)
+            }
+        };
+
+        // 统计官方实时榜单与实时热搜词中的歌手热度权重，当官方热搜/榜单变化时动态提升对应歌手顺位
+        let mut boost_by_id: HashMap<String, i64> = HashMap::new();
+        let mut boost_by_name: HashMap<String, i64> = HashMap::new();
+
+        for (idx, s) in trending_songs.iter().enumerate() {
+            let weight = (50i64 - (idx as i64).min(45)).max(5);
+            if !s.artist_id.is_empty() && s.artist_id != "0" {
+                *boost_by_id.entry(s.artist_id.clone()).or_insert(0) += weight;
+            }
+            for au in &s.authors {
+                if !au.id.is_empty() && au.id != "0" {
+                    *boost_by_id.entry(au.id.clone()).or_insert(0) += weight;
+                }
+                let an = au.name.trim().to_lowercase();
+                if !an.is_empty() {
+                    *boost_by_name.entry(an).or_insert(0) += weight;
+                }
+            }
+            for part in s.artist.split(&['、', '/', '&', ',', '，'][..]) {
+                let p_norm = part.trim().to_lowercase();
+                if !p_norm.is_empty() && p_norm != "未知歌手" {
+                    *boost_by_name.entry(p_norm).or_insert(0) += weight;
+                }
+            }
+        }
+
+        if !hot_keywords.is_empty() {
+            for a in &base_artists {
+                let an = a.name.trim().to_lowercase();
+                if an.len() >= 2 {
+                    for (k_idx, kw) in hot_keywords.iter().enumerate() {
+                        if kw.to_lowercase().contains(&an) {
+                            let kw_boost = (65i64 - (k_idx as i64 * 2)).max(15);
+                            *boost_by_id.entry(a.artist_id.clone()).or_insert(0) += kw_boost;
                         }
                     }
                 }
             }
         }
 
-        Ok(finalize_hot_candidates(out, hot_limit))
+        // 综合基础热度顺位与实时热搜加权进行排序
+        let total_len = base_artists.len().max(1) as i64;
+        let mut scored: Vec<(i64, usize, FollowedArtist)> = base_artists
+            .drain(..)
+            .enumerate()
+            .map(|(idx, a)| {
+                let base_pos_score = (total_len - idx as i64) * 12;
+                let id_boost = boost_by_id.get(&a.artist_id).copied().unwrap_or(0);
+                let name_boost = boost_by_name
+                    .get(&a.name.trim().to_lowercase())
+                    .copied()
+                    .unwrap_or(0);
+                let fan_bonus = if a.fans_count >= 500_000 { 40 } else if a.fans_count == 0 { 20 } else { 0 };
+                let total_score = base_pos_score + id_boost.max(name_boost) + fan_bonus;
+                (total_score, idx, a)
+            })
+            .collect();
+
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+
+        let mut selected: Vec<FollowedArtist> = scored
+            .into_iter()
+            .take(hot_limit)
+            .map(|(_, _, a)| a)
+            .collect();
+
+        // 对前排缺失粉丝数或高清头像的歌手，并发请求 /kmr/v3/author 极速补全真实粉丝数
+        let missing_indices: Vec<(usize, String)> = selected
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.fans_count <= 0 || a.avatar_url.is_empty())
+            .take(12)
+            .map(|(i, a)| (i, a.artist_id.clone()))
+            .collect();
+
+        if !missing_indices.is_empty() {
+            let mut enrich_futs = Vec::with_capacity(missing_indices.len());
+            for (idx, aid) in missing_indices {
+                let dev_cl = dev.clone();
+                let sess_cl = session.clone();
+                enrich_futs.push(async move {
+                    let mut headers = HashMap::new();
+                    headers.insert("x-router".to_string(), "openapi.kugou.com".to_string());
+                    headers.insert("kg-tid".to_string(), "36".to_string());
+                    let author_val = if let Ok(n) = aid.parse::<i64>() {
+                        json!(n)
+                    } else {
+                        json!(aid)
+                    };
+                    let body = json!({ "author_id": author_val });
+                    if let Ok(resp) = self
+                        .transport
+                        .call(
+                            "/kmr/v3/author",
+                            &dev_cl,
+                            sess_cl.as_ref(),
+                            HashMap::new(),
+                            Some(body),
+                            "https://gateway.kugou.com",
+                            "POST",
+                            false,
+                            headers,
+                            true,
+                            true,
+                        )
+                        .await
+                    {
+                        let d = resp.data().get("data").unwrap_or_else(|| resp.data());
+                        let base = d.get("base").unwrap_or(d);
+                        let extra = d.get("extra").unwrap_or(d);
+                        let stat = d.get("stat").unwrap_or(d);
+                        let fans = Self::val_i64(extra, "fans_count")
+                            .or_else(|| Self::val_i64(extra, "fansnums"))
+                            .or_else(|| Self::val_i64(base, "fans_count"))
+                            .or_else(|| Self::val_i64(stat, "fans_count"))
+                            .or_else(|| Self::val_i64(d, "fans_count"))
+                            .unwrap_or(0) as i32;
+                        let pic = {
+                            let p = Self::val_str(base, "sizable_avatar");
+                            if !p.is_empty() { p } else { Self::val_str(base, "avatar") }
+                        };
+                        return Some((idx, fans, signer::normalize_image_url(Some(&pic))));
+                    }
+                    None
+                });
+            }
+            for res in futures_join_vec(enrich_futs).await.into_iter().flatten() {
+                let (idx, fans, avatar) = res;
+                if let Some(target) = selected.get_mut(idx) {
+                    if target.fans_count <= 0 && fans > 0 {
+                        target.fans_count = fans;
+                    }
+                    if target.avatar_url.is_empty() && !avatar.is_empty() {
+                        target.avatar_url = avatar;
+                    }
+                }
+            }
+        }
+
+        Ok(selected)
     }
 
-    /// 独立搜索页探索聚合（实时热搜歌曲 TOP 榜 + 多维热搜词榜 + 实时热门歌手）
+    /// 独立搜索页探索聚合（实时热搜歌曲 TOP 榜 + 右侧 8 大细分实时热榜 + 实时最近热搜歌手）
     pub async fn fetch_search_discovery(
         &self,
         artist_category: u32,
     ) -> Result<SearchDiscoveryData, String> {
-        let (songs_res, boards_res, artists_res) = tokio::join!(
-            self.fetch_rank_songs(8888, 1, 24),
+        let eff_cat = if artist_category == 0 { 1 } else { artist_category };
+        let hot_songs_fut = async {
+            let (soar_songs, top_songs) = tokio::join!(
+                self.fetch_rank_songs_single_page(6666, 1, 24, 0),
+                self.fetch_rank_songs_single_page(8888, 1, 30, 0)
+            );
+            let mut merged = Vec::new();
+            let mut seen = HashSet::new();
+            let max_len = soar_songs.len().max(top_songs.len());
+            for i in 0..max_len {
+                if let Some(s1) = soar_songs.get(i) {
+                    let k = if !s1.hash.is_empty() {
+                        s1.hash.to_lowercase()
+                    } else {
+                        format!("{}::{}", s1.title, s1.artist).to_lowercase()
+                    };
+                    if !k.is_empty() && seen.insert(k) {
+                        merged.push(s1.clone());
+                    }
+                }
+                if let Some(s2) = top_songs.get(i) {
+                    let k = if !s2.hash.is_empty() {
+                        s2.hash.to_lowercase()
+                    } else {
+                        format!("{}::{}", s2.title, s2.artist).to_lowercase()
+                    };
+                    if !k.is_empty() && seen.insert(k) {
+                        merged.push(s2.clone());
+                    }
+                }
+                if merged.len() >= 36 {
+                    break;
+                }
+            }
+            self.enrich_songs_privilege_lite(merged).await
+        };
+
+        let (hot_songs, boards_res, artists_res) = tokio::join!(
+            hot_songs_fut,
             self.fetch_hot_search_boards(),
-            self.fetch_hot_artists(artist_category, 24)
+            self.fetch_hot_artists(eff_cat, 24)
         );
         Ok(SearchDiscoveryData {
-            hot_songs: songs_res.unwrap_or_default(),
+            hot_songs,
             hot_boards: boards_res.unwrap_or_default(),
             hot_artists: artists_res.unwrap_or_default(),
         })

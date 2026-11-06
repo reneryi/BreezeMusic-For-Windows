@@ -2906,6 +2906,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: 40px;
+  padding-right: 176px;
   margin-bottom: 8px;
 }
 
@@ -5358,6 +5360,8 @@ body {
 .tuner-studio-page {
   width: 100%;
   max-width: 100%;
+  height: auto !important;
+  overflow: visible !important;
   padding: 2px 0 28px;
 }
 
@@ -8097,7 +8101,8 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 4px 0 18px;
+  min-height: 46px;
+  padding: 4px 184px 18px 0;
   flex-wrap: wrap;
 }
 

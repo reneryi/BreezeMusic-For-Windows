@@ -393,8 +393,8 @@ export const kugouClient = {
     return invoke<string[]>("get_search_hot");
   },
 
-  /** 获取实时热门歌手榜单 (0=全部, 1=华语, 2=欧美, 3=日韩) */
-  async getHotArtists(category = 0, count = 24): Promise<FollowedArtist[]> {
+  /** 获取实时热门歌手榜单 (1=华语, 2=欧美, 3=日韩) */
+  async getHotArtists(category = 1, count = 24): Promise<FollowedArtist[]> {
     const list = await invoke<FollowedArtist[]>("get_hot_artists_cmd", {
       category,
       count,
@@ -403,7 +403,7 @@ export const kugouClient = {
   },
 
   /** 获取独立搜索页探索聚合（实时热搜歌曲 + 多维热搜词榜 + 实时热门歌手） */
-  async getSearchDiscovery(artistCategory = 0): Promise<SearchDiscoveryData> {
+  async getSearchDiscovery(artistCategory = 1): Promise<SearchDiscoveryData> {
     const res = await invoke<SearchDiscoveryData>("get_search_discovery_cmd", {
       artistCategory,
     });

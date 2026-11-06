@@ -662,6 +662,8 @@ async function confirmDeleteOrUncollect() {
   justify-content: space-between;
   gap: 14px;
   flex-wrap: wrap;
+  min-height: 46px;
+  padding-right: 184px;
 }
 .sdp-breadcrumb {
   font-size: 13.5px;

@@ -410,6 +410,8 @@ async function refreshArtistPage() {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
+  min-height: 46px;
+  padding-right: 184px;
 }
 
 .artist-hero-banner {

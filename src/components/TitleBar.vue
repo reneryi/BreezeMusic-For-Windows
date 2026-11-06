@@ -190,12 +190,7 @@ function handleNavClick(id: MainTab) {
   if (id === "discover" && store.activeTab === "discover") {
     store.discoverSubView = "home";
   } else if (id === "search") {
-    if (store.activeTab === "search" && store.searchViewMode === "results") {
-      store.openSearchLanding(false);
-    } else if (!store.searchKeyword.trim()) {
-      store.searchViewMode = "landing";
-      store.loadSearchDiscovery(false);
-    }
+    store.openSearchLanding(true);
     store.activeTab = "search";
     nextTick(() => {
       const input = document.getElementById(
@@ -217,7 +212,7 @@ function handleNavDblClick(id: MainTab) {
     store.discoverSubView = "home";
     store.refreshDiscoverAll();
   } else if (id === "search") {
-    store.openSearchLanding(false);
+    store.openSearchLanding(true);
     store.loadSearchDiscovery(true).then(() => {
       store.notify("实时热搜歌曲与热门歌手已刷新 ✨");
     });

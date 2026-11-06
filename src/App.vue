@@ -238,6 +238,7 @@ function resetStageViewportScroll() {
 watch(
   [
     () => store.activeTab,
+    () => store.searchViewMode,
     () => store.discoverSubView,
     () => store.libraryDetailMode,
     () => store.isNowPlayingOpen,
@@ -699,21 +700,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
-.skyline-stage-viewport.viewport-scrolled:not(.viewport-locked-nowplaying) {
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent 0px,
-    rgba(0, 0, 0, 0.38) 14px,
-    #000000 44px
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0px,
-    rgba(0, 0, 0, 0.38) 14px,
-    #000000 44px
-  );
-}
-
 @media (min-width: 1600px) {
   .dual-column-song-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;

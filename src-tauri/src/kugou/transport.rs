@@ -351,7 +351,12 @@ impl KugouTransport {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
         let text = resp.text().await.map_err(|e| e.to_string())?;
-        let parsed: Value = serde_json::from_str(&text)
+        let clean_text = text
+            .trim()
+            .trim_start_matches("<!--KG_TAG_RES_START-->")
+            .trim_end_matches("<!--KG_TAG_RES_END-->")
+            .trim();
+        let parsed: Value = serde_json::from_str(clean_text)
             .map_err(|_| "酷狗服务器返回了非 JSON 响应".to_string())?;
 
         let ssa_from_body = parsed

@@ -2430,142 +2430,473 @@ impl KugouApiService {
         Ok(self.enrich_songs_privilege_lite(diversified).await)
     }
 
-    /// 11. 新歌速递 (严格对齐四大分类：华语 21608 / 欧美 21609 / 日韩 21610 / 粤语 21611，核验最近一周真实发行日期)
-    pub async fn fetch_new_song_express(&self, period_key: &str) -> Result<Vec<Song>, String> {
+    fn extract_raw_song_language(o: &Value) -> String {
+        let base = o.get("base").unwrap_or(o);
+        let audio_info = o.get("audio_info").unwrap_or(o);
+        let old_cp = o.get("old_copyright").unwrap_or(o);
+        [
+            o.get("trans_param").and_then(|tp| Self::val_opt_str(tp, "language")),
+            audio_info
+                .get("trans_param")
+                .and_then(|tp| Self::val_opt_str(tp, "language")),
+            old_cp
+                .get("trans_param")
+                .and_then(|tp| Self::val_opt_str(tp, "language")),
+            base.get("trans_param")
+                .and_then(|tp| Self::val_opt_str(tp, "language")),
+            Self::val_opt_str(base, "language"),
+            Self::val_opt_str(o, "language"),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|s| !s.trim().is_empty())
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+    }
+
+    fn extract_raw_song_remark(o: &Value) -> String {
+        let base = o.get("base").unwrap_or(o);
+        [
+            Self::val_str(o, "remarks"),
+            Self::val_str(o, "remark"),
+            Self::val_str(base, "remarks"),
+            Self::val_str(base, "remark"),
+        ]
+        .into_iter()
+        .find(|s| !s.trim().is_empty())
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+    }
+
+    fn val_opt_str(o: &Value, key: &str) -> Option<String> {
+        let s = Self::val_str(o, key);
+        if s.is_empty() {
+            None
+        } else {
+            Some(s)
+        }
+    }
+
+    fn parse_songs_with_raw_meta(root: &Value) -> Vec<(Song, String, String)> {
+        let mut collected = Vec::new();
+        Self::collect_song_objects(root, 0, &mut collected);
+        collected
+            .into_iter()
+            .filter_map(|obj| {
+                let s = Self::parse_single_song(obj);
+                if (!s.hash.is_empty() || !s.id.is_empty()) && s.title != "未知歌曲" {
+                    let lang = Self::extract_raw_song_language(obj);
+                    let remark = Self::extract_raw_song_remark(obj);
+                    Some((s, lang, remark))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    async fn fetch_newsong_publish_21608(&self, now_ms: i64) -> Vec<(Song, String, String)> {
         let session = self.store.session();
         let dev = self.store.device();
         let uid_num = session
             .as_ref()
             .and_then(|s| s.user_id.parse::<i64>().ok())
             .unwrap_or(0);
+        let mut query = HashMap::new();
+        query.insert("_t".to_string(), now_ms.to_string());
+        let body = json!({
+            "rank_id": 21608,
+            "userid": uid_num,
+            "page": 1,
+            "pagesize": 100,
+            "tags": []
+        });
+        if let Ok(resp) = self
+            .transport
+            .call(
+                "/musicadservice/container/v1/newsong_publish",
+                &dev,
+                session.as_ref(),
+                query,
+                Some(body),
+                "https://gateway.kugou.com",
+                "POST",
+                false,
+                HashMap::new(),
+                true,
+                true,
+            )
+            .await
+        {
+            let mut items = Self::parse_songs_with_raw_meta(resp.data());
+            if items.is_empty() {
+                items = Self::parse_songs_with_raw_meta(&resp.body);
+            }
+            return items;
+        }
+        Vec::new()
+    }
 
+    async fn fetch_v3_rank_newsong(
+        &self,
+        newsong_type: i32,
+        now_ms: i64,
+    ) -> Vec<(Song, String, String)> {
+        // 注意：mobilecdnbj /api/v3/rank/newsong 中 type=3 为 2019 年冻结旧库，韩国为 type=4，日本为 type=5
+        if newsong_type == 3 {
+            return Vec::new();
+        }
+        let dev = self.store.device();
+        let mut query = HashMap::new();
+        query.insert("version".to_string(), "9108".to_string());
+        query.insert("plat".to_string(), "0".to_string());
+        query.insert("with_cover".to_string(), "1".to_string());
+        query.insert("pagesize".to_string(), "100".to_string());
+        query.insert("page".to_string(), "1".to_string());
+        query.insert("type".to_string(), newsong_type.to_string());
+        query.insert("area_code".to_string(), "1".to_string());
+        query.insert("with_res_tag".to_string(), "1".to_string());
+        query.insert("_t".to_string(), now_ms.to_string());
+
+        if let Ok(resp) = self
+            .transport
+            .call(
+                "/api/v3/rank/newsong",
+                &dev,
+                None,
+                query,
+                None,
+                "http://mobilecdnbj.kugou.com",
+                "GET",
+                false,
+                HashMap::new(),
+                false,
+                false,
+            )
+            .await
+        {
+            let mut items = Self::parse_songs_with_raw_meta(resp.data());
+            if items.is_empty() {
+                items = Self::parse_songs_with_raw_meta(&resp.body);
+            }
+            return items;
+        }
+        Vec::new()
+    }
+
+    async fn fetch_rank_audio_with_meta(
+        &self,
+        rank_id: i32,
+        pagesize: u32,
+        now_ms: i64,
+    ) -> Vec<(Song, String, String)> {
+        let session = self.store.session();
+        let dev = self.store.device();
+        let mut query = HashMap::new();
+        query.insert("_t".to_string(), now_ms.to_string());
+        let body = json!({
+            "show_portrait_mv": 1,
+            "show_type_total": 1,
+            "filter_original_remarks": 0,
+            "area_code": 1,
+            "pagesize": pagesize,
+            "rank_cid": 0,
+            "type": 1,
+            "page": 1,
+            "rank_id": rank_id
+        });
+        let mut headers = HashMap::new();
+        headers.insert("kg-tid".to_string(), "369".to_string());
+
+        if let Ok(resp) = self
+            .transport
+            .call(
+                "/openapi/kmr/v2/rank/audio",
+                &dev,
+                session.as_ref(),
+                query,
+                Some(body),
+                "https://gateway.kugou.com",
+                "POST",
+                false,
+                headers,
+                true,
+                true,
+            )
+            .await
+        {
+            let mut items = Self::parse_songs_with_raw_meta(resp.data());
+            if items.is_empty() {
+                items = Self::parse_songs_with_raw_meta(&resp.body);
+            }
+            return items;
+        }
+        Vec::new()
+    }
+
+    async fn fetch_ip_latest_audios_with_meta(
+        &self,
+        ip_id: i32,
+        pagesize: u32,
+        now_ms: i64,
+    ) -> Vec<(Song, String, String)> {
+        let session = self.store.session();
+        let dev = self.store.device();
+        let mut query = HashMap::new();
+        query.insert("_t".to_string(), now_ms.to_string());
+        let body = json!({
+            "is_publish": 1,
+            "ip_id": ip_id,
+            "sort": 2,
+            "page": 1,
+            "pagesize": pagesize,
+            "query": 1
+        });
+        if let Ok(resp) = self
+            .transport
+            .call(
+                "/openapi/v1/ip/audios",
+                &dev,
+                session.as_ref(),
+                query,
+                Some(body),
+                "https://gateway.kugou.com",
+                "POST",
+                false,
+                HashMap::new(),
+                true,
+                true,
+            )
+            .await
+        {
+            let mut items = Self::parse_songs_with_raw_meta(resp.data());
+            if items.is_empty() {
+                items = Self::parse_songs_with_raw_meta(&resp.body);
+            }
+            return items;
+        }
+        Vec::new()
+    }
+
+    /// 11. 新歌速递 (对齐 KuGouMusicApi top_song + v3/rank/newsong + rank/audio + ip/audios，严格校验最近一周正式发行歌曲)
+    pub async fn fetch_new_song_express(&self, period_key: &str) -> Result<Vec<Song>, String> {
+        let now_ms = Utc::now().timestamp_millis();
         let norm_key = period_key.trim().to_uppercase();
-        let region_pairs: Vec<(i32, i32)> = match norm_key.as_str() {
-            "ALL" | "TODAY" => vec![
-                (21608, 31308),
-                (21609, 31310),
-                (21610, 31311),
-                (21611, 31312),
-                (21611, 31313),
-            ],
-            "WESTERN" | "EUROPE_AMERICA" | "21609" => vec![(21609, 31310)],
-            "KOREA" | "KR" | "31311" => vec![(21610, 31311)],
-            "JAPAN" | "JP" | "31312" => vec![(21610, 31312)],
-            "JPKR" | "JAPAN_KOREA" | "21610" => vec![(21610, 31311), (21610, 31312)],
-            "CANTON" | "CANTONESE" | "21611" => vec![(21611, 31313)],
-            _ => vec![(21608, 31308)],
+
+        let raw_candidates: Vec<Song> = match norm_key.as_str() {
+            "CANTON" | "CANTONESE" | "21611" => {
+                let (pub_list, hk_chart, joox_chart, ip_canton_pop, ip_canton) = tokio::join!(
+                    self.fetch_newsong_publish_21608(now_ms),
+                    self.fetch_rank_audio_with_meta(31313, 100, now_ms),
+                    self.fetch_rank_audio_with_meta(42807, 100, now_ms),
+                    self.fetch_ip_latest_audios_with_meta(87899, 60, now_ms),
+                    self.fetch_ip_latest_audios_with_meta(87495, 60, now_ms),
+                );
+                pub_list
+                    .into_iter()
+                    .chain(hk_chart)
+                    .chain(joox_chart)
+                    .chain(ip_canton_pop)
+                    .chain(ip_canton)
+                    .filter(|(_, lang, _)| lang.contains("粤语"))
+                    .map(|(s, _, _)| s)
+                    .collect()
+            }
+            "WESTERN" | "EUROPE_AMERICA" | "21609" => {
+                let (v3_west, ip_west, chart_west) = tokio::join!(
+                    self.fetch_v3_rank_newsong(2, now_ms),
+                    self.fetch_ip_latest_audios_with_meta(87780, 60, now_ms),
+                    self.fetch_rank_audio_with_meta(31310, 100, now_ms),
+                );
+                let is_non_west = |lang: &str| {
+                    lang.contains("国语")
+                        || lang.contains("华语")
+                        || lang.contains("粤语")
+                        || lang.contains("闽南")
+                        || lang.contains("日语")
+                        || lang.contains("韩语")
+                };
+                v3_west
+                    .into_iter()
+                    .chain(ip_west)
+                    .chain(chart_west)
+                    .filter(|(_, lang, _)| !is_non_west(lang))
+                    .map(|(s, _, _)| s)
+                    .collect()
+            }
+            "JPKR" | "JAPAN_KOREA" | "21610" => {
+                // 日韩合并 Tag：并发获取韩语新歌 (v3 type=4 + 韩国榜 31311) 与日语新歌 (v3 type=5 + 日本榜 31312)，交替穿插保障韩日双语种均衡覆盖
+                let (v3_kr, v3_jp, chart_kr, chart_jp) = tokio::join!(
+                    self.fetch_v3_rank_newsong(4, now_ms),
+                    self.fetch_v3_rank_newsong(5, now_ms),
+                    self.fetch_rank_audio_with_meta(31311, 100, now_ms),
+                    self.fetch_rank_audio_with_meta(31312, 100, now_ms),
+                );
+                let is_kr_ok = |lang: &str| {
+                    lang.is_empty() || lang.contains("韩") || lang.contains("英") || lang.contains("纯音乐")
+                };
+                let is_jp_ok = |lang: &str| {
+                    lang.is_empty() || lang.contains("日") || lang.contains("英") || lang.contains("纯音乐")
+                };
+                let kr_vec: Vec<Song> = v3_kr
+                    .into_iter()
+                    .chain(chart_kr)
+                    .filter(|(_, lang, _)| is_kr_ok(lang))
+                    .map(|(s, _, _)| s)
+                    .collect();
+                let jp_vec: Vec<Song> = v3_jp
+                    .into_iter()
+                    .chain(chart_jp)
+                    .filter(|(_, lang, _)| is_jp_ok(lang))
+                    .map(|(s, _, _)| s)
+                    .collect();
+                let max_len = kr_vec.len().max(jp_vec.len());
+                let mut interleaved = Vec::with_capacity(kr_vec.len() + jp_vec.len());
+                for i in 0..max_len {
+                    if let Some(ks) = kr_vec.get(i) {
+                        interleaved.push(ks.clone());
+                    }
+                    if let Some(js) = jp_vec.get(i) {
+                        interleaved.push(js.clone());
+                    }
+                }
+                interleaved
+            }
+            "KOREA" | "KR" | "31311" => {
+                let (v3_kr, chart_kr) = tokio::join!(
+                    self.fetch_v3_rank_newsong(4, now_ms),
+                    self.fetch_rank_audio_with_meta(31311, 100, now_ms),
+                );
+                v3_kr
+                    .into_iter()
+                    .chain(chart_kr)
+                    .filter(|(_, lang, _)| !lang.contains("国语") && !lang.contains("粤语") && !lang.contains("日语"))
+                    .map(|(s, _, _)| s)
+                    .collect()
+            }
+            "JAPAN" | "JP" | "31312" => {
+                let (v3_jp, chart_jp) = tokio::join!(
+                    self.fetch_v3_rank_newsong(5, now_ms),
+                    self.fetch_rank_audio_with_meta(31312, 100, now_ms),
+                );
+                v3_jp
+                    .into_iter()
+                    .chain(chart_jp)
+                    .filter(|(_, lang, _)| !lang.contains("国语") && !lang.contains("粤语") && !lang.contains("韩语"))
+                    .map(|(s, _, _)| s)
+                    .collect()
+            }
+            "ACG" | "33162" => {
+                let chart_acg = self.fetch_rank_audio_with_meta(33162, 100, now_ms).await;
+                chart_acg.into_iter().map(|(s, _, _)| s).collect()
+            }
+            "OST" | "FILM" | "46910" | "33163" => {
+                let (variety_new, film_chart, ip_ost, pub_list) = tokio::join!(
+                    self.fetch_rank_audio_with_meta(46910, 100, now_ms),
+                    self.fetch_rank_audio_with_meta(33163, 100, now_ms),
+                    self.fetch_ip_latest_audios_with_meta(88213, 60, now_ms),
+                    self.fetch_newsong_publish_21608(now_ms),
+                );
+                let ost_keywords = [
+                    "电视剧", "电影", "网剧", "短剧", "动画", "动漫", "综艺", "游戏",
+                    "主题曲", "片尾曲", "片头曲", "插曲", "推广曲", "OST", "原声",
+                ];
+                let pub_ost = pub_list.into_iter().filter(|(s, _, rm)| {
+                    ost_keywords
+                        .iter()
+                        .any(|kw| rm.contains(kw) || s.album.contains(kw) || s.title.contains(kw))
+                });
+                variety_new
+                    .into_iter()
+                    .chain(film_chart)
+                    .chain(ip_ost)
+                    .chain(pub_ost)
+                    .map(|(s, _, _)| s)
+                    .collect()
+            }
+            _ => {
+                // CHINESE (华语)
+                let (pub_list, v3_cn, tw_chart) = tokio::join!(
+                    self.fetch_newsong_publish_21608(now_ms),
+                    self.fetch_v3_rank_newsong(1, now_ms),
+                    self.fetch_rank_audio_with_meta(54848, 80, now_ms),
+                );
+                let is_foreign = |lang: &str| {
+                    lang.contains("英语")
+                        || lang.contains("英文")
+                        || lang.contains("日语")
+                        || lang.contains("韩语")
+                        || lang.contains("俄语")
+                        || lang.contains("法语")
+                        || lang.contains("德语")
+                        || lang.contains("泰语")
+                        || lang.contains("西班牙")
+                };
+                pub_list
+                    .into_iter()
+                    .chain(v3_cn)
+                    .chain(tw_chart)
+                    .filter(|(_, lang, _)| !is_foreign(lang))
+                    .map(|(s, _, _)| s)
+                    .collect()
+            }
         };
 
-        let mut songs = Vec::new();
+        // 多维度去重：hash + album_audio_id + 标准化(歌名::歌手)
+        let mut deduped = Vec::new();
         let mut seen_hashes = HashSet::new();
-        let pages_to_fetch = if region_pairs.len() == 1 { 2 } else { 1 };
-
-        for (rank_id, fallback_chart_id) in region_pairs {
-            let mut region_collected = 0usize;
-            for page_idx in 1..=pages_to_fetch {
-                let body = json!({
-                    "rank_id": rank_id,
-                    "userid": uid_num,
-                    "page": page_idx,
-                    "pagesize": 40,
-                    "tags": []
-                });
-                if let Ok(resp) = self
-                    .transport
-                    .call(
-                        "/musicadservice/container/v1/newsong_publish",
-                        &dev,
-                        session.as_ref(),
-                        HashMap::new(),
-                        Some(body),
-                        "https://gateway.kugou.com",
-                        "POST",
-                        false,
-                        HashMap::new(),
-                        true,
-                        true,
-                    )
-                    .await
-                {
-                    let mut batch = Self::parse_songs(resp.data());
-                    if batch.is_empty() {
-                        batch = Self::parse_songs(&resp.body);
-                    }
-                    for s in batch {
-                        let k = if !s.hash.is_empty() {
-                            s.hash.to_lowercase()
-                        } else {
-                            s.id.to_lowercase()
-                        };
-                        if !k.is_empty() && seen_hashes.insert(k) {
-                            songs.push(s);
-                            region_collected += 1;
-                        }
-                    }
-                }
+        let mut seen_aaids = HashSet::new();
+        let mut seen_title_artist = HashSet::new();
+        for s in raw_candidates {
+            let h_key = if !s.hash.is_empty() {
+                s.hash.to_lowercase()
+            } else {
+                s.id.to_lowercase()
+            };
+            if h_key.is_empty() {
+                continue;
             }
-            if region_collected < 15 {
-                let fb_batch = self
-                    .fetch_rank_songs(fallback_chart_id, 1, 40)
-                    .await
-                    .unwrap_or_default();
-                for s in fb_batch {
-                    let k = if !s.hash.is_empty() {
-                        s.hash.to_lowercase()
-                    } else {
-                        s.id.to_lowercase()
-                    };
-                    if !k.is_empty() && seen_hashes.insert(k) {
-                        songs.push(s);
-                    }
-                }
+            if !seen_hashes.insert(h_key) {
+                continue;
             }
+            if s.album_audio_id > 0 && !seen_aaids.insert(s.album_audio_id) {
+                continue;
+            }
+            let ta_key = format!(
+                "{}::{}",
+                s.title.trim().to_lowercase(),
+                s.artist.trim().to_lowercase()
+            );
+            if !seen_title_artist.insert(ta_key) {
+                continue;
+            }
+            deduped.push(s);
         }
 
-        songs = self.enrich_songs_privilege_lite(songs).await;
-        songs = self.enrich_songs_publish_date(songs).await;
+        // 先通过 /kmr/v2/albums 批量补全精确发行日期、官方正版专辑名与高清封面
+        let dated_songs = self.enrich_songs_publish_date(deduped).await;
 
         let china_tz = FixedOffset::east_opt(8 * 3600).unwrap();
         let today_date = Utc::now().with_timezone(&china_tz).date_naive();
         let cutoff_7d = (today_date - chrono::Duration::days(7))
             .format("%Y-%m-%d")
             .to_string();
-        let cutoff_14d = (today_date - chrono::Duration::days(14))
-            .format("%Y-%m-%d")
-            .to_string();
         let today_str = today_date.format("%Y-%m-%d").to_string();
 
-        // 严格筛选最近一周（7天内）正式发布的歌曲，绝不篡改或伪造旧歌发行日期
-        let mut strictly_7d: Vec<Song> = songs
-            .iter()
-            .filter(|s| !s.publish_date.is_empty() && s.publish_date >= cutoff_7d && s.publish_date <= today_str)
-            .cloned()
+        // 严格保留最近一周（today-7d 至 today）正式发行的歌曲，剔除超期旧歌与异常未来年份脏数据
+        let strictly_last_week: Vec<Song> = dated_songs
+            .into_iter()
+            .filter(|s| {
+                Self::is_valid_iso_date(&s.publish_date)
+                    && s.publish_date >= cutoff_7d
+                    && s.publish_date <= today_str
+            })
             .collect();
 
-        if strictly_7d.len() < 12 {
-            for s in &songs {
-                if strictly_7d.len() >= 36 {
-                    break;
-                }
-                if !strictly_7d.iter().any(|e| e.hash == s.hash)
-                    && !s.publish_date.is_empty()
-                    && s.publish_date >= cutoff_14d
-                    && s.publish_date <= today_str
-                {
-                    strictly_7d.push(s.clone());
-                }
-            }
-        }
-
-        let mut final_list = if !strictly_7d.is_empty() {
-            strictly_7d
-        } else {
-            songs
-                .into_iter()
-                .filter(|s| !s.publish_date.is_empty())
-                .take(36)
-                .collect()
-        };
+        // 仅为通过最近一周核验的新歌补全音质规格与 VIP 权限，大幅降低请求延迟
+        let mut final_list = self.enrich_songs_privilege_lite(strictly_last_week).await;
 
         final_list.sort_by(|a, b| {
             b.publish_date
@@ -2579,7 +2910,7 @@ impl KugouApiService {
     /// 12. 巅峰排行榜列表与榜单曲目 (对齐 Android MusicRepository.rankList & rankSongsAll，完整保留全量官方榜单)
     pub async fn fetch_rank_list(&self) -> Result<Vec<RankItem>, String> {
         let dev = self.store.device();
-        let minute_stamp = (Utc::now().timestamp() / 60).to_string();
+        let fresh_stamp = Utc::now().timestamp_millis().to_string();
 
         let mut query = HashMap::new();
         query.insert("version".to_string(), "9108".to_string());
@@ -2589,7 +2920,7 @@ impl KugouApiService {
         query.insert("parentid".to_string(), "0".to_string());
         query.insert("apiver".to_string(), "6".to_string());
         query.insert("area_code".to_string(), "1".to_string());
-        query.insert("_t".to_string(), minute_stamp);
+        query.insert("_t".to_string(), fresh_stamp);
 
         let mut ranks = Vec::new();
         if let Ok(resp) = self
@@ -5705,10 +6036,12 @@ impl KugouApiService {
             .or_else(|| audio_info.get("album_info"))
             .or_else(|| replace_obj.and_then(|r| r.get("album_info")))
             .unwrap_or(o);
+        let old_copyright = o.get("old_copyright").unwrap_or(o);
         let trans_param = o
             .get("trans_param")
             .or_else(|| audio_info.get("trans_param"))
             .or_else(|| base.get("trans_param"))
+            .or_else(|| old_copyright.get("trans_param"))
             .unwrap_or(o);
 
         let ori_song_name = {
@@ -5742,6 +6075,7 @@ impl KugouApiService {
             Self::val_str(o, "songname"),
             Self::val_str(o, "song_name"),
             Self::val_str(o, "SongName"),
+            Self::val_str(base, "songname"),
             Self::val_str(base, "audio_name"),
             Self::val_str(o, "audio_name"),
             Self::val_str(audio_info, "audio_name"),
@@ -5752,7 +6086,7 @@ impl KugouApiService {
         .find(|s| !s.is_empty())
         .unwrap_or_default();
 
-        // 提取多歌手结构化列表 authors
+        // 提取多歌手结构化列表 authors（兼容扁平对象与 ip/audios 的 authors[].base 嵌套结构）
         let mut parsed_authors: Vec<SongAuthor> = Vec::new();
         let author_arrays = [
             o.get("authors").and_then(|v| v.as_array()),
@@ -5763,9 +6097,12 @@ impl KugouApiService {
         ];
         if let Some(arr) = author_arrays.into_iter().flatten().find(|a| !a.is_empty()) {
             for a_obj in arr {
+                let a_base = a_obj.get("base").unwrap_or(a_obj);
                 let aname = [
                     Self::val_str(a_obj, "author_name"),
+                    Self::val_str(a_base, "author_name"),
                     Self::val_str(a_obj, "name"),
+                    Self::val_str(a_base, "name"),
                     Self::val_str(a_obj, "singername"),
                 ]
                 .into_iter()
@@ -5777,7 +6114,9 @@ impl KugouApiService {
                 .to_string();
                 let aid = [
                     Self::val_str(a_obj, "author_id"),
+                    Self::val_str(a_base, "author_id"),
                     Self::val_str(a_obj, "id"),
+                    Self::val_str(a_base, "id"),
                     Self::val_str(a_obj, "singerid"),
                 ]
                 .into_iter()
@@ -5785,7 +6124,9 @@ impl KugouApiService {
                 .unwrap_or_default();
                 let av = [
                     Self::val_str(a_obj, "sizable_avatar"),
+                    Self::val_str(a_base, "sizable_avatar"),
                     Self::val_str(a_obj, "avatar"),
+                    Self::val_str(a_base, "avatar"),
                     Self::val_str(a_obj, "pic"),
                     Self::val_str(a_obj, "imgurl"),
                 ]
@@ -5904,27 +6245,6 @@ impl KugouApiService {
             }
         }
 
-        let album = [
-            Self::val_str(o, "album_name"),
-            Self::val_str(o, "AlbumName"),
-            Self::val_str(o, "albumname"),
-            Self::val_str(album_info, "album_name"),
-            Self::val_str(album_info, "albumname"),
-            Self::val_str(album_info, "name"),
-            Self::val_str(base, "album_name"),
-            Self::val_str(audio_info, "album_name"),
-            Self::val_str(replace_audio, "album_name"),
-            Self::val_str(trans_param, "album_name"),
-            Self::val_str(o, "remark"),
-        ]
-        .into_iter()
-        .find(|s| !s.is_empty() && s != "0" && s != "未知专辑")
-        .unwrap_or_default()
-        .replace("<em>", "")
-        .replace("</em>", "")
-        .trim()
-        .to_string();
-
         let album_id = [
             Self::val_str(o, "album_id"),
             Self::val_str(o, "AlbumID"),
@@ -5939,6 +6259,45 @@ impl KugouApiService {
         .into_iter()
         .find(|s| !s.is_empty() && s != "0")
         .unwrap_or_default();
+
+        let explicit_album = [
+            Self::val_str(o, "album_name"),
+            Self::val_str(o, "AlbumName"),
+            Self::val_str(o, "albumname"),
+            Self::val_str(album_info, "album_name"),
+            Self::val_str(album_info, "albumname"),
+            Self::val_str(album_info, "name"),
+            Self::val_str(base, "album_name"),
+            Self::val_str(audio_info, "album_name"),
+            Self::val_str(replace_audio, "album_name"),
+            Self::val_str(trans_param, "album_name"),
+        ]
+        .into_iter()
+        .find(|s| !s.is_empty() && s != "0" && s != "未知专辑")
+        .unwrap_or_default();
+
+        let album = if !explicit_album.is_empty() {
+            explicit_album
+        } else if album_id.is_empty() {
+            let rm = Self::val_str(o, "remark");
+            let is_promo = [
+                "主题曲", "插曲", "片尾曲", "片头曲", "推广曲", "宣传曲", "概念曲", "印象曲",
+                "歌手：", "综艺 ", "电视剧", "电影", "网剧",
+            ]
+            .iter()
+            .any(|kw| rm.contains(kw));
+            if !rm.is_empty() && rm != "0" && rm != "未知专辑" && !is_promo {
+                rm
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        }
+        .replace("<em>", "")
+        .replace("</em>", "")
+        .trim()
+        .to_string();
 
         let cover_raw = [
             Self::val_str(o, "Image"),
@@ -6278,10 +6637,15 @@ impl KugouApiService {
         let is_vip = Self::val_i64(o, "is_vip") == Some(1)
             || Self::val_i64(o, "privilege") == Some(10)
             || Self::val_i64(o, "Privilege") == Some(10)
+            || Self::val_i64(o, "sqprivilege") == Some(10)
+            || Self::val_i64(o, "320privilege") == Some(10)
             || Self::val_i64(o, "pay_type") == Some(3)
             || Self::val_i64(o, "PayType") == Some(3)
             || Self::val_i64(o, "fail_process") == Some(4)
             || Self::val_i64(o, "FailProcess") == Some(4)
+            || Self::val_i64(old_copyright, "privilege") == Some(10)
+            || Self::val_i64(old_copyright, "pay_type") == Some(3)
+            || Self::val_i64(old_copyright, "fail_process") == Some(4)
             || Self::val_i64(audio_info, "is_vip") == Some(1)
             || Self::val_i64(audio_info, "privilege") == Some(10)
             || Self::val_i64(audio_info, "privilege_128") == Some(10)
@@ -6460,21 +6824,41 @@ impl KugouApiService {
         }
     }
 
-    /// 批量补全歌曲精确发行日期 (/kmr/v2/albums + /kmr/v2/audio 权威核验，不伪造日期)
+    fn is_valid_iso_date(d: &str) -> bool {
+        let b = d.as_bytes();
+        b.len() == 10
+            && b[0].is_ascii_digit()
+            && b[1].is_ascii_digit()
+            && b[2].is_ascii_digit()
+            && b[3].is_ascii_digit()
+            && b[4] == b'-'
+            && b[5].is_ascii_digit()
+            && b[6].is_ascii_digit()
+            && b[7] == b'-'
+            && b[8].is_ascii_digit()
+            && b[9].is_ascii_digit()
+            && !d.starts_with("0000")
+    }
+
+    /// 批量补全歌曲精确发行日期、权威专辑名与高清封面 (/kmr/v2/albums 权威核验，不伪造日期)
     pub async fn enrich_songs_publish_date(&self, mut songs: Vec<Song>) -> Vec<Song> {
         let dev = self.store.device();
         let session = self.store.session();
         let mut missing_album_ids = Vec::new();
         let mut seen = HashSet::new();
         for s in &songs {
-            if s.publish_date.is_empty() && !s.album_id.is_empty() && s.album_id != "0" {
+            let needs_album_meta = s.publish_date.is_empty()
+                || s.album.is_empty()
+                || s.album == "未知专辑"
+                || s.cover_url.is_empty();
+            if needs_album_meta && !s.album_id.is_empty() && s.album_id != "0" {
                 if seen.insert(s.album_id.clone()) {
                     missing_album_ids.push(json!({ "album_id": s.album_id }));
                 }
             }
         }
 
-        let mut date_map: HashMap<String, String> = HashMap::new();
+        let mut album_meta_map: HashMap<String, (String, String, String)> = HashMap::new();
         if !missing_album_ids.is_empty() {
             for chunk in missing_album_ids.chunks(40) {
                 let body = json!({
@@ -6511,10 +6895,18 @@ impl KugouApiService {
                     {
                         for item in arr {
                             let aid = Self::val_str(item, "album_id");
-                            let pdate = Self::val_str(item, "publish_date");
-                            if !aid.is_empty() && pdate.len() >= 10 && !pdate.starts_with("0000") {
-                                date_map.insert(aid, pdate[..10].to_string());
+                            if aid.is_empty() {
+                                continue;
                             }
+                            let raw_pdate = Self::val_str(item, "publish_date");
+                            let pdate = if raw_pdate.len() >= 10 && Self::is_valid_iso_date(&raw_pdate[..10]) {
+                                raw_pdate[..10].to_string()
+                            } else {
+                                String::new()
+                            };
+                            let aname = Self::val_str(item, "album_name").trim().to_string();
+                            let acover = Self::val_str(item, "sizable_cover");
+                            album_meta_map.insert(aid, (pdate, aname, acover));
                         }
                     }
                 }
@@ -6522,12 +6914,22 @@ impl KugouApiService {
         }
 
         for s in songs.iter_mut() {
-            if s.publish_date.is_empty() {
-                if let Some(d) = date_map.get(&s.album_id) {
-                    s.publish_date = d.clone();
+            if s.publish_date.len() > 10 {
+                s.publish_date = s.publish_date.chars().take(10).collect();
+            }
+            if !Self::is_valid_iso_date(&s.publish_date) {
+                s.publish_date.clear();
+            }
+            if let Some((pdate, aname, acover)) = album_meta_map.get(&s.album_id) {
+                if s.publish_date.is_empty() && !pdate.is_empty() {
+                    s.publish_date = pdate.clone();
                 }
-            } else if s.publish_date.len() > 10 {
-                s.publish_date = s.publish_date[..10].to_string();
+                if (s.album.is_empty() || s.album == "未知专辑") && !aname.is_empty() && aname != "0" {
+                    s.album = aname.clone();
+                }
+                if s.cover_url.is_empty() && !acover.is_empty() {
+                    s.cover_url = signer::normalize_image_url(Some(acover));
+                }
             }
         }
         songs

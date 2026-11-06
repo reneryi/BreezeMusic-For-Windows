@@ -43,6 +43,21 @@ import type {
 
 export type MainTab = MainNavTab;
 
+export interface NewSongAreaOption {
+  id: string;
+  label: string;
+  color: string;
+}
+
+export const NEW_SONG_AREAS: readonly NewSongAreaOption[] = [
+  { id: "CHINESE", label: "华语", color: "#2b8cff" },
+  { id: "CANTONESE", label: "粤语", color: "#00c4a7" },
+  { id: "WESTERN", label: "欧美", color: "#ff6b6b" },
+  { id: "JPKR", label: "日韩", color: "#15c493" },
+  { id: "ACG", label: "ACG", color: "#9688ff" },
+  { id: "OST", label: "影视", color: "#f5a623" },
+];
+
 function clampVal(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
@@ -180,7 +195,9 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   const newSongPeriod = ref<string>("CHINESE");
   const newSongs = ref<Song[]>([]);
+  const newSongsByPeriod = ref<Record<string, Song[]>>({});
   const isLoadingNewSongs = ref(false);
+  const isRefreshingAllNewSongs = ref(false);
 
   const rankList = ref<RankItem[]>([]);
   const isLoadingRanks = ref(false);
@@ -1943,7 +1960,7 @@ export const useAppStore = defineStore("breezeApp", () => {
 
     loadDailyRecommend();
     loadPersonalFm();
-    loadNewSongExpress("CHINESE");
+    refreshAllNewSongTags(false);
     loadRankList();
     loadFmChannels();
     loadRecentHistory();
@@ -2102,7 +2119,8 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
-  async function loadDailyRecommend() {
+  async function loadDailyRecommend(notifyUser = false) {
+    if (isLoadingRecommend.value) return;
     isLoadingRecommend.value = true;
     try {
       recommendSongs.value = await kugouClient.getDailyRecommend();
@@ -2112,8 +2130,14 @@ export const useAppStore = defineStore("breezeApp", () => {
         const first = recommendSongs.value[0];
         durationMs.value = first.durationMs || 210000;
       }
+      if (notifyUser) {
+        notify(`已刷新每日推荐 · 共 ${recommendSongs.value.length} 首精选曲目 ✨`);
+      }
     } catch (e) {
       console.warn("loadDailyRecommend error:", e);
+      if (notifyUser) {
+        notify("刷新每日推荐失败，请稍后重试");
+      }
     } finally {
       isLoadingRecommend.value = false;
     }
@@ -2177,26 +2201,99 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
-  async function loadNewSongExpress(period = "CHINESE") {
-    newSongPeriod.value = period;
+  async function loadNewSongExpress(
+    period = "CHINESE",
+    options?: { force?: boolean; notifyUser?: boolean }
+  ) {
+    const targetPeriod = period.trim().toUpperCase() || "CHINESE";
+    newSongPeriod.value = targetPeriod;
+
+    const cached = newSongsByPeriod.value[targetPeriod];
+    if (!options?.force && cached && cached.length > 0) {
+      newSongs.value = cached;
+      return;
+    }
+
     isLoadingNewSongs.value = true;
     try {
-      newSongs.value = await kugouClient.getNewSongExpress(period);
+      const list = await kugouClient.getNewSongExpress(targetPeriod);
+      newSongsByPeriod.value = {
+        ...newSongsByPeriod.value,
+        [targetPeriod]: list,
+      };
+      if (newSongPeriod.value === targetPeriod) {
+        newSongs.value = list;
+      }
       resolveFmChannelCovers();
+      if (options?.notifyUser) {
+        const areaLabel =
+          NEW_SONG_AREAS.find((a) => a.id === targetPeriod)?.label || targetPeriod;
+        notify(`已刷新「${areaLabel}」新歌速递 · 共 ${list.length} 首最近一周新曲 ✨`);
+      }
     } catch (e) {
       console.warn("loadNewSongExpress error:", e);
+      if (options?.notifyUser) {
+        notify("刷新新歌速递失败，请稍后重试");
+      }
     } finally {
+      if (!isRefreshingAllNewSongs.value) {
+        isLoadingNewSongs.value = false;
+      }
+    }
+  }
+
+  async function refreshAllNewSongTags(notifyUser = false) {
+    if (isRefreshingAllNewSongs.value) return;
+    isRefreshingAllNewSongs.value = true;
+    isLoadingNewSongs.value = true;
+    try {
+      let totalLoaded = 0;
+      await Promise.allSettled(
+        NEW_SONG_AREAS.map(async (area) => {
+          const list = await kugouClient.getNewSongExpress(area.id);
+          totalLoaded += list.length;
+          newSongsByPeriod.value = {
+            ...newSongsByPeriod.value,
+            [area.id]: list,
+          };
+          if (newSongPeriod.value === area.id) {
+            newSongs.value = list;
+          }
+        })
+      );
+      const currentCached = newSongsByPeriod.value[newSongPeriod.value];
+      if (currentCached) {
+        newSongs.value = currentCached;
+      }
+      resolveFmChannelCovers();
+      if (notifyUser) {
+        notify(`已刷新全部 ${NEW_SONG_AREAS.length} 个新歌分类 · 同步 ${totalLoaded} 首近一周新歌 ✨`);
+      }
+    } catch (e) {
+      console.warn("refreshAllNewSongTags error:", e);
+      if (notifyUser) {
+        notify("刷新新歌速递失败，请稍后重试");
+      }
+    } finally {
+      isRefreshingAllNewSongs.value = false;
       isLoadingNewSongs.value = false;
     }
   }
 
-  async function loadRankList() {
+  async function loadRankList(notifyUser = false) {
+    if (isLoadingRanks.value) return;
     isLoadingRanks.value = true;
     try {
       rankList.value = await kugouClient.getRankList();
       resolveFmChannelCovers();
+      if (notifyUser) {
+        notify(`已刷新巅峰排行榜 · 同步 ${rankList.value.length} 个官方榜单 ✨`);
+      }
     } catch (e) {
       console.warn("loadRankList error:", e);
+      if (notifyUser) {
+        notify("刷新排行榜失败，请稍后重试");
+      }
     } finally {
       isLoadingRanks.value = false;
     }
@@ -2264,10 +2361,10 @@ export const useAppStore = defineStore("breezeApp", () => {
   async function refreshDiscoverAll() {
     notify("正在全面焕新发现页内容...");
     await Promise.all([
-      loadDailyRecommend(),
+      loadDailyRecommend(false),
       loadPersonalFm(false),
-      loadNewSongExpress(newSongPeriod.value),
-      loadRankList(),
+      refreshAllNewSongTags(false),
+      loadRankList(false),
       loadFmChannels(),
     ]);
     resolveFmChannelCovers();
@@ -4710,7 +4807,9 @@ export const useAppStore = defineStore("breezeApp", () => {
     nextFmSong,
     newSongPeriod,
     newSongs,
+    newSongsByPeriod,
     isLoadingNewSongs,
+    isRefreshingAllNewSongs,
     rankList,
     isLoadingRanks,
     userPlaylists,
@@ -4807,6 +4906,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     loadPersonalFm,
     nextPersonalFmTrack,
     loadNewSongExpress,
+    refreshAllNewSongTags,
     loadRankList,
     openRankDetail,
     resolveFmChannelCovers,

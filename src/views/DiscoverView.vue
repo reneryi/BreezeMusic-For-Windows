@@ -133,9 +133,14 @@
                   class="hero-circle-icon-btn"
                   :disabled="store.isLoadingRecommend"
                   title="刷新每日推荐"
-                  @click.stop="store.loadDailyRecommend()"
+                  @click.stop="store.loadDailyRecommend(true)"
                 >
-                  <PlumpIcon name="refresh" :size="18" color="#fff" />
+                  <PlumpIcon
+                    name="refresh"
+                    :size="18"
+                    color="#fff"
+                    :class="{ 'is-spinning': store.isLoadingRecommend }"
+                  />
                 </button>
                 <button
                   v-if="isCurrentSongInList(store.recommendSongs)"
@@ -278,7 +283,12 @@
                   title="换一批漫游推荐"
                   @click.stop="store.loadPersonalFm(false)"
                 >
-                  <PlumpIcon name="refresh" :size="17" color="#fff" />
+                  <PlumpIcon
+                    name="refresh"
+                    :size="17"
+                    color="#fff"
+                    :class="{ 'is-spinning': store.isLoadingFm }"
+                  />
                 </button>
               </div>
 
@@ -485,10 +495,14 @@
               <button
                 class="frameless-icon-square-btn discover-refresh-icon-btn"
                 :disabled="store.isLoadingNewSongs"
-                title="刷新当前语种新歌"
-                @click="store.loadNewSongExpress(store.newSongPeriod)"
+                title="刷新全部新歌分类"
+                @click="store.refreshAllNewSongTags(true)"
               >
-                <PlumpIcon name="refresh" :size="20" />
+                <PlumpIcon
+                  name="refresh"
+                  :size="20"
+                  :class="{ 'is-spinning': store.isLoadingNewSongs }"
+                />
               </button>
               <button
                 class="frameless-hover-btn"
@@ -585,9 +599,13 @@
                 class="frameless-icon-square-btn discover-refresh-icon-btn"
                 :disabled="store.isLoadingRanks"
                 title="刷新榜单"
-                @click="store.loadRankList()"
+                @click="store.loadRankList(true)"
               >
-                <PlumpIcon name="refresh" :size="20" />
+                <PlumpIcon
+                  name="refresh"
+                  :size="20"
+                  :class="{ 'is-spinning': store.isLoadingRanks }"
+                />
               </button>
               <button
                 class="frameless-hover-btn"
@@ -705,22 +723,29 @@
       </div>
     </div>
 
-    <!-- ==================== 二级页面 A：新歌速递 · 独立重设计页面（最近一周 7 日严格审计 + 多维排序工作台） ==================== -->
-    <div v-else-if="store.discoverSubView === 'new_songs'" class="discover-subpage frameless-subpage">
-      <div class="subpage-frameless-header">
+    <!-- ==================== 二级页面 A：新歌速递 · 极简时间轴折叠视图 ==================== -->
+    <div v-else-if="store.discoverSubView === 'new_songs'" class="discover-subpage frameless-subpage ns-standalone-page">
+      <div class="subpage-frameless-header ns-clean-header">
         <div class="sfh-left">
-          <button class="frameless-hover-btn" @click="store.discoverSubView = 'home'">
+          <button
+            type="button"
+            class="frameless-hover-btn"
+            @click="store.discoverSubView = 'home'"
+          >
             <PlumpIcon name="back" :size="17" />
-            <span>返回发现</span>
+            <span>返回</span>
           </button>
-          <div>
-            <h2 class="sfh-title">新歌速递 · 近 7 日首发曲库 ({{ newSongDateRangeLabel }})</h2>
+
+          <div class="ns-header-title-group">
+            <h2 class="sfh-title">新歌速递</h2>
+            <span class="ns-header-date-pill">{{ newSongDateRangeLabel }}</span>
           </div>
 
           <div class="app-sliding-tabs">
             <button
               v-for="area in newSongAreas"
               :key="area.id"
+              type="button"
               class="app-sliding-tab-btn"
               :class="{ active: store.newSongPeriod === area.id }"
               @click="store.loadNewSongExpress(area.id)"
@@ -739,290 +764,185 @@
         </div>
 
         <div class="sfh-right">
-          <div class="frameless-sublist-search">
-            <PlumpIcon name="search" :size="15" />
-            <input
-              v-model="newSongSearchKw"
-              type="text"
-              placeholder="筛选新歌名称 / 歌手 / 专辑..."
-            />
-          </div>
           <button
-            class="frameless-icon-square-btn discover-refresh-icon-btn"
-            title="刷新当前分类近 7 日新歌"
-            @click="store.loadNewSongExpress(store.newSongPeriod)"
+            v-if="groupedNewSongsByDate.length > 1"
+            type="button"
+            class="frameless-hover-btn"
+            @click="toggleAllDateGroups"
           >
-            <PlumpIcon name="refresh" :size="20" />
+            <span>{{ isAllDateGroupsCollapsed ? "全部展开" : "全部收起" }}</span>
           </button>
-          <button class="frameless-hover-btn primary-tint" @click="playAllNewSongs">
+          <button
+            type="button"
+            class="frameless-icon-square-btn discover-refresh-icon-btn"
+            :disabled="store.isLoadingNewSongs"
+            title="刷新全部新歌分类"
+            @click="store.refreshAllNewSongTags(true)"
+          >
+            <PlumpIcon
+              name="refresh"
+              :size="20"
+              :class="{ 'is-spinning': store.isLoadingNewSongs }"
+            />
+          </button>
+          <button
+            type="button"
+            class="frameless-hover-btn primary-tint"
+            :disabled="sortedNewSongsAll.length === 0"
+            @click="playAllNewSongs"
+          >
             <PlumpIcon name="play" :size="16" />
             <span>播放全部 ({{ sortedNewSongsAll.length }})</span>
           </button>
         </div>
       </div>
 
-      <!-- 重设计的新歌速递独立页多维排序控制矩阵 -->
-      <div class="ns-redesigned-sort-bar">
-        <div class="ns-sort-mode-pills">
-          <span class="ns-sort-label">排序维度：</span>
-          <button
-            class="ns-mode-pill"
-            :class="{ active: newSongSortMode === 'timeline' }"
-            @click="newSongSortMode = 'timeline'"
-          >
-            📅 7日首发时间轴
-          </button>
-          <button
-            class="ns-mode-pill"
-            :class="{ active: newSongSortMode === 'recommend' }"
-            @click="newSongSortMode = 'recommend'"
-          >
-            ✨ 官方推荐排序
-          </button>
-          <button
-            class="ns-mode-pill"
-            :class="{ active: newSongSortMode === 'hot' }"
-            @click="newSongSortMode = 'hot'"
-          >
-            🔥 概念热度优先
-          </button>
-          <button
-            class="ns-mode-pill"
-            :class="{ active: newSongSortMode === 'quality' }"
-            @click="newSongSortMode = 'quality'"
-          >
-            💎 母带音质优先 (Hi-Res/SQ)
-          </button>
-          <button
-            class="ns-mode-pill"
-            :class="{ active: newSongSortMode === 'title_az' }"
-            @click="newSongSortMode = 'title_az'"
-          >
-            🔤 歌名首字母 A-Z
-          </button>
-          <button
-            class="ns-mode-pill"
-            :class="{ active: newSongSortMode === 'artist_az' }"
-            @click="newSongSortMode = 'artist_az'"
-          >
-            🎙️ 歌手首字母 A-Z
-          </button>
-        </div>
-
-        <div class="ns-filter-chips">
-          <button
-            class="ns-mode-pill"
-            :class="{ active: newSongOnlyLossless }"
-            @click="newSongOnlyLossless = !newSongOnlyLossless"
-          >
-            仅看 SQ / Hi-Res 无损
-          </button>
-          <button
-            v-if="newSongSelectedLetter !== 'ALL'"
-            class="ns-mode-pill active"
-            @click="newSongSelectedLetter = 'ALL'"
-          >
-            首字母: {{ newSongSelectedLetter }} ×
-          </button>
-        </div>
+      <div v-if="store.isLoadingNewSongs && groupedNewSongsByDate.length === 0" class="ns-empty-hint">
+        <PlumpIcon name="refresh" :size="20" class="is-spinning" />
+        <span>正在同步最近一周发行的歌曲...</span>
       </div>
 
-      <!-- A-Z 快捷筛选索引条 -->
-      <div class="ns-global-az-strip">
-        <button
-          class="ns-az-chip"
-          :class="{ active: newSongSelectedLetter === 'ALL' }"
-          @click="newSongSelectedLetter = 'ALL'"
-        >
-          全部
-        </button>
-        <button
-          v-for="letChar in availableNewSongLetters"
-          :key="letChar"
-          class="ns-az-chip"
-          :class="{ active: newSongSelectedLetter === letChar }"
-          @click="newSongSelectedLetter = letChar"
-        >
-          {{ letChar }}
-        </button>
+      <div v-else-if="groupedNewSongsByDate.length === 0" class="ns-empty-hint">
+        <span>暂无最近一周发行的曲目，可点击右上角刷新重试</span>
       </div>
 
-      <!-- 模式 1：按 7 日发行时间轴分组展示 -->
-      <div v-if="newSongSortMode === 'timeline'" class="ns-frameless-timeline">
-        <div
+      <div v-else class="ns-frameless-timeline">
+        <section
           v-for="group in groupedNewSongsByDate"
           :key="group.dateKey"
           class="ns-frameless-date-group"
+          :class="{ 'is-collapsed': isDateGroupCollapsed(group.dateKey) }"
         >
-          <div class="ns-frameless-date-bar">
+          <div
+            class="ns-collapsible-date-bar"
+            role="button"
+            tabindex="0"
+            :aria-expanded="!isDateGroupCollapsed(group.dateKey)"
+            @click="toggleDateGroup(group.dateKey)"
+            @keydown.enter.prevent="toggleDateGroup(group.dateKey)"
+            @keydown.space.prevent="toggleDateGroup(group.dateKey)"
+          >
             <div class="ns-date-title-wrap">
               <span class="ns-date-dot"></span>
               <span class="ns-date-title">{{ group.displayLabel }}</span>
-              <span class="ns-date-count">{{ group.songs.length }} 首近一周首发单曲</span>
+              <span class="ns-date-count">{{ group.songs.length }} 首</span>
             </div>
-            <div class="ns-az-pills">
+
+            <div class="ns-date-right-tools">
               <button
-                v-for="letter in group.letters"
-                :key="letter"
-                class="ns-az-btn"
-                @click="scrollToNewSongLetter(group.dateKey, letter)"
+                type="button"
+                class="ns-date-play-mini"
+                title="播放该日全部新歌"
+                @click.stop="playDateGroupSongs(group.songs)"
               >
-                {{ letter }}
+                <PlumpIcon name="play" :size="13" />
+                <span>播放</span>
               </button>
+              <span
+                class="ns-collapse-chevron"
+                :class="{ collapsed: isDateGroupCollapsed(group.dateKey) }"
+              >
+                <PlumpIcon name="chevron-down" :size="16" />
+              </span>
             </div>
           </div>
 
-          <div class="frameless-songs-grid-2col">
-            <div
-              v-for="(song, sIdx) in group.songs"
-              :key="song.hash + '_' + sIdx"
-              :id="getFirstLetterAnchorId(group.dateKey, song, sIdx, group.songs)"
-              class="frameless-song-row"
-              :class="{ active: store.currentSong?.hash === song.hash }"
-              @click="store.playSongFromList(song, sortedNewSongsAll)"
-              @contextmenu.prevent="store.openSongContextMenu($event, song, sortedNewSongsAll)"
-            >
-              <span class="fs-letter-badge">{{ extractFirstLetter(song.title) }}</span>
-              <div class="fs-cover-wrap">
-                <img :src="song.coverUrl" class="fs-cover" loading="lazy" alt="" />
-                <div class="fs-cover-play">
-                  <PlumpIcon
-                    :name="store.currentSong?.hash === song.hash && store.isPlaying ? 'pause' : 'play'"
-                    :size="15"
-                    color="#fff"
-                  />
+          <div
+            class="ns-date-collapse-body"
+            :class="{ collapsed: isDateGroupCollapsed(group.dateKey) }"
+            :inert="isDateGroupCollapsed(group.dateKey) ? true : undefined"
+          >
+            <div class="ns-date-collapse-inner">
+              <div class="frameless-songs-grid-2col">
+                <div
+                  v-for="(song, sIdx) in group.songs"
+                  :key="song.hash + '_' + sIdx"
+                  class="frameless-song-row"
+                  :class="{ active: store.currentSong?.hash === song.hash }"
+                  @click="store.playSongFromList(song, sortedNewSongsAll)"
+                  @contextmenu.prevent="store.openSongContextMenu($event, song, sortedNewSongsAll)"
+                >
+                  <span class="fs-index">
+                    <template v-if="store.currentSong?.hash === song.hash && store.isPlaying">
+                      <span class="mini-eq-bars"><i></i><i></i><i></i></span>
+                    </template>
+                    <template v-else>
+                      {{ sIdx + 1 }}
+                    </template>
+                  </span>
+                  <div class="fs-cover-wrap">
+                    <img :src="song.coverUrl" class="fs-cover" loading="lazy" alt="" />
+                    <div class="fs-cover-play">
+                      <PlumpIcon
+                        :name="store.currentSong?.hash === song.hash && store.isPlaying ? 'pause' : 'play'"
+                        :size="15"
+                        color="#fff"
+                      />
+                    </div>
+                  </div>
+                  <div class="fs-meta">
+                    <div class="fs-title-line">
+                      <span class="fs-title">{{ song.title }}</span>
+                      <span v-if="song.hasHiRes || song.isHiRes" class="fs-badge hires">Hi-Res</span>
+                      <span v-else-if="song.hasSq || song.isLossless || song.isSq" class="fs-badge sq">SQ</span>
+                      <span v-if="song.isVip" class="fs-badge vip">VIP</span>
+                    </div>
+                    <div class="fs-sub-line">
+                      <button
+                        type="button"
+                        class="inline-meta-btn"
+                        title="点击进入歌手独立主页"
+                        @click.stop="store.navigateToSongArtist(song)"
+                      >
+                        {{ song.artist }}
+                      </button>
+                      <button
+                        v-if="song.album"
+                        type="button"
+                        class="inline-meta-btn fs-album"
+                        title="点击进入专辑独立页面"
+                        @click.stop="store.navigateToSongAlbum(song)"
+                      >
+                        · {{ song.album }}
+                      </button>
+                    </div>
+                  </div>
+                  <div class="fs-actions" @click.stop>
+                    <button
+                      type="button"
+                      class="fs-icon-btn"
+                      :class="{ liked: store.isSongLiked(song.hash) }"
+                      title="喜欢"
+                      @click="store.toggleFavoriteSong(song)"
+                    >
+                      <PlumpIcon
+                        :name="store.isSongLiked(song.hash) ? 'heart-filled' : 'heart'"
+                        :size="16"
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      class="fs-icon-btn"
+                      title="查看评论"
+                      @click="store.openCommentsModal(song)"
+                    >
+                      <PlumpIcon name="comment" :size="15" />
+                    </button>
+                    <button
+                      type="button"
+                      class="fs-icon-btn"
+                      title="添加到歌单"
+                      @click="store.addToPlaylistModalSong = song"
+                    >
+                      <PlumpIcon name="plus" :size="16" />
+                    </button>
+                  </div>
+                  <span class="fs-duration">{{ formatDuration(song) }}</span>
                 </div>
               </div>
-              <div class="fs-meta">
-                <div class="fs-title-line">
-                  <span class="fs-title">{{ song.title }}</span>
-                  <span v-if="song.hasHiRes || song.isHiRes" class="fs-badge hires">Hi-Res</span>
-                  <span v-else-if="song.hasSq || song.isLossless || song.isSq" class="fs-badge sq">SQ</span>
-                  <span v-if="song.isVip" class="fs-badge vip">VIP</span>
-                </div>
-                <div class="fs-sub-line">
-                  <button
-                    class="inline-meta-btn"
-                    title="点击进入歌手独立主页"
-                    @click.stop="store.navigateToSongArtist(song)"
-                  >
-                    {{ song.artist }}
-                  </button>
-                  <button
-                    v-if="song.album"
-                    class="inline-meta-btn fs-album"
-                    title="点击进入专辑独立页面"
-                    @click.stop="store.navigateToSongAlbum(song)"
-                  >
-                    · {{ song.album }}
-                  </button>
-                </div>
-              </div>
-              <div class="fs-actions" @click.stop>
-                <button
-                  class="fs-icon-btn"
-                  :class="{ liked: store.isSongLiked(song.hash) }"
-                  @click="store.toggleFavoriteSong(song)"
-                >
-                  <PlumpIcon
-                    :name="store.isSongLiked(song.hash) ? 'heart-filled' : 'heart'"
-                    :size="16"
-                  />
-                </button>
-                <button
-                  class="fs-icon-btn"
-                  title="查看评论"
-                  @click="store.openCommentsModal(song)"
-                >
-                  <PlumpIcon name="comment" :size="15" />
-                </button>
-                <button
-                  class="fs-icon-btn"
-                  @click="store.addToPlaylistModalSong = song"
-                >
-                  <PlumpIcon name="plus" :size="16" />
-                </button>
-              </div>
-              <span class="fs-duration">{{ formatDuration(song) }}</span>
             </div>
           </div>
-        </div>
-      </div>
-
-      <!-- 模式 2：扁平直排视图（按热度 / 音质 / 歌名 A-Z / 歌手 A-Z） -->
-      <div v-else class="frameless-songs-grid-2col" style="margin-top: 12px">
-        <div
-          v-for="(song, idx) in customSortedNewSongsFlat"
-          :key="song.hash + '_' + idx"
-          class="frameless-song-row"
-          :class="{ active: store.currentSong?.hash === song.hash }"
-          @click="store.playSongFromList(song, customSortedNewSongsFlat)"
-          @contextmenu.prevent="store.openSongContextMenu($event, song, customSortedNewSongsFlat)"
-        >
-          <span class="fs-index">{{ String(idx + 1).padStart(2, "0") }}</span>
-          <div class="fs-cover-wrap">
-            <img :src="song.coverUrl" class="fs-cover" loading="lazy" alt="" />
-            <div class="fs-cover-play">
-              <PlumpIcon
-                :name="store.currentSong?.hash === song.hash && store.isPlaying ? 'pause' : 'play'"
-                :size="15"
-                color="#fff"
-              />
-            </div>
-          </div>
-          <div class="fs-meta">
-            <div class="fs-title-line">
-              <span class="fs-title">{{ song.title }}</span>
-              <span v-if="song.hasHiRes || song.isHiRes" class="fs-badge hires">Hi-Res</span>
-              <span v-else-if="song.hasSq || song.isLossless || song.isSq" class="fs-badge sq">SQ</span>
-              <span v-if="song.isVip" class="fs-badge vip">VIP</span>
-            </div>
-            <div class="fs-sub-line">
-              <button
-                class="inline-meta-btn"
-                title="点击进入歌手独立主页"
-                @click.stop="store.navigateToSongArtist(song)"
-              >
-                {{ song.artist }}
-              </button>
-              <button
-                v-if="song.album"
-                class="inline-meta-btn fs-album"
-                title="点击进入专辑独立页面"
-                @click.stop="store.navigateToSongAlbum(song)"
-              >
-                · {{ song.album }}
-              </button>
-              <span v-if="song.publishDate" style="opacity: 0.7"> · {{ song.publishDate }}</span>
-            </div>
-          </div>
-          <div class="fs-actions" @click.stop>
-            <button
-              class="fs-icon-btn"
-              :class="{ liked: store.isSongLiked(song.hash) }"
-              @click="store.toggleFavoriteSong(song)"
-            >
-              <PlumpIcon
-                :name="store.isSongLiked(song.hash) ? 'heart-filled' : 'heart'"
-                :size="16"
-              />
-            </button>
-            <button
-              class="fs-icon-btn"
-              title="查看评论"
-              @click="store.openCommentsModal(song)"
-            >
-              <PlumpIcon name="comment" :size="15" />
-            </button>
-            <button
-              class="fs-icon-btn"
-              @click="store.addToPlaylistModalSong = song"
-            >
-              <PlumpIcon name="plus" :size="16" />
-            </button>
-          </div>
-          <span class="fs-duration">{{ formatDuration(song) }}</span>
-        </div>
+        </section>
       </div>
     </div>
 
@@ -1236,7 +1156,11 @@
             :disabled="store.isLoadingFmStation"
             @click="refreshCurrentRadioStation"
           >
-            <PlumpIcon name="refresh" :size="16" />
+            <PlumpIcon
+              name="refresh"
+              :size="16"
+              :class="{ 'is-spinning': store.isLoadingFmStation }"
+            />
             <span>换一批频率曲目</span>
           </button>
           <button
@@ -1430,7 +1354,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { useAppStore } from "../stores/appStore";
+import { NEW_SONG_AREAS, useAppStore } from "../stores/appStore";
 import { formatDuration } from "../api/kugou";
 import type { FmChannel, RankItem, Song } from "../types";
 import PlumpIcon from "../components/PlumpIcon.vue";
@@ -1462,8 +1386,6 @@ function openNewSongsSubpage() {
   nextTick(scrollDiscoverStageToTop);
 }
 
-const newSongSearchKw = ref("");
-
 const isDailyExpandedMode = computed(
   () => store.discoverHeroExpanding === "daily" || store.discoverSubView === "daily"
 );
@@ -1480,7 +1402,7 @@ const todayDateLabel = `${now.getMonth() + 1}月${now.getDate()}日 · ${weekNam
 
 const newSongDateRangeLabel = computed(() => {
   const end = new Date();
-  const start = new Date(end.getTime() - 6 * 86400000);
+  const start = new Date(end.getTime() - 7 * 86400000);
   const fmt = (d: Date) =>
     `${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
   return `${fmt(start)} - ${fmt(end)}`;
@@ -1591,31 +1513,69 @@ function scrollToCurrentPlayingRankSong() {
   }
 }
 
-// ==================== 新歌速递（严格涵盖四个分类：华语、欧美、韩国、日本 + 7日发行审计与多维重设计排序） ====================
-const newSongAreas = [
-  { id: "CHINESE", label: "华语", color: "#2b8cff" },
-  { id: "WESTERN", label: "欧美", color: "#ff6b6b" },
-  { id: "KOREA", label: "韩国", color: "#15c493" },
-  { id: "JAPAN", label: "日本", color: "#f5a623" },
-];
+// ==================== 新歌速递（涵盖六大分类：华语、粤语、欧美、日韩、ACG、影视 + 同日期首字母排序与可折叠时间轴） ====================
+const newSongAreas = NEW_SONG_AREAS;
+const collapsedDateKeys = ref<Record<string, boolean>>({});
 
-const newSongSortMode = ref<"timeline" | "recommend" | "hot" | "quality" | "title_az" | "artist_az">("timeline");
-const newSongOnlyLossless = ref(false);
-const newSongSelectedLetter = ref("ALL");
+watch(
+  () => store.newSongPeriod,
+  () => {
+    collapsedDateKeys.value = {};
+  }
+);
 
 const COLLATOR_LETTERS = "ABCDEFGHJKLMNOPQRSTWXYZ".split("");
 const COLLATOR_BOUNDARIES = "阿八嚓哒妸发旮哈讥咔垃妈拿噢啪期然撒塌挖昔压匝".split("");
+const KR_CHOSEONG_INITIALS = [
+  "G", "K", "N", "D", "T", "R", "M", "B", "P",
+  "S", "S", "A", "J", "C", "C", "K", "T", "P", "H",
+];
+const pinyinCollator =
+  typeof Intl !== "undefined"
+    ? new Intl.Collator("zh-CN-u-co-pinyin", { numeric: true, sensitivity: "base" })
+    : null;
+
+function stripLeadingPunctuation(text: string): string {
+  return (text || "")
+    .replace(/^[\s《〈「『【〔（(["'‘“·~!@#$%^&*_\-+=:;,.?/\\|<>]+/u, "")
+    .trim();
+}
 
 function extractFirstLetter(text: string): string {
-  const trimmed = (text || "").trim();
-  if (!trimmed) return "#";
-  const firstChar = trimmed[0].toUpperCase();
-  if (firstChar >= "A" && firstChar <= "Z") return firstChar;
-  if (firstChar >= "0" && firstChar <= "9") return "#";
-  const code = firstChar.charCodeAt(0);
-  if (code >= 0x4e00 && code <= 0x9fa5) {
+  const cleaned = stripLeadingPunctuation(text);
+  if (!cleaned) return "#";
+  const firstChar = cleaned[0];
+  const norm = firstChar.normalize("NFD")[0]?.toUpperCase() || firstChar.toUpperCase();
+  if (norm >= "A" && norm <= "Z") return norm;
+  if (norm >= "0" && norm <= "9") return "#";
+
+  const code = firstChar.codePointAt(0) || 0;
+  // 日文平假名 / 片假名五十音罗马字首字母映射
+  if ((code >= 0x3041 && code <= 0x3096) || (code >= 0x30a1 && code <= 0x30fa)) {
+    const h = code >= 0x30a1 && code <= 0x30fa ? code - 0x60 : code;
+    if (h <= 0x304a) return "A";
+    if (h <= 0x3054) return "K";
+    if (h <= 0x305e) return "S";
+    if (h <= 0x3069) return "T";
+    if (h <= 0x306e) return "N";
+    if (h <= 0x307d) return "H";
+    if (h <= 0x3082) return "M";
+    if (h <= 0x3088) return "Y";
+    if (h <= 0x308d) return "R";
+    return "W";
+  }
+  // 韩文谚文音节初声罗马字首字母映射
+  if (code >= 0xac00 && code <= 0xd7a3) {
+    const choseongIdx = Math.floor((code - 0xac00) / 588);
+    return KR_CHOSEONG_INITIALS[choseongIdx] || "#";
+  }
+  // 中文汉字拼音首字母映射
+  if (code >= 0x4e00 && code <= 0x9fff) {
     for (let i = COLLATOR_BOUNDARIES.length - 1; i >= 0; i--) {
-      if (firstChar.localeCompare(COLLATOR_BOUNDARIES[i], "zh-CN") >= 0) {
+      const cmp = pinyinCollator
+        ? pinyinCollator.compare(firstChar, COLLATOR_BOUNDARIES[i])
+        : firstChar.localeCompare(COLLATOR_BOUNDARIES[i], "zh-CN");
+      if (cmp >= 0) {
         return COLLATOR_LETTERS[i];
       }
     }
@@ -1623,36 +1583,64 @@ function extractFirstLetter(text: string): string {
   return "#";
 }
 
-function normalizeDateKey(raw: string, _fallbackIndex: number): string {
+function compareSongsSameDateAlpha(a: Song, b: Song): number {
+  const la = extractFirstLetter(a.title);
+  const lb = extractFirstLetter(b.title);
+  if (la !== lb) {
+    if (la === "#") return 1;
+    if (lb === "#") return -1;
+    return la.localeCompare(lb);
+  }
+  const cleanA = stripLeadingPunctuation(a.title) || a.title;
+  const cleanB = stripLeadingPunctuation(b.title) || b.title;
+  return pinyinCollator
+    ? pinyinCollator.compare(cleanA, cleanB)
+    : cleanA.localeCompare(cleanB, "zh-CN");
+}
+
+function normalizeDateKey(raw: string): string {
   const cleaned = (raw || "").trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(cleaned)) {
     return cleaned.slice(0, 10);
   }
-  return "近期首发";
+  return "";
 }
 
 function formatShortPublishDate(raw: string): string {
-  if (!raw || raw.length < 10) return "最新上架";
+  if (!raw || raw.length < 10) return "";
   return raw.slice(5, 10).replace("-", ".");
 }
 
+function formatDateGroupLabel(dateKey: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
+  if (!m) return dateKey;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const da = Number(m[3]);
+  const dObj = new Date(y, mo - 1, da);
+  const cur = new Date();
+  const todayMidnight = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate()).getTime();
+  const targetMidnight = dObj.getTime();
+  const diffDays = Math.round((todayMidnight - targetMidnight) / 86400000);
+  const mmdd = `${String(mo).padStart(2, "0")}月${String(da).padStart(2, "0")}日`;
+  if (diffDays === 0) return `${mmdd} · 今日`;
+  if (diffDays === 1) return `${mmdd} · 昨日`;
+  return `${mmdd} · ${weekNames[dObj.getDay()]}`;
+}
+
 const sortedNewSongsAll = computed<Song[]>(() => {
-  const list = store.newSongs.map((s, idx) => ({
-    ...s,
-    publishDate: normalizeDateKey(s.publishDate, idx),
-  }));
+  const list = store.newSongs
+    .map((s) => ({
+      ...s,
+      publishDate: normalizeDateKey(s.publishDate),
+    }))
+    .filter((s) => Boolean(s.publishDate));
+
   return list.sort((a, b) => {
     if (a.publishDate !== b.publishDate) {
       return b.publishDate.localeCompare(a.publishDate);
     }
-    const la = extractFirstLetter(a.title);
-    const lb = extractFirstLetter(b.title);
-    if (la !== lb) {
-      if (la === "#") return 1;
-      if (lb === "#") return -1;
-      return la.localeCompare(lb);
-    }
-    return a.title.localeCompare(b.title, "zh-CN");
+    return compareSongsSameDateAlpha(a, b);
   });
 });
 
@@ -1664,106 +1652,50 @@ function playAllNewSongs() {
   }
 }
 
-const filteredNewSongsBase = computed(() => {
-  const kw = newSongSearchKw.value.trim().toLowerCase();
-  return sortedNewSongsAll.value.filter((s) => {
-    if (newSongOnlyLossless.value && !(s.isHiRes || s.hasHiRes || s.isLossless || s.hasSq || s.isSq)) {
-      return false;
-    }
-    if (newSongSelectedLetter.value !== "ALL") {
-      const targetChar =
-        newSongSortMode.value === "artist_az"
-          ? extractFirstLetter(s.artist)
-          : extractFirstLetter(s.title);
-      if (targetChar !== newSongSelectedLetter.value) return false;
-    }
-    if (!kw) return true;
-    return (
-      s.title.toLowerCase().includes(kw) ||
-      s.artist.toLowerCase().includes(kw) ||
-      (s.album || "").toLowerCase().includes(kw)
-    );
-  });
-});
-
-const availableNewSongLetters = computed(() => {
-  const set = new Set<string>();
-  for (const s of sortedNewSongsAll.value) {
-    const ch =
-      newSongSortMode.value === "artist_az"
-        ? extractFirstLetter(s.artist)
-        : extractFirstLetter(s.title);
-    set.add(ch);
+function playDateGroupSongs(songs: Song[]) {
+  if (songs.length > 0) {
+    store.playSongFromList(songs[0], songs);
   }
-  return Array.from(set).sort((a, b) => {
-    if (a === "#") return 1;
-    if (b === "#") return -1;
-    return a.localeCompare(b);
-  });
-});
-
-const customSortedNewSongsFlat = computed(() => {
-  const list = [...filteredNewSongsBase.value];
-  if (newSongSortMode.value === "recommend") {
-    return store.newSongs
-      .map((s, idx) => ({ ...s, publishDate: normalizeDateKey(s.publishDate, idx) }))
-      .filter((s) => {
-        if (newSongOnlyLossless.value && !(s.isHiRes || s.hasHiRes || s.isLossless || s.hasSq || s.isSq)) return false;
-        if (newSongSelectedLetter.value !== "ALL" && extractFirstLetter(s.title) !== newSongSelectedLetter.value) return false;
-        const kw = newSongSearchKw.value.trim().toLowerCase();
-        if (!kw) return true;
-        return s.title.toLowerCase().includes(kw) || s.artist.toLowerCase().includes(kw) || (s.album || "").toLowerCase().includes(kw);
-      });
-  }
-  if (newSongSortMode.value === "hot") {
-    return list;
-  }
-  if (newSongSortMode.value === "quality") {
-    const rankQ = (s: Song) => (s.isHiRes || s.hasHiRes ? 3 : s.isLossless || s.hasSq || s.isSq ? 2 : s.hash320 ? 1 : 0);
-    return list.sort((a, b) => rankQ(b) - rankQ(a) || b.publishDate.localeCompare(a.publishDate));
-  }
-  if (newSongSortMode.value === "title_az") {
-    return list.sort((a, b) => a.title.localeCompare(b.title, "zh-CN"));
-  }
-  if (newSongSortMode.value === "artist_az") {
-    return list.sort((a, b) => a.artist.localeCompare(b.artist, "zh-CN") || a.title.localeCompare(b.title, "zh-CN"));
-  }
-  return list;
-});
+}
 
 const groupedNewSongsByDate = computed(() => {
-  const base = filteredNewSongsBase.value;
-
   const map = new Map<string, Song[]>();
-  for (const s of base) {
-    const d = s.publishDate || "最新发行";
+  for (const s of sortedNewSongsAll.value) {
+    const d = s.publishDate;
     if (!map.has(d)) map.set(d, []);
     map.get(d)!.push(s);
   }
-  const now = new Date();
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  return Array.from(map.entries()).map(([dateKey, songs]) => {
-    const letters = Array.from(new Set(songs.map((s) => extractFirstLetter(s.title))));
-    return {
-      dateKey,
-      displayLabel: dateKey === todayStr ? `今日首发 · ${dateKey}` : `发行日 · ${dateKey}`,
-      songs,
-      letters,
-    };
-  });
+  return Array.from(map.entries()).map(([dateKey, songs]) => ({
+    dateKey,
+    displayLabel: formatDateGroupLabel(dateKey),
+    songs: [...songs].sort(compareSongsSameDateAlpha),
+  }));
 });
 
-function getFirstLetterAnchorId(dateKey: string, song: Song, idx: number, list: Song[]) {
-  const letter = extractFirstLetter(song.title);
-  if (idx === 0 || extractFirstLetter(list[idx - 1].title) !== letter) {
-    return `ns-${dateKey}-${letter}`;
-  }
-  return undefined;
+function isDateGroupCollapsed(dateKey: string): boolean {
+  return Boolean(collapsedDateKeys.value[dateKey]);
 }
 
-function scrollToNewSongLetter(dateKey: string, letter: string) {
-  const el = document.getElementById(`ns-${dateKey}-${letter}`);
-  if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+function toggleDateGroup(dateKey: string) {
+  collapsedDateKeys.value = {
+    ...collapsedDateKeys.value,
+    [dateKey]: !collapsedDateKeys.value[dateKey],
+  };
+}
+
+const isAllDateGroupsCollapsed = computed(() => {
+  const groups = groupedNewSongsByDate.value;
+  if (groups.length === 0) return false;
+  return groups.every((g) => Boolean(collapsedDateKeys.value[g.dateKey]));
+});
+
+function toggleAllDateGroups() {
+  const shouldCollapse = !isAllDateGroupsCollapsed.value;
+  const nextMap: Record<string, boolean> = {};
+  for (const g of groupedNewSongsByDate.value) {
+    nextMap[g.dateKey] = shouldCollapse;
+  }
+  collapsedDateKeys.value = nextMap;
 }
 
 // ==================== 巅峰排行榜：结构化提取前三名歌名与歌手 ====================
@@ -1920,71 +1852,149 @@ function pickRandomFmChannel() {
   cursor: pointer;
 }
 .inline-meta-btn:hover {
-  color: var(--cyan);
+  color: var(--primary);
   text-decoration: underline;
 }
-.ns-redesigned-sort-bar {
+
+.ns-clean-header {
+  padding-bottom: 14px;
+}
+
+.ns-header-title-group {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.ns-header-date-pill {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.ns-empty-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 64px 20px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.ns-frameless-date-group {
+  margin-bottom: 16px;
+}
+
+.ns-frameless-date-group.is-collapsed {
+  margin-bottom: 8px;
+}
+
+.ns-collapsible-date-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
-  padding: 12px 16px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border-bottom: 1px solid var(--border-player-top);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.18s ease;
 }
-.ns-sort-mode-pills,
-.ns-filter-chips {
-  display: flex;
+
+.ns-collapsible-date-bar:hover {
+  background: var(--bg-row-hover);
+}
+
+.ns-collapsible-date-bar:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.ns-date-right-tools {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 10px;
 }
-.ns-sort-label {
-  font-size: 12.5px;
-  font-weight: 700;
-  color: var(--text-secondary);
-}
-.ns-mode-pill {
-  padding: 5px 12px;
+
+.ns-date-play-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.04);
+  border: none;
+  background: var(--bg-hover-square);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition: all 0.18s ease;
+  opacity: 0;
+  transform: translateX(4px);
+  transition: opacity 0.18s ease, transform 0.18s ease, color 0.18s ease, background 0.18s ease;
 }
-.ns-mode-pill.active {
-  background: rgba(0, 229, 255, 0.16);
-  color: var(--cyan);
-  border-color: rgba(0, 229, 255, 0.42);
+
+.ns-collapsible-date-bar:hover .ns-date-play-mini,
+.ns-date-play-mini:focus-visible {
+  opacity: 1;
+  transform: translateX(0);
 }
-.ns-global-az-strip {
-  display: flex;
+
+.ns-date-play-mini:hover {
+  color: #ffffff;
+  background: var(--primary);
+}
+
+.ns-collapse-chevron {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-}
-.ns-az-chip {
-  min-width: 28px;
+  justify-content: center;
+  width: 26px;
   height: 26px;
-  padding: 0 8px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  background: rgba(255, 255, 255, 0.03);
   color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
+  transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1), color 0.18s ease;
 }
-.ns-az-chip.active {
-  background: var(--cyan);
-  color: #05131f;
-  border-color: var(--cyan);
+
+.ns-collapsible-date-bar:hover .ns-collapse-chevron {
+  color: var(--text-primary);
+}
+
+.ns-collapse-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.ns-date-collapse-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-top: 8px;
+  transition:
+    grid-template-rows 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.22s ease,
+    margin-top 0.24s ease;
+}
+
+.ns-date-collapse-body.collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-top: 0;
+  pointer-events: none;
+}
+
+.ns-date-collapse-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ns-collapse-chevron,
+  .ns-date-collapse-body,
+  .ns-date-play-mini {
+    transition: none !important;
+  }
 }
 </style>

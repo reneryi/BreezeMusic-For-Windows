@@ -15,42 +15,44 @@
       <span>收起舞台</span>
     </button>
 
-    <!-- 居中悬浮岛：五合一圆润饱满图标导航胶囊（仅当前选中项展开文字，其余四项纯图标精简呈现） -->
-    <div class="skyline-floating-center">
-      <nav class="skyline-nav-capsule" aria-label="主导航">
-        <button
-          v-for="item in navItems"
-          :key="item.id"
-          type="button"
-          class="skyline-nav-btn"
-          :class="{
-            active: isNavItemActive(item.id),
-            'icon-only': !isNavItemActive(item.id),
-          }"
-          :aria-label="item.label"
-          :aria-current="isNavItemActive(item.id) ? 'page' : undefined"
-          :title="item.hint"
-          @click="handleNavClick(item.id)"
-          @dblclick.stop="handleNavDblClick(item.id)"
-        >
-          <PlumpIcon
-            :name="item.icon"
-            :size="18"
-            :color="isNavItemActive(item.id) ? '#ffffff' : 'currentColor'"
-            :accent="
-              isNavItemActive(item.id)
-                ? 'rgba(255, 255, 255, 0.88)'
-                : store.resolvedColorScheme === 'watercolor_light'
-                ? '#2b8cff'
-                : 'var(--cyan, #00e5ff)'
-            "
-          />
-          <span v-if="isNavItemActive(item.id)" class="skyline-nav-label">
-            {{ item.label }}
-          </span>
-        </button>
-      </nav>
-    </div>
+    <!-- 居中悬浮岛：五合一圆润饱满图标导航胶囊（仅在五个主页面显示，进入二级详情/播放页自然上移收起，返回时自然下移浮现） -->
+    <Transition name="skyline-nav-float">
+      <div v-if="isMainNavVisible" class="skyline-floating-center">
+        <nav class="skyline-nav-capsule" aria-label="主导航">
+          <button
+            v-for="item in navItems"
+            :key="item.id"
+            type="button"
+            class="skyline-nav-btn"
+            :class="{
+              active: isNavItemActive(item.id),
+              'icon-only': !isNavItemActive(item.id),
+            }"
+            :aria-label="item.label"
+            :aria-current="isNavItemActive(item.id) ? 'page' : undefined"
+            :title="item.hint"
+            @click="handleNavClick(item.id)"
+            @dblclick.stop="handleNavDblClick(item.id)"
+          >
+            <PlumpIcon
+              :name="item.icon"
+              :size="18"
+              :color="isNavItemActive(item.id) ? '#ffffff' : 'currentColor'"
+              :accent="
+                isNavItemActive(item.id)
+                  ? 'rgba(255, 255, 255, 0.88)'
+                  : store.resolvedColorScheme === 'watercolor_light'
+                  ? '#2b8cff'
+                  : 'var(--cyan, #00e5ff)'
+              "
+            />
+            <span v-if="isNavItemActive(item.id)" class="skyline-nav-label">
+              {{ item.label }}
+            </span>
+          </button>
+        </nav>
+      </div>
+    </Transition>
 
     <!-- 右上角悬浮区：明暗切换 + 窗口控制按钮胶囊 -->
     <div class="skyline-floating-right">
@@ -107,6 +109,26 @@ import { useAppStore, type MainTab } from "../stores/appStore";
 import PlumpIcon from "./PlumpIcon.vue";
 
 const store = useAppStore();
+
+const isMainNavVisible = computed(() => {
+  if (store.isNowPlayingOpen) {
+    return false;
+  }
+  if (store.activeTab === "discover") {
+    return (
+      store.discoverSubView !== "new_songs" &&
+      store.discoverSubView !== "rank" &&
+      store.discoverSubView !== "radio"
+    );
+  }
+  return (
+    store.activeTab === "search" ||
+    store.activeTab === "library" ||
+    store.activeTab === "tuner" ||
+    store.activeTab === "radio" ||
+    store.activeTab === "settings"
+  );
+});
 
 const navItems: Array<{
   id: MainTab;

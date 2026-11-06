@@ -183,7 +183,48 @@ const greetingSubtitle = computed(() => {
   return "深夜静谧 · 让温柔乐音陪你入眠";
 });
 
+const isPrimaryGreetingVisible = computed(() => {
+  if (store.isNowPlayingOpen) {
+    return false;
+  }
+  if (store.activeTab === "discover") {
+    return (
+      store.discoverSubView !== "new_songs" &&
+      store.discoverSubView !== "rank" &&
+      store.discoverSubView !== "radio"
+    );
+  }
+  return (
+    store.activeTab === "search" ||
+    store.activeTab === "library" ||
+    store.activeTab === "tuner" ||
+    store.activeTab === "radio" ||
+    store.activeTab === "settings"
+  );
+});
+
+const stageScrollTop = ref(0);
+let lastStageScrollTop = 0;
+
+function handleStageScroll(e: Event) {
+  const el = e.target as HTMLElement | null;
+  if (!el) return;
+  const top = Math.max(0, el.scrollTop || 0);
+  stageScrollTop.value = top;
+  if (top <= 24) {
+    store.isStageScrolledDown = false;
+  } else if (top > lastStageScrollTop + 6 && top > 36) {
+    store.isStageScrolledDown = true;
+  } else if (top < lastStageScrollTop - 8) {
+    store.isStageScrolledDown = false;
+  }
+  lastStageScrollTop = top;
+}
+
 function resetStageViewportScroll() {
+  stageScrollTop.value = 0;
+  lastStageScrollTop = 0;
+  store.isStageScrolledDown = false;
   if (stageViewportRef.value) {
     stageViewportRef.value.scrollTop = 0;
   }
@@ -378,11 +419,13 @@ onBeforeUnmount(() => {
         class="skyline-stage-viewport"
         :class="{
           'viewport-locked-nowplaying': store.isNowPlayingOpen,
+          'viewport-scrolled': stageScrollTop > 18 && !store.isNowPlayingOpen,
         }"
+        @scroll.passive="handleStageScroll"
       >
-        <!-- 左上角时段语句：置于页面内容流顶部，无多余左上角返回按钮，下滑浏览时随页面自然向上消失 -->
+        <!-- 左上角时段语句：仅在五个一级主页面顶部显示，进入二级详情页（歌手/专辑/歌单/新歌/榜单/电台/播放页）同步退场 -->
         <div
-          v-if="!store.isNowPlayingOpen"
+          v-if="isPrimaryGreetingVisible"
           class="inflow-top-greeting-row"
           data-tauri-drag-region
         >
@@ -654,3 +697,26 @@ onBeforeUnmount(() => {
     </transition>
   </div>
 </template>
+
+<style>
+.skyline-stage-viewport.viewport-scrolled:not(.viewport-locked-nowplaying) {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0px,
+    rgba(0, 0, 0, 0.38) 14px,
+    #000000 44px
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0px,
+    rgba(0, 0, 0, 0.38) 14px,
+    #000000 44px
+  );
+}
+
+@media (min-width: 1600px) {
+  .dual-column-song-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+</style>

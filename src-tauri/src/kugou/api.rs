@@ -3532,7 +3532,6 @@ impl KugouApiService {
         query.insert("privilegefilter".to_string(), "0".to_string());
         query.insert("area_code".to_string(), "1".to_string());
         query.insert("dopicfull".to_string(), "1".to_string());
-        query.insert("clientver".to_string(), "201".to_string());
 
         let mut headers = HashMap::new();
         headers.insert("x-router".to_string(), "complexsearch.kugou.com".to_string());
@@ -8302,9 +8301,7 @@ impl KugouApiService {
             json!(artist_id.trim())
         };
         let body = json!({
-            "author_id": author_val,
-            "fields": "base,extra",
-            "area_code": 1
+            "author_id": author_val
         });
         if let Ok(resp) = self
             .transport
@@ -8326,6 +8323,7 @@ impl KugouApiService {
             let d = resp.data().get("data").unwrap_or_else(|| resp.data());
             let base = d.get("base").unwrap_or(d);
             let extra = d.get("extra").unwrap_or(d);
+            let stat = d.get("stat").unwrap_or(d);
             let name = Self::val_str(base, "author_name");
             if !name.is_empty() {
                 let pic = {
@@ -8344,6 +8342,17 @@ impl KugouApiService {
                         Self::val_str(extra, "intro")
                     }
                 };
+                let fans_val = Self::val_i64(extra, "fans_count")
+                    .or_else(|| Self::val_i64(extra, "fansnums"))
+                    .or_else(|| Self::val_i64(extra, "fans_num"))
+                    .or_else(|| Self::val_i64(base, "fans_count"))
+                    .or_else(|| Self::val_i64(base, "fansnums"))
+                    .or_else(|| Self::val_i64(stat, "fans_count"))
+                    .or_else(|| Self::val_i64(stat, "fansnums"))
+                    .or_else(|| Self::val_i64(d, "fansnums"))
+                    .or_else(|| Self::val_i64(d, "fans_count"))
+                    .or_else(|| Self::val_i64(d, "fanscount"))
+                    .unwrap_or(0) as i32;
                 gw_artist = Some(FollowedArtist {
                     artist_id: artist_id.to_string(),
                     target_user_id: String::new(),
@@ -8351,11 +8360,13 @@ impl KugouApiService {
                     avatar_url: signer::normalize_image_url(Some(&pic)),
                     song_count: Self::val_i64(extra, "audio_count")
                         .or_else(|| Self::val_i64(base, "audio_count"))
+                        .or_else(|| Self::val_i64(d, "audio_count"))
                         .unwrap_or(0) as i32,
                     album_count: Self::val_i64(extra, "album_count")
                         .or_else(|| Self::val_i64(base, "album_count"))
+                        .or_else(|| Self::val_i64(d, "album_count"))
                         .unwrap_or(0) as i32,
-                    fans_count: Self::val_i64(extra, "fans_count").unwrap_or(0) as i32,
+                    fans_count: fans_val,
                     is_followed: false,
                     intro,
                 });
@@ -8368,6 +8379,8 @@ impl KugouApiService {
         query.insert("singerid".to_string(), artist_id.to_string());
         query.insert("plat".to_string(), "0".to_string());
         query.insert("with_res_tag".to_string(), "1".to_string());
+
+        let mut merged_artist: Option<FollowedArtist> = None;
 
         if let Ok(resp) = self
             .transport
@@ -8393,9 +8406,7 @@ impl KugouApiService {
                 let raw_intro = Self::val_str(d, "intro");
                 let raw_profile = Self::val_str(d, "profile");
                 let cdn_intro = if !raw_intro.is_empty() && !raw_profile.is_empty() && !raw_intro.contains(&raw_profile) {
-                    format!("{}
-
-{}", raw_intro, raw_profile)
+                    format!("{}\n\n{}", raw_intro, raw_profile)
                 } else if !raw_intro.is_empty() {
                     raw_intro
                 } else {
@@ -8408,12 +8419,14 @@ impl KugouApiService {
                     avatar_url: signer::normalize_image_url(Some(&pic)),
                     song_count: Self::val_i64(d, "songcount").unwrap_or(0) as i32,
                     album_count: Self::val_i64(d, "albumcount").unwrap_or(0) as i32,
-                    fans_count: Self::val_i64(d, "fanscount").unwrap_or(0) as i32,
+                    fans_count: Self::val_i64(d, "fanscount")
+                        .or_else(|| Self::val_i64(d, "fansnums"))
+                        .unwrap_or(0) as i32,
                     is_followed: false,
                     intro: cdn_intro,
                 };
-                if let Some(gw) = gw_artist {
-                    return Ok(FollowedArtist {
+                if let Some(gw) = gw_artist.take() {
+                    merged_artist = Some(FollowedArtist {
                         artist_id: artist_id.to_string(),
                         target_user_id: cdn_artist.target_user_id,
                         name: if !gw.name.is_empty() { gw.name } else { cdn_artist.name },
@@ -8424,13 +8437,44 @@ impl KugouApiService {
                         is_followed: false,
                         intro: if cdn_artist.intro.len() > gw.intro.len() { cdn_artist.intro } else { gw.intro },
                     });
+                } else {
+                    merged_artist = Some(cdn_artist);
                 }
-                return Ok(cdn_artist);
             }
         }
 
-        if let Some(gw) = gw_artist {
-            return Ok(gw);
+        if merged_artist.is_none() {
+            merged_artist = gw_artist;
+        }
+
+        if let Some(mut final_artist) = merged_artist {
+            // 通道 3: 若 /kmr/v3/author 与 /api/v3/singer/info 均未携带粉丝数 (fans_count == 0)，
+            // 通过 /v1/search/author 按歌手名与 artist_id 精确补全真实 FansNum (如鹿晗 800.4w 粉丝)
+            if final_artist.fans_count <= 0 && !final_artist.name.trim().is_empty() {
+                if let Ok(paged) = self.search_artists_paged(&final_artist.name, 1, 10).await {
+                    let matched = paged
+                        .items
+                        .iter()
+                        .find(|a| a.artist_id == artist_id.trim())
+                        .or_else(|| {
+                            paged.items.iter().find(|a| {
+                                a.name.trim().eq_ignore_ascii_case(final_artist.name.trim())
+                            })
+                        });
+                    if let Some(m) = matched {
+                        if m.fans_count > 0 {
+                            final_artist.fans_count = m.fans_count;
+                        }
+                        if final_artist.song_count <= 0 && m.song_count > 0 {
+                            final_artist.song_count = m.song_count;
+                        }
+                        if final_artist.album_count <= 0 && m.album_count > 0 {
+                            final_artist.album_count = m.album_count;
+                        }
+                    }
+                }
+            }
+            return Ok(final_artist);
         }
         Err("未获取到歌手详情".to_string())
     }
@@ -8811,9 +8855,28 @@ impl KugouApiService {
                                 if kw.is_empty() {
                                     continue;
                                 }
+                                let raw_reason = Self::val_str(k, "reason").trim().to_string();
+                                let clean_reason = {
+                                    let r_norm = raw_reason
+                                        .trim_end_matches("...")
+                                        .trim_end_matches('…')
+                                        .trim()
+                                        .to_lowercase();
+                                    let kw_norm = kw.trim().to_lowercase();
+                                    if r_norm.is_empty()
+                                        || r_norm == kw_norm
+                                        || kw_norm.starts_with(&r_norm)
+                                        || r_norm.starts_with(&kw_norm)
+                                        || kw_norm.contains(&r_norm)
+                                    {
+                                        String::new()
+                                    } else {
+                                        raw_reason
+                                    }
+                                };
                                 entries.push(HotSearchEntry {
                                     keyword: kw,
-                                    reason: Self::val_str(k, "reason"),
+                                    reason: clean_reason,
                                     icon_type: Self::val_i64(k, "icon").unwrap_or(0) as i32,
                                 });
                             }
@@ -8933,7 +8996,35 @@ impl KugouApiService {
             })
         };
 
-        // 通道 1: /ocean/v6/singer/list (登录态实时返回热门歌手分组)
+        let is_alpha_index_group = |group: &Value| -> bool {
+            let t = Self::val_str(group, "title");
+            let trimmed = t.trim();
+            if trimmed.len() == 1 {
+                if let Some(ch) = trimmed.chars().next() {
+                    return ch.is_ascii_alphabetic() || ch == '#';
+                }
+            }
+            false
+        };
+
+        let finalize_hot_candidates = |mut candidates: Vec<FollowedArtist>, limit: usize| -> Vec<FollowedArtist> {
+            if candidates.len() <= limit {
+                return candidates;
+            }
+            // 剔除酷狗热门分组中偶尔插队的极低粉丝量推广噪音（当候选充足时，要求至少具备一定粉丝基数或排在后置兜底）
+            let high_popularity: Vec<FollowedArtist> = candidates
+                .iter()
+                .filter(|a| a.fans_count == 0 || a.fans_count >= 500_000)
+                .cloned()
+                .collect();
+            if high_popularity.len() >= limit {
+                return high_popularity.into_iter().take(limit).collect();
+            }
+            candidates.truncate(limit);
+            candidates
+        };
+
+        // 通道 1: /ocean/v6/singer/list (对齐 MakcRe/KuGouMusicApi module/singer_list.js)
         let mut gw_query = HashMap::new();
         gw_query.insert("version".to_string(), "9108".to_string());
         gw_query.insert("showtype".to_string(), "2".to_string());
@@ -8944,7 +9035,7 @@ impl KugouApiService {
         gw_query.insert("type".to_string(), category.min(6).to_string());
         gw_query.insert("page".to_string(), "1".to_string());
         gw_query.insert("musician".to_string(), "0".to_string());
-        gw_query.insert("hotsize".to_string(), hot_limit.to_string());
+        gw_query.insert("hotsize".to_string(), "100".to_string());
 
         let mut gw_headers = HashMap::new();
         gw_headers.insert("x-router".to_string(), "mobilecdnbj.kugou.com".to_string());
@@ -8970,13 +9061,14 @@ impl KugouApiService {
                 if let Some(info_arr) = resp.data().get("info").and_then(|v| v.as_array()) {
                     for group in info_arr {
                         if let Some(singers) = group.get("singer").and_then(|v| v.as_array()) {
+                            // 仅提取“热门”分组，严禁将 A~Z 字母索引分组（如阿杜、阿悄、aespa、A-Lin）串组拼入热门歌手
+                            if !out.is_empty() && is_alpha_index_group(group) {
+                                continue;
+                            }
                             for s in singers {
                                 if let Some(artist) = parse_singer_node(s) {
                                     if seen.insert(artist.artist_id.clone()) {
                                         out.push(artist);
-                                        if out.len() >= hot_limit {
-                                            break;
-                                        }
                                     }
                                 }
                             }
@@ -8985,16 +9077,13 @@ impl KugouApiService {
                                 out.push(artist);
                             }
                         }
-                        if out.len() >= hot_limit {
-                            break;
-                        }
                     }
                 }
             }
         }
 
         if !out.is_empty() {
-            return Ok(out);
+            return Ok(finalize_hot_candidates(out, hot_limit));
         }
 
         // 通道 2: 未登录免鉴权 CDN 实时歌手热榜 (/api/v5/singer/list)
@@ -9004,7 +9093,8 @@ impl KugouApiService {
         cdn_query.insert("plat".to_string(), "0".to_string());
         cdn_query.insert("sextype".to_string(), "0".to_string());
         cdn_query.insert("sort".to_string(), "1".to_string());
-        cdn_query.insert("pagesize".to_string(), hot_limit.to_string());
+        cdn_query.insert("pagesize".to_string(), "100".to_string());
+        cdn_query.insert("hotsize".to_string(), "100".to_string());
         cdn_query.insert("type".to_string(), category.min(6).to_string());
         cdn_query.insert("page".to_string(), "1".to_string());
         cdn_query.insert("musician".to_string(), "0".to_string());
@@ -9029,13 +9119,13 @@ impl KugouApiService {
             if let Some(info_arr) = resp.data().get("info").and_then(|v| v.as_array()) {
                 for item in info_arr {
                     if let Some(singers) = item.get("singer").and_then(|v| v.as_array()) {
+                        if !out.is_empty() && is_alpha_index_group(item) {
+                            continue;
+                        }
                         for s in singers {
                             if let Some(artist) = parse_singer_node(s) {
                                 if seen.insert(artist.artist_id.clone()) {
                                     out.push(artist);
-                                    if out.len() >= hot_limit {
-                                        break;
-                                    }
                                 }
                             }
                         }
@@ -9044,14 +9134,11 @@ impl KugouApiService {
                             out.push(artist);
                         }
                     }
-                    if out.len() >= hot_limit {
-                        break;
-                    }
                 }
             }
         }
 
-        Ok(out)
+        Ok(finalize_hot_candidates(out, hot_limit))
     }
 
     /// 独立搜索页探索聚合（实时热搜歌曲 TOP 榜 + 多维热搜词榜 + 实时热门歌手）
@@ -9096,6 +9183,8 @@ impl KugouApiService {
 
         // 通道 1: 网关歌单搜索 (/v1/search/special，严格对齐 MakcRe/KuGouMusicApi module/search.js)
         let mut gw_query = HashMap::new();
+        gw_query.insert("albumhide".to_string(), "0".to_string());
+        gw_query.insert("nocollect".to_string(), "0".to_string());
         gw_query.insert("keyword".to_string(), kw.to_string());
         gw_query.insert("page".to_string(), p.to_string());
         gw_query.insert("pagesize".to_string(), ps.to_string());
@@ -9325,7 +9414,6 @@ impl KugouApiService {
         gw_query.insert("category".to_string(), "1".to_string());
         gw_query.insert("sorttype".to_string(), "0".to_string());
         gw_query.insert("searchsong".to_string(), "0".to_string());
-        gw_query.insert("clientver".to_string(), "201".to_string());
         let mut gw_headers = HashMap::new();
         gw_headers.insert("x-router".to_string(), "complexsearch.kugou.com".to_string());
 
@@ -9549,12 +9637,13 @@ impl KugouApiService {
 
         // 通道 1: 网关歌手搜索 (/v1/search/author，严格对齐 MakcRe/KuGouMusicApi module/search.js type=author)
         let mut gw_query = HashMap::new();
+        gw_query.insert("albumhide".to_string(), "0".to_string());
+        gw_query.insert("nocollect".to_string(), "0".to_string());
         gw_query.insert("keyword".to_string(), kw.to_string());
         gw_query.insert("page".to_string(), p.to_string());
         gw_query.insert("pagesize".to_string(), ps.to_string());
         gw_query.insert("platform".to_string(), "AndroidFilter".to_string());
         gw_query.insert("iscorrection".to_string(), "1".to_string());
-        gw_query.insert("clientver".to_string(), "201".to_string());
         let mut gw_headers = HashMap::new();
         gw_headers.insert("x-router".to_string(), "complexsearch.kugou.com".to_string());
 

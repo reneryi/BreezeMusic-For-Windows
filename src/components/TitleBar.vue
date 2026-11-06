@@ -2,7 +2,11 @@
   <!-- 顶层全屏无框悬浮交互层：居中精简五合一导航胶囊 + 右上角主题与窗口控制胶囊 -->
   <div class="skyline-floating-overlay">
     <!-- 顶部边缘拖拽热区 -->
-    <div class="skyline-top-drag-strip" data-tauri-drag-region></div>
+    <div
+      class="skyline-top-drag-strip"
+      data-tauri-drag-region
+      @mouseenter="store.isStageScrolledDown = false"
+    ></div>
 
     <!-- 全屏播放舞台专用收起按钮（其余二级/详情页面均使用页内自带返回按钮，绝不遮挡左上角时段文案） -->
     <button
@@ -111,7 +115,7 @@ import PlumpIcon from "./PlumpIcon.vue";
 const store = useAppStore();
 
 const isMainNavVisible = computed(() => {
-  if (store.isNowPlayingOpen) {
+  if (store.isNowPlayingOpen || store.isStageScrolledDown) {
     return false;
   }
   if (store.activeTab === "discover") {

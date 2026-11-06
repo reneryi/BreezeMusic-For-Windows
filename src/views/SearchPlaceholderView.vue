@@ -9,7 +9,7 @@ import {
   watch,
 } from "vue";
 import { useAppStore } from "../stores/appStore";
-import { formatDuration } from "../api/kugou";
+import { formatDuration, kugouClient } from "../api/kugou";
 import type { FollowedArtist, Playlist, SearchCategoryTab, Song } from "../types";
 import PlumpIcon from "../components/PlumpIcon.vue";
 
@@ -61,6 +61,54 @@ const showSuggestPopover = computed(
     searchFocused.value &&
     store.searchKeyword.trim().length > 0 &&
     store.searchSuggestions.length > 0
+);
+
+function getCleanEntryReason(entry: { keyword: string; reason?: string }): string {
+  const raw = (entry.reason || "").trim();
+  if (!raw) return "";
+  const rNorm = raw.replace(/(\.\.\.|…)+$/g, "").trim().toLowerCase();
+  const kwNorm = (entry.keyword || "").trim().toLowerCase();
+  if (
+    !rNorm ||
+    rNorm === kwNorm ||
+    kwNorm.startsWith(rNorm) ||
+    rNorm.startsWith(kwNorm) ||
+    kwNorm.includes(rNorm)
+  ) {
+    return "";
+  }
+  return raw;
+}
+
+let suggestTimer: ReturnType<typeof setTimeout> | null = null;
+let suggestSeq = 0;
+
+watch(
+  () => store.searchKeyword,
+  (val) => {
+    if (suggestTimer) {
+      clearTimeout(suggestTimer);
+      suggestTimer = null;
+    }
+    const kw = (val || "").trim();
+    if (!kw || !searchFocused.value) {
+      store.searchSuggestions = [];
+      return;
+    }
+    const seq = ++suggestSeq;
+    suggestTimer = setTimeout(async () => {
+      try {
+        const tips = await kugouClient.getSearchSuggest(kw);
+        if (seq === suggestSeq) {
+          store.searchSuggestions = (tips || []).filter((t) => t && t.trim() !== kw).slice(0, 8);
+        }
+      } catch {
+        if (seq === suggestSeq) {
+          store.searchSuggestions = [];
+        }
+      }
+    }, 200);
+  }
 );
 
 function getSongKey(song: Song, idx: number): string {
@@ -252,6 +300,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("mousedown", handleOutsideMouseDown);
+  if (suggestTimer) {
+    clearTimeout(suggestTimer);
+    suggestTimer = null;
+  }
   if (intersectionObserver) {
     intersectionObserver.disconnect();
     intersectionObserver = null;
@@ -272,7 +324,7 @@ onBeforeUnmount(() => {
           @click="store.openSearchLanding(false)"
         >
           <PlumpIcon name="arrow-left" :size="16" />
-          <span>热搜榜</span>
+          <span>返回探索</span>
         </button>
 
         <form
@@ -493,7 +545,7 @@ onBeforeUnmount(() => {
 
           <div v-else class="sl-hot-songs-grid">
             <div
-              v-for="(song, idx) in store.searchDiscovery.hotSongs.slice(0, 16)"
+              v-for="(song, idx) in store.searchDiscovery.hotSongs.slice(0, 12)"
               :key="getSongKey(song, idx)"
               class="sl-hot-song-row"
               :class="{ playing: store.currentSong?.hash === song.hash }"
@@ -580,18 +632,18 @@ onBeforeUnmount(() => {
 
           <div class="sl-board-entries">
             <button
-              v-for="(entry, eIdx) in currentBoardEntries.slice(0, 20)"
+              v-for="(entry, eIdx) in currentBoardEntries.slice(0, 18)"
               :key="`${entry.keyword}_${eIdx}`"
               type="button"
               class="sl-board-entry"
               @click="submitSearch(entry.keyword)"
             >
               <span class="sbe-rank" :class="{ top: eIdx < 3 }">
-                {{ eIdx + 1 }}
+                {{ String(eIdx + 1).padStart(2, "0") }}
               </span>
               <span class="sbe-keyword">{{ entry.keyword }}</span>
-              <span v-if="entry.reason" class="sbe-reason">
-                {{ entry.reason }}
+              <span v-if="getCleanEntryReason(entry)" class="sbe-reason">
+                {{ getCleanEntryReason(entry) }}
               </span>
               <span v-else-if="eIdx < 3 || entry.iconType === 1" class="sbe-hot-dot">
                 热
@@ -757,9 +809,8 @@ onBeforeUnmount(() => {
                 <PlumpIcon name="disc" :size="18" />
               </div>
               <div class="psc-main">
-                <div class="psc-title">{{ song.title }}</div>
-                <div class="psc-sub">
-                  <span v-if="song.isVip" class="mini-badge vip">VIP</span>
+                <div class="psc-title-row">
+                  <span class="psc-title">{{ song.title }}</span>
                   <span
                     v-if="song.isHiRes || song.hasHiRes"
                     class="mini-badge hires"
@@ -772,6 +823,9 @@ onBeforeUnmount(() => {
                   >
                     SQ
                   </span>
+                  <span v-if="song.isVip" class="mini-badge vip">VIP</span>
+                </div>
+                <div class="psc-sub">
                   <button
                     type="button"
                     class="inline-meta-jump"
@@ -808,7 +862,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="album-cards-grid">
             <div
-              v-for="alb in store.searchResultsAlbums.slice(0, 6)"
+              v-for="alb in store.searchResultsAlbums.slice(0, 8)"
               :key="alb.albumId"
               class="plump-album-card"
               @click="
@@ -854,7 +908,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="artist-cards-grid">
             <div
-              v-for="art in store.searchResultsArtists.slice(0, 6)"
+              v-for="art in store.searchResultsArtists.slice(1, 7)"
               :key="art.artistId"
               class="plump-artist-card"
               @click="
@@ -900,7 +954,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="album-cards-grid">
             <div
-              v-for="pl in store.searchResultsPlaylists.slice(0, 6)"
+              v-for="pl in store.searchResultsPlaylists.slice(0, 8)"
               :key="pl.id"
               class="plump-album-card"
               @click="openSearchedPlaylist(pl)"
@@ -999,9 +1053,8 @@ onBeforeUnmount(() => {
                 <PlumpIcon name="disc" :size="18" />
               </div>
               <div class="psc-main">
-                <div class="psc-title">{{ song.title }}</div>
-                <div class="psc-sub">
-                  <span v-if="song.isVip" class="mini-badge vip">VIP</span>
+                <div class="psc-title-row">
+                  <span class="psc-title">{{ song.title }}</span>
                   <span
                     v-if="song.isHiRes || song.hasHiRes"
                     class="mini-badge hires"
@@ -1014,6 +1067,9 @@ onBeforeUnmount(() => {
                   >
                     SQ
                   </span>
+                  <span v-if="song.isVip" class="mini-badge vip">VIP</span>
+                </div>
+                <div class="psc-sub">
                   <button
                     type="button"
                     class="inline-meta-jump"
@@ -1075,9 +1131,8 @@ onBeforeUnmount(() => {
               >
                 <span class="sfr-branch">└</span>
                 <div class="psc-main">
-                  <div class="psc-title">{{ ver.title }}</div>
-                  <div class="psc-sub">
-                    <span v-if="ver.isVip" class="mini-badge vip">VIP</span>
+                  <div class="psc-title-row">
+                    <span class="psc-title">{{ ver.title }}</span>
                     <span
                       v-if="ver.isHiRes || ver.hasHiRes"
                       class="mini-badge hires"
@@ -1090,6 +1145,9 @@ onBeforeUnmount(() => {
                     >
                       SQ
                     </span>
+                    <span v-if="ver.isVip" class="mini-badge vip">VIP</span>
+                  </div>
+                  <div class="psc-sub">
                     <button
                       type="button"
                       class="inline-meta-jump"
@@ -1291,7 +1349,7 @@ onBeforeUnmount(() => {
   position: relative;
   max-width: 780px;
   width: 100%;
-  margin: 2px auto 0;
+  margin: 12px auto 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1740,7 +1798,36 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(300px, 1fr);
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
+}
+
+.sl-hot-songs-panel,
+.sl-hot-boards-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.sl-hot-songs-grid {
+  flex: 1;
+  align-content: space-between;
+}
+
+.sl-board-entries {
+  flex: 1;
+  align-content: space-between;
+}
+
+.psc-title-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.psc-title-row .psc-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 1060px) {

@@ -7,7 +7,6 @@ import PlumpIcon from "../components/PlumpIcon.vue";
 const store = useAppStore();
 
 const songFilterKeyword = ref("");
-const albumSortMode = ref<"new" | "hot">("new");
 const isBioExpanded = ref(false);
 
 const artist = computed(() => store.activeArtistDetail);
@@ -34,8 +33,10 @@ const displayAlbumCount = computed(() => {
 
 const formattedFans = computed(() => {
   const fans = artist.value?.fansCount || 0;
-  if (!fans) return "官方认证音乐人";
-  if (fans >= 10000) return `${(fans / 10000).toFixed(1)} 万粉丝`;
+  if (!fans || fans <= 0) return "";
+  if (fans >= 10000) {
+    return `${(fans / 10000).toFixed(1).replace(/\.0$/, "")}w 粉丝`;
+  }
   return `${fans} 粉丝`;
 });
 
@@ -43,13 +44,17 @@ const bioParagraphs = computed(() => {
   const raw = (artist.value?.longIntro || artist.value?.intro || "").trim();
   if (!raw) {
     return [
-      `${artist.value?.name || "该歌手"}，华语及国际流行音乐代表性创作者，酷狗概念版正版曲库收录其多张高解析度录音室专辑与热门代表作。`,
+      `${artist.value?.name || "该歌手"}，华语及国际流行音乐代表性创作者，正版曲库收录其多张高解析度录音室专辑与热门代表作。`,
     ];
   }
   return raw
     .split(/\r?\n+/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
+});
+
+const shortIntroSummary = computed(() => {
+  return bioParagraphs.value.slice(0, 3).join(" ");
 });
 
 function playAllSongs() {
@@ -74,17 +79,12 @@ async function refreshArtistPage() {
 
 <template>
   <section class="standalone-detail-page artist-standalone-page">
-    <!-- 顶部导航条 -->
+    <!-- 顶部导航条（无冗余重复面包屑） -->
     <div class="sdp-top-bar">
       <button class="tonal-pill-btn" @click="store.navigateBack()">
         <PlumpIcon name="arrow-left" :size="16" />
-        <span>返回上一页</span>
+        <span>返回</span>
       </button>
-
-      <div class="sdp-breadcrumb">
-        <span>歌手独立主页</span>
-        <span v-if="artist"> · {{ artist.name }}</span>
-      </div>
 
       <div class="sdp-top-actions">
         <button
@@ -92,8 +92,12 @@ async function refreshArtistPage() {
           :disabled="store.isLoadingArtist"
           @click="refreshArtistPage"
         >
-          <PlumpIcon name="refresh" :size="15" />
-          <span>{{ store.isLoadingArtist ? "正在同步..." : "刷新主页" }}</span>
+          <PlumpIcon
+            name="refresh"
+            :size="15"
+            :class="{ 'spin-anim': store.isLoadingArtist }"
+          />
+          <span>{{ store.isLoadingArtist ? "正在同步..." : "刷新" }}</span>
         </button>
       </div>
     </div>
@@ -115,7 +119,9 @@ async function refreshArtistPage() {
       <div class="artist-hero-meta">
         <div class="artist-badge-row">
           <span class="artist-verified-pill">PRO ARTIST · 官方入驻音乐人</span>
-          <span class="artist-fans-pill">{{ formattedFans }}</span>
+          <span v-if="formattedFans" class="artist-fans-pill">
+            {{ formattedFans }}
+          </span>
         </div>
 
         <h1 class="artist-hero-name">{{ artist?.name || "歌手主页" }}</h1>
@@ -123,27 +129,28 @@ async function refreshArtistPage() {
         <div class="artist-stat-counters">
           <div class="stat-box" @click="store.artistDetailSubTab = 'songs'">
             <span class="num">{{ displaySongCount }}</span>
-            <span class="lbl">单曲数量</span>
+            <span class="lbl">单曲</span>
           </div>
           <div class="stat-divider"></div>
           <div class="stat-box" @click="store.artistDetailSubTab = 'albums'">
             <span class="num">{{ displayAlbumCount }}</span>
-            <span class="lbl">录音室专辑</span>
+            <span class="lbl">专辑</span>
           </div>
         </div>
 
         <p
           class="artist-short-intro"
           :class="{ expanded: isBioExpanded }"
+          title="点击查看完整歌手百科介绍"
           @click="store.artistDetailSubTab = 'about'"
         >
-          {{ bioParagraphs[0] }}
+          {{ shortIntroSummary }}
         </p>
 
         <div class="artist-hero-actions">
           <button class="primary-btn" @click="playAllSongs">
             <PlumpIcon name="play" :size="16" color="#fff" />
-            <span>播放热门代表作 ({{ filteredSongs.length }})</span>
+            <span>播放热门代表作</span>
           </button>
 
           <button
@@ -159,7 +166,7 @@ async function refreshArtistPage() {
       </div>
     </div>
 
-    <!-- 子导航胶囊（热门单曲 / 发行专辑 / 歌手百科介绍） -->
+    <!-- 子导航胶囊（代表作单曲 / 发行专辑 / 歌手百科介绍） -->
     <div class="artist-subnav-bar">
       <div class="pill-tabs">
         <button
@@ -181,18 +188,18 @@ async function refreshArtistPage() {
           :class="{ active: store.artistDetailSubTab === 'about' }"
           @click="store.artistDetailSubTab = 'about'"
         >
-          歌手百科介绍
+          歌手百科
         </button>
       </div>
 
-      <!-- 单曲 Tab 工具栏：搜索 + 最热/最新切换 -->
+      <!-- 单曲 Tab 工具栏：筛选 + 最热/最新切换 -->
       <div v-if="store.artistDetailSubTab === 'songs'" class="artist-songs-tools">
         <div class="sdp-search-input-box">
           <PlumpIcon name="search" :size="15" />
           <input
             v-model="songFilterKeyword"
             type="text"
-            placeholder="检索歌手单曲或专辑名..."
+            placeholder="筛选当前已加载曲目..."
           />
           <button v-if="songFilterKeyword" class="clear-btn" @click="songFilterKeyword = ''">
             <PlumpIcon name="close" :size="13" />
@@ -205,14 +212,34 @@ async function refreshArtistPage() {
             :class="{ active: store.artistSongsSort === 'hot' }"
             @click="store.switchArtistSongSort('hot')"
           >
-            🔥 最热代表作
+            最热代表作
           </button>
           <button
             class="sort-pill"
             :class="{ active: store.artistSongsSort === 'new' }"
             @click="store.switchArtistSongSort('new')"
           >
-            🕒 最新发行
+            最新发行
+          </button>
+        </div>
+      </div>
+
+      <!-- 专辑 Tab 工具栏：最新/最热专辑切换 -->
+      <div v-else-if="store.artistDetailSubTab === 'albums'" class="artist-songs-tools">
+        <div class="sdp-sort-pills">
+          <button
+            class="sort-pill"
+            :class="{ active: store.artistAlbumsSort === 'new' }"
+            @click="store.switchArtistAlbumSort('new')"
+          >
+            最新发行
+          </button>
+          <button
+            class="sort-pill"
+            :class="{ active: store.artistAlbumsSort === 'hot' }"
+            @click="store.switchArtistAlbumSort('hot')"
+          >
+            最热专辑
           </button>
         </div>
       </div>
@@ -222,9 +249,9 @@ async function refreshArtistPage() {
     <div v-if="store.artistDetailSubTab === 'songs'" class="sdp-right-tracks-pane">
       <div class="sdp-track-table-head">
         <span class="col-idx">#</span>
-        <span class="col-title">歌曲标题 / 音质标识</span>
+        <span class="col-title">歌曲</span>
         <span class="col-artist">歌手</span>
-        <span class="col-album">所属专辑 (点击跳转)</span>
+        <span class="col-album">专辑</span>
         <span class="col-dur">时长</span>
         <span class="col-act">操作</span>
       </div>
@@ -242,22 +269,28 @@ async function refreshArtistPage() {
           :key="song.hash + '_' + idx"
           class="sdp-track-row"
           :class="{ playing: store.currentSong?.hash === song.hash }"
-          @dblclick="store.playSongFromList(song, filteredSongs, `${artist?.name} · 代表作`)"
-          @contextmenu.prevent="store.openSongContextMenu($event, song)"
+          @click="store.playSongFromList(song, filteredSongs, `${artist?.name} · 代表作`)"
+          @contextmenu.prevent="store.openSongContextMenu($event, song, filteredSongs)"
         >
-          <div class="col-idx" @click="store.playSongFromList(song, filteredSongs, `${artist?.name} · 代表作`)">
-            {{ idx + 1 }}
+          <div class="col-idx">
+            <PlumpIcon
+              v-if="store.currentSong?.hash === song.hash"
+              name="wave"
+              :size="15"
+              color="var(--primary)"
+            />
+            <span v-else>{{ String(idx + 1).padStart(2, "0") }}</span>
           </div>
 
-          <div class="col-title" @click="store.playSongFromList(song, filteredSongs, `${artist?.name} · 代表作`)">
-            <img v-if="song.coverUrl" :src="song.coverUrl" class="row-cover" alt="" />
+          <div class="col-title">
+            <img v-if="song.coverUrl" :src="song.coverUrl" class="row-cover" loading="lazy" alt="" />
             <div class="row-title-meta">
-              <div class="row-song-name">{{ song.title }}</div>
-              <div class="row-badges">
-                <span v-if="song.isVip" class="mini-badge vip">VIP</span>
-                <span v-if="song.isHiRes" class="mini-badge hires">Hi-Res</span>
-                <span v-else-if="song.isSq || song.isLossless" class="mini-badge sq">SQ</span>
+              <div class="row-song-title-line">
+                <span class="row-song-name">{{ song.title }}</span>
+                <span v-if="song.isHiRes || song.hasHiRes" class="mini-badge hires">Hi-Res</span>
+                <span v-else-if="song.isSq || song.isLossless || song.hasSq" class="mini-badge sq">SQ</span>
                 <span v-else-if="song.hash320" class="mini-badge hq">HQ</span>
+                <span v-if="song.isVip" class="mini-badge vip">VIP</span>
               </div>
             </div>
           </div>
@@ -285,6 +318,7 @@ async function refreshArtistPage() {
             <button
               class="row-icon-btn"
               :class="{ liked: store.isSongLiked(song) }"
+              title="喜欢"
               @click="store.toggleFavoriteSong(song)"
             >
               <PlumpIcon :name="store.isSongLiked(song) ? 'heart-filled' : 'heart'" :size="15" />
@@ -298,7 +332,7 @@ async function refreshArtistPage() {
           </div>
         </div>
 
-        <div v-if="store.artistSongsHasMore && !songFilterKeyword" style="display: flex; justify-content: center; padding: 16px 0 6px">
+        <div v-if="store.artistSongsHasMore && !songFilterKeyword" class="sdp-load-more-row">
           <button
             class="tonal-pill-btn"
             :disabled="store.isLoadingMoreArtistSongs"
@@ -310,34 +344,47 @@ async function refreshArtistPage() {
       </div>
     </div>
 
-    <!-- 2. 专辑网格视图 -->
-    <div v-else-if="store.artistDetailSubTab === 'albums'" class="artist-albums-grid">
+    <!-- 2. 专辑网格视图（支持全量分页加载） -->
+    <div v-else-if="store.artistDetailSubTab === 'albums'" class="artist-albums-section">
       <div
         v-if="store.activeArtistAlbums.length === 0"
         class="sdp-empty-state"
-        style="grid-column: 1 / -1"
       >
         暂无收录专辑数据
       </div>
-      <div
-        v-for="alb in store.activeArtistAlbums"
-        :key="alb.albumId + '_' + alb.albumName"
-        class="artist-album-card"
-        @click="store.openAlbumDetail(alb.albumId, alb.albumName, alb.artistName || artist?.name || '', alb.coverUrl)"
-      >
-        <div class="aac-cover-wrap">
-          <img v-if="alb.coverUrl" :src="alb.coverUrl" class="aac-cover" alt="album" />
-          <div v-else class="aac-cover fallback">
-            <PlumpIcon name="disc" :size="36" color="#fff" />
+      <template v-else>
+        <div class="artist-albums-grid">
+          <div
+            v-for="alb in store.activeArtistAlbums"
+            :key="alb.albumId + '_' + alb.albumName"
+            class="artist-album-card"
+            @click="store.openAlbumDetail(alb.albumId, alb.albumName, alb.artistName || artist?.name || '', alb.coverUrl)"
+          >
+            <div class="aac-cover-wrap">
+              <img v-if="alb.coverUrl" :src="alb.coverUrl" class="aac-cover" loading="lazy" alt="album" />
+              <div v-else class="aac-cover fallback">
+                <PlumpIcon name="disc" :size="36" color="#fff" />
+              </div>
+              <span class="aac-vinyl-rim"></span>
+            </div>
+            <div class="aac-title">{{ alb.albumName }}</div>
+            <div class="aac-sub">
+              <span>{{ alb.publishDate || "数字发行" }}</span>
+              <span v-if="alb.songCount"> · {{ alb.songCount }} 首</span>
+            </div>
           </div>
-          <span class="aac-vinyl-rim"></span>
         </div>
-        <div class="aac-title">{{ alb.albumName }}</div>
-        <div class="aac-sub">
-          <span>{{ alb.publishDate || "数字发行" }}</span>
-          <span v-if="alb.songCount"> · {{ alb.songCount }} 首</span>
+
+        <div v-if="store.artistAlbumsHasMore" class="sdp-load-more-row">
+          <button
+            class="tonal-pill-btn"
+            :disabled="store.isLoadingMoreArtistAlbums"
+            @click="store.loadMoreArtistAlbums()"
+          >
+            {{ store.isLoadingMoreArtistAlbums ? "正在加载更多专辑..." : "加载更多歌手专辑" }}
+          </button>
         </div>
-      </div>
+      </template>
     </div>
 
     <!-- 3. 歌手百科完整文本介绍视图 -->
@@ -352,46 +399,61 @@ async function refreshArtistPage() {
 
 <style scoped>
 .standalone-detail-page {
-  padding: 16px 26px 110px;
+  padding: 8px 22px 110px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
+
 .sdp-top-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
 }
-.sdp-breadcrumb {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: var(--text-secondary);
-}
+
 .artist-hero-banner {
   display: flex;
   align-items: center;
   gap: 28px;
   padding: 26px 30px;
   border-radius: 26px;
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.12), rgba(99, 102, 241, 0.08), rgba(255, 255, 255, 0.03));
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--primary) 14%, var(--bg-card)),
+    color-mix(in srgb, #6366f1 9%, var(--bg-card))
+  );
+  box-shadow: var(--shadow-soft);
 }
+
+:global(.scheme-watercolor_light) .artist-hero-banner,
+:global(.scheme-light) .artist-hero-banner {
+  background: linear-gradient(
+    135deg,
+    rgba(224, 242, 254, 0.88),
+    rgba(238, 242, 255, 0.88),
+    rgba(255, 255, 255, 0.92)
+  );
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+}
+
 @media (max-width: 780px) {
   .artist-hero-banner {
     flex-direction: column;
     align-items: flex-start;
   }
 }
+
 .artist-avatar-halo {
-  width: 148px;
-  height: 148px;
+  width: 144px;
+  height: 144px;
   border-radius: 50%;
   padding: 4px;
-  background: linear-gradient(135deg, var(--cyan), #a855f7);
+  background: linear-gradient(135deg, var(--primary), #a855f7);
   flex-shrink: 0;
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.48);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.28);
 }
+
 .artist-hero-avatar {
   width: 100%;
   height: 100%;
@@ -400,8 +462,9 @@ async function refreshArtistPage() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #141c2e;
+  background: var(--bg-elevated);
 }
+
 .artist-hero-meta {
   flex: 1;
   min-width: 0;
@@ -409,58 +472,73 @@ async function refreshArtistPage() {
   flex-direction: column;
   gap: 10px;
 }
+
 .artist-badge-row {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
+
 .artist-verified-pill {
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 800;
   padding: 3px 10px;
   border-radius: 999px;
-  background: rgba(0, 229, 255, 0.16);
-  color: var(--cyan);
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  color: var(--primary);
 }
+
 .artist-fans-pill {
-  font-size: 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
   color: var(--text-secondary);
 }
+
 .artist-hero-name {
   font-size: 28px;
   font-weight: 900;
   margin: 0;
+  color: var(--text-primary);
 }
+
 .artist-stat-counters {
   display: flex;
   align-items: center;
   gap: 18px;
 }
+
 .stat-box {
   display: flex;
   align-items: baseline;
   gap: 6px;
   cursor: pointer;
 }
+
 .stat-box .num {
   font-size: 18px;
   font-weight: 800;
-  color: var(--cyan);
+  color: var(--primary);
 }
+
 .stat-box .lbl {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--text-secondary);
 }
+
 .stat-divider {
   width: 1px;
   height: 14px;
-  background: rgba(255, 255, 255, 0.14);
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
 }
+
 .artist-short-intro {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 13.5px;
+  line-height: 1.58;
   color: var(--text-secondary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -468,12 +546,18 @@ async function refreshArtistPage() {
   overflow: hidden;
   cursor: pointer;
 }
+
+.artist-short-intro:hover {
+  color: var(--text-primary);
+}
+
 .artist-hero-actions {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-top: 4px;
 }
+
 .artist-subnav-bar {
   display: flex;
   align-items: center;
@@ -481,23 +565,30 @@ async function refreshArtistPage() {
   gap: 14px;
   flex-wrap: wrap;
 }
+
 .artist-songs-tools {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
+
 .sdp-search-input-box {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 12px;
+  padding: 0 14px;
   height: 36px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: var(--bg-card);
   min-width: 220px;
 }
+
+:global(.scheme-watercolor_light) .sdp-search-input-box,
+:global(.scheme-light) .sdp-search-input-box {
+  background: rgba(255, 255, 255, 0.86);
+}
+
 .sdp-search-input-box input {
   background: transparent;
   border: none;
@@ -506,37 +597,51 @@ async function refreshArtistPage() {
   width: 100%;
   outline: none;
 }
+
 .clear-btn {
   background: none;
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
 }
+
 .sdp-sort-pills {
   display: flex;
   gap: 6px;
-}
-.sort-pill {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-secondary);
-  padding: 5px 12px;
+  padding: 3px;
   border-radius: 999px;
-  font-size: 12px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.sort-pill {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 5px 13px;
+  border-radius: 999px;
+  font-size: 12.5px;
   font-weight: 700;
   cursor: pointer;
+  transition: all 0.18s ease;
 }
+
 .sort-pill.active {
-  background: rgba(0, 229, 255, 0.16);
-  color: var(--cyan);
-  border-color: rgba(0, 229, 255, 0.4);
+  background: var(--primary);
+  color: #ffffff;
 }
+
 .sdp-right-tracks-pane {
   border-radius: 24px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 18px 20px;
+  background: var(--bg-card);
+  padding: 16px 18px;
 }
+
+:global(.scheme-watercolor_light) .sdp-right-tracks-pane,
+:global(.scheme-light) .sdp-right-tracks-pane {
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.04);
+}
+
 .sdp-track-table-head,
 .sdp-track-row {
   display: grid;
@@ -545,35 +650,45 @@ async function refreshArtistPage() {
   gap: 12px;
   padding: 8px 12px;
 }
+
 .sdp-track-table-head {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-secondary);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-}
-.sdp-track-row {
-  border-radius: 12px;
-  transition: background 0.16s ease;
-}
-.sdp-track-row:hover {
-  background: rgba(255, 255, 255, 0.05);
-}
-.sdp-track-row.playing {
-  background: rgba(0, 229, 255, 0.11);
-}
-.col-idx {
   font-size: 12.5px;
-  color: var(--text-secondary);
-  text-align: center;
-  cursor: pointer;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 4px;
 }
+
+.sdp-track-row {
+  border-radius: 14px;
+  cursor: pointer;
+  transition: background 0.16s ease, transform 0.16s ease;
+}
+
+.sdp-track-row:hover {
+  background: color-mix(in srgb, var(--primary) 9%, transparent);
+}
+
+.sdp-track-row.playing {
+  background: color-mix(in srgb, var(--primary) 15%, transparent);
+}
+
+.col-idx {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .col-title {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
-  cursor: pointer;
 }
+
 .row-cover {
   width: 40px;
   height: 40px;
@@ -581,21 +696,28 @@ async function refreshArtistPage() {
   object-fit: cover;
   flex-shrink: 0;
 }
+
 .row-title-meta {
   min-width: 0;
+  flex: 1;
 }
+
+.row-song-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .row-song-name {
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 700;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.row-badges {
-  display: flex;
-  gap: 4px;
-  margin-top: 3px;
-}
+
 .col-artist,
 .col-album {
   min-width: 0;
@@ -603,35 +725,41 @@ async function refreshArtistPage() {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .clickable-meta-link {
   background: none;
   border: none;
   padding: 0;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 13.5px;
   cursor: pointer;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .clickable-meta-link:hover {
-  color: var(--cyan);
+  color: var(--primary);
   text-decoration: underline;
 }
+
 .muted-dash {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   opacity: 0.5;
 }
+
 .col-dur {
-  font-size: 12.5px;
-  color: var(--text-secondary);
+  font-size: 13px;
+  color: var(--text-muted);
 }
+
 .col-act {
   display: flex;
   align-items: center;
   gap: 4px;
 }
+
 .row-icon-btn {
   width: 28px;
   height: 28px;
@@ -644,30 +772,53 @@ async function refreshArtistPage() {
   justify-content: center;
   cursor: pointer;
 }
+
 .row-icon-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
   color: var(--text-primary);
 }
+
 .row-icon-btn.liked {
   color: #ff4d6d;
 }
+
+.sdp-load-more-row {
+  display: flex;
+  justify-content: center;
+  padding: 18px 0 6px;
+}
+
+.artist-albums-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .artist-albums-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
   gap: 18px;
 }
+
 .artist-album-card {
   padding: 14px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 20px;
+  background: var(--bg-card);
   cursor: pointer;
-  transition: transform 0.2s ease, border-color 0.2s ease;
+  transition: transform 0.2s ease, background 0.2s ease;
 }
+
+:global(.scheme-watercolor_light) .artist-album-card,
+:global(.scheme-light) .artist-album-card {
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+}
+
 .artist-album-card:hover {
   transform: translateY(-4px);
-  border-color: rgba(0, 229, 255, 0.35);
+  background: color-mix(in srgb, var(--primary) 10%, var(--bg-card));
 }
+
 .aac-cover-wrap {
   width: 100%;
   aspect-ratio: 1 / 1;
@@ -676,6 +827,7 @@ async function refreshArtistPage() {
   margin-bottom: 10px;
   position: relative;
 }
+
 .aac-cover {
   width: 100%;
   height: 100%;
@@ -683,44 +835,70 @@ async function refreshArtistPage() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #182032;
+  background: var(--bg-elevated);
 }
+
 .aac-title {
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 800;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .aac-sub {
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-secondary);
-  margin-top: 3px;
+  margin-top: 4px;
 }
+
 .artist-bio-card {
   padding: 24px 28px;
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  background: var(--bg-card);
 }
+
+:global(.scheme-watercolor_light) .artist-bio-card,
+:global(.scheme-light) .artist-bio-card {
+  background: rgba(255, 255, 255, 0.86);
+}
+
 .artist-bio-card h3 {
   margin: 0 0 14px;
   font-size: 18px;
+  color: var(--text-primary);
 }
+
 .bio-paragraphs {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  font-size: 14px;
+  font-size: 14.5px;
   line-height: 1.75;
   color: var(--text-secondary);
 }
+
 .bio-paragraphs p {
   margin: 0;
 }
+
 .sdp-empty-state {
   text-align: center;
   padding: 56px 20px;
-  color: var(--text-secondary);
+  color: var(--text-muted);
+}
+
+.spin-anim {
+  animation: artist-spin 0.9s linear infinite;
+}
+
+@keyframes artist-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

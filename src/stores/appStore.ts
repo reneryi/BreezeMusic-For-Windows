@@ -2299,7 +2299,10 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
+  const isStageScrolledDown = ref<boolean>(false);
+
   function scrollStageToTop() {
+    isStageScrolledDown.value = false;
     if (typeof document === "undefined") return;
     const reset = () => {
       const stage = document.querySelector(".skyline-stage-viewport") as HTMLElement | null;
@@ -3218,15 +3221,56 @@ export const useAppStore = defineStore("breezeApp", () => {
     }
   }
 
+  function isArtistFollowed(artistId?: string, name?: string): boolean {
+    const idStr = String(artistId || "").trim();
+    const nameStr = String(name || "").trim().toLowerCase();
+    return followedArtists.value.some((a) => {
+      const aId = String(a.artistId || a.singerId || "").trim();
+      if (idStr && idStr !== "0" && aId && aId !== "0" && aId === idStr) {
+        return true;
+      }
+      const aName = String(a.name || "").trim().toLowerCase();
+      return Boolean(nameStr && aName && aName === nameStr);
+    });
+  }
+
+  function syncArtistFollowFlags() {
+    if (searchResultsArtists.value.length > 0) {
+      searchResultsArtists.value = searchResultsArtists.value.map((a) => ({
+        ...a,
+        isFollowed: isArtistFollowed(a.artistId, a.name),
+      }));
+    }
+    if (searchDiscovery.value.hotArtists.length > 0) {
+      searchDiscovery.value = {
+        ...searchDiscovery.value,
+        hotArtists: searchDiscovery.value.hotArtists.map((a) => ({
+          ...a,
+          isFollowed: isArtistFollowed(a.artistId, a.name),
+        })),
+      };
+    }
+    if (activeArtistDetail.value) {
+      activeArtistDetail.value = {
+        ...activeArtistDetail.value,
+        isFollowed: isArtistFollowed(
+          activeArtistDetail.value.artistId,
+          activeArtistDetail.value.name
+        ),
+      };
+    }
+  }
+
   async function loadFollowedArtists() {
     if (!isLoggedIn.value) return;
     try {
       const list = await kugouClient.getFollowedArtists();
       followedArtists.value = applySavedOrder(
-        list,
+        list.map((a) => ({ ...a, isFollowed: true })),
         artistsOrderIds.value,
         (a) => String(a.singerId || a.artistId || a.name)
       );
+      syncArtistFollowFlags();
     } catch (e) {
       console.warn("loadFollowedArtists error:", e);
     }
@@ -3237,19 +3281,28 @@ export const useAppStore = defineStore("breezeApp", () => {
     try {
       await kugouClient.toggleFollowArtist(artist.artistId, nextState);
       artist.isFollowed = nextState;
+      const targetId = String(artist.artistId || artist.singerId || "").trim();
+      const targetName = String(artist.name || "").trim().toLowerCase();
       if (nextState) {
-        if (
-          !followedArtists.value.some((a) => a.artistId === artist.artistId)
-        ) {
+        if (!isArtistFollowed(artist.artistId, artist.name)) {
           followedArtists.value.unshift({ ...artist, isFollowed: true });
         }
         notify(`已关注歌手「${artist.name}」`);
       } else {
-        followedArtists.value = followedArtists.value.filter(
-          (a) => a.artistId !== artist.artistId
-        );
+        followedArtists.value = followedArtists.value.filter((a) => {
+          const aId = String(a.artistId || a.singerId || "").trim();
+          const aName = String(a.name || "").trim().toLowerCase();
+          if (targetId && targetId !== "0" && aId && aId !== "0" && aId === targetId) {
+            return false;
+          }
+          if (targetName && aName && aName === targetName) {
+            return false;
+          }
+          return true;
+        });
         notify(`已取消关注「${artist.name}」`);
       }
+      syncArtistFollowFlags();
     } catch (e: any) {
       notify(`操作失败：${String(e)}`);
     }
@@ -3374,17 +3427,47 @@ export const useAppStore = defineStore("breezeApp", () => {
   const artistSongsHasMore = ref<boolean>(true);
   const isLoadingMoreArtistSongs = ref<boolean>(false);
 
+  const artistAlbumsPage = ref<number>(1);
+  const artistAlbumsSort = ref<"new" | "hot">("new");
+  const artistAlbumsHasMore = ref<boolean>(true);
+  const isLoadingMoreArtistAlbums = ref<boolean>(false);
+
+  function findKnownArtistMeta(artistId: string, name: string): FollowedArtist | undefined {
+    const idStr = (artistId || "").trim();
+    const nameStr = (name || "").trim().toLowerCase();
+    const pools = [
+      searchResultsArtists.value,
+      searchDiscovery.value.hotArtists,
+      followedArtists.value,
+    ];
+    for (const pool of pools) {
+      const hit = pool.find((a) => {
+        const aId = String(a.artistId || a.singerId || "").trim();
+        if (idStr && idStr !== "0" && aId && aId !== "0" && aId === idStr) return true;
+        const aName = String(a.name || "").trim().toLowerCase();
+        return Boolean(nameStr && aName && aName === nameStr);
+      });
+      if (hit && (hit.fansCount > 0 || hit.songCount > 0 || hit.albumCount > 0)) {
+        return hit;
+      }
+    }
+    return undefined;
+  }
+
   async function openArtistDetail(
     artistId: string,
     fallbackName = "",
     fallbackAvatar = ""
   ) {
+    const knownMeta = findKnownArtistMeta(artistId, fallbackName);
     pushNavHistory();
     activeTab.value = "artist_detail";
     libraryDetailMode.value = "artist";
     artistDetailSubTab.value = "songs";
     artistSongsPage.value = 1;
     artistSongsHasMore.value = true;
+    artistAlbumsPage.value = 1;
+    artistAlbumsHasMore.value = true;
     isNowPlayingOpen.value = false;
     isSearchPaletteOpen.value = false;
     isMultiArtistModalOpen.value = false;
@@ -3392,21 +3475,20 @@ export const useAppStore = defineStore("breezeApp", () => {
     isLoadingArtist.value = true;
 
     activeArtistDetail.value = {
-      artistId: artistId || "0",
-      targetUserId: "",
-      name: fallbackName || "歌手主页",
-      avatarUrl: fallbackAvatar,
-      songCount: 0,
-      albumCount: 0,
-      fansCount: 0,
-      isFollowed: followedArtists.value.some(
-        (a) => a.artistId === artistId || a.name === fallbackName
-      ),
-      intro: "",
+      artistId: artistId || knownMeta?.artistId || "0",
+      targetUserId: knownMeta?.targetUserId || "",
+      name: fallbackName || knownMeta?.name || "歌手主页",
+      avatarUrl: fallbackAvatar || knownMeta?.avatarUrl || "",
+      songCount: knownMeta?.songCount || 0,
+      albumCount: knownMeta?.albumCount || 0,
+      fansCount: knownMeta?.fansCount || 0,
+      isFollowed: isArtistFollowed(artistId || knownMeta?.artistId, fallbackName || knownMeta?.name),
+      intro: knownMeta?.intro || "",
     };
 
     try {
-      let resolvedId = (artistId || "").trim();
+      let resolvedId = (artistId || knownMeta?.artistId || "").trim();
+      let matchedExact: FollowedArtist | undefined = knownMeta;
       if ((!resolvedId || resolvedId === "0") && fallbackName) {
         const matchedArtists = await kugouClient.searchArtists(fallbackName).catch(() => []);
         const exact =
@@ -3414,6 +3496,7 @@ export const useAppStore = defineStore("breezeApp", () => {
           matchedArtists[0];
         if (exact && exact.artistId && exact.artistId !== "0") {
           resolvedId = exact.artistId;
+          matchedExact = exact;
           if (!fallbackAvatar && exact.avatarUrl) {
             fallbackAvatar = exact.avatarUrl;
           }
@@ -3424,27 +3507,46 @@ export const useAppStore = defineStore("breezeApp", () => {
         const [detail, songs, albums] = await Promise.all([
           kugouClient.getArtistDetail(resolvedId).catch(() => null),
           kugouClient.getArtistSongs(resolvedId, artistSongsSort.value, 1),
-          kugouClient.getArtistAlbums(resolvedId, 1, "new").catch(() => []),
+          kugouClient.getArtistAlbums(resolvedId, 1, artistAlbumsSort.value).catch(() => []),
         ]);
+        const fallbackFans = Math.max(
+          knownMeta?.fansCount || 0,
+          matchedExact?.fansCount || 0
+        );
+        const fallbackSongCount = Math.max(
+          knownMeta?.songCount || 0,
+          matchedExact?.songCount || 0,
+          songs.length
+        );
+        const fallbackAlbumCount = Math.max(
+          knownMeta?.albumCount || 0,
+          matchedExact?.albumCount || 0,
+          albums.length
+        );
         if (detail) {
-          detail.isFollowed = followedArtists.value.some(
-            (a) => a.artistId === detail.artistId || a.name === detail.name
-          );
+          detail.isFollowed = isArtistFollowed(detail.artistId || resolvedId, detail.name || fallbackName);
           if (!detail.avatarUrl) detail.avatarUrl = fallbackAvatar || songs[0]?.coverUrl || "";
-          if (!detail.songCount || detail.songCount < songs.length) detail.songCount = songs.length;
-          if (!detail.albumCount || detail.albumCount < albums.length) detail.albumCount = albums.length;
+          detail.songCount = Math.max(detail.songCount || 0, fallbackSongCount);
+          detail.albumCount = Math.max(detail.albumCount || 0, fallbackAlbumCount);
+          detail.fansCount = Math.max(detail.fansCount || 0, fallbackFans);
           activeArtistDetail.value = detail;
         } else if (activeArtistDetail.value) {
           activeArtistDetail.value.artistId = resolvedId;
-          activeArtistDetail.value.songCount = songs.length;
-          activeArtistDetail.value.albumCount = albums.length;
+          activeArtistDetail.value.songCount = fallbackSongCount;
+          activeArtistDetail.value.albumCount = fallbackAlbumCount;
+          activeArtistDetail.value.fansCount = fallbackFans;
           if (!activeArtistDetail.value.avatarUrl && songs[0]?.coverUrl) {
             activeArtistDetail.value.avatarUrl = songs[0].coverUrl;
           }
         }
         activeArtistSongs.value = songs;
         activeArtistAlbums.value = albums;
-        artistSongsHasMore.value = songs.length >= 25;
+        const totalSongs = activeArtistDetail.value?.songCount || 0;
+        const totalAlbums = activeArtistDetail.value?.albumCount || 0;
+        artistSongsHasMore.value =
+          songs.length >= 25 && (totalSongs === 0 || songs.length < totalSongs);
+        artistAlbumsHasMore.value =
+          albums.length >= 30 || (totalAlbums > 0 && albums.length > 0 && albums.length < totalAlbums);
         if (activeArtistDetail.value) {
           artistSwrCache.set(resolvedId, {
             detail: { ...activeArtistDetail.value },
@@ -3460,12 +3562,19 @@ export const useAppStore = defineStore("breezeApp", () => {
         activeArtistSongs.value = songs;
         activeArtistAlbums.value = albums;
         artistSongsHasMore.value = false;
+        artistAlbumsHasMore.value = false;
         if (activeArtistDetail.value) {
           if (!activeArtistDetail.value.avatarUrl && songs[0]?.coverUrl) {
             activeArtistDetail.value.avatarUrl = songs[0].coverUrl;
           }
-          activeArtistDetail.value.songCount = songs.length;
-          activeArtistDetail.value.albumCount = albums.length;
+          activeArtistDetail.value.songCount = Math.max(
+            activeArtistDetail.value.songCount || 0,
+            songs.length
+          );
+          activeArtistDetail.value.albumCount = Math.max(
+            activeArtistDetail.value.albumCount || 0,
+            albums.length
+          );
         }
       }
     } catch (e: any) {
@@ -3489,7 +3598,12 @@ export const useAppStore = defineStore("breezeApp", () => {
         const unique = more.filter((s) => !seen.has(s.hash));
         activeArtistSongs.value = [...activeArtistSongs.value, ...unique];
         artistSongsPage.value = nextPage;
-        if (more.length < 25 || unique.length === 0) {
+        const totalSongs = activeArtistDetail.value?.songCount || 0;
+        if (
+          more.length < 25 ||
+          unique.length === 0 ||
+          (totalSongs > 0 && activeArtistSongs.value.length >= totalSongs)
+        ) {
           artistSongsHasMore.value = false;
         }
       }
@@ -3497,6 +3611,64 @@ export const useAppStore = defineStore("breezeApp", () => {
       artistSongsHasMore.value = false;
     } finally {
       isLoadingMoreArtistSongs.value = false;
+    }
+  }
+
+  async function loadMoreArtistAlbums() {
+    const aid = activeArtistDetail.value?.artistId || activeArtistDetail.value?.singerId;
+    if (!aid || aid === "0" || isLoadingMoreArtistAlbums.value || !artistAlbumsHasMore.value) return;
+    isLoadingMoreArtistAlbums.value = true;
+    try {
+      const nextPage = artistAlbumsPage.value + 1;
+      const more = await kugouClient.getArtistAlbums(String(aid), nextPage, artistAlbumsSort.value);
+      if (more.length === 0) {
+        artistAlbumsHasMore.value = false;
+      } else {
+        const seen = new Set(
+          activeArtistAlbums.value.map((a) => `${a.albumId}_${a.albumName}`)
+        );
+        const unique = more.filter((a) => {
+          const k = `${a.albumId}_${a.albumName}`;
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+        activeArtistAlbums.value = [...activeArtistAlbums.value, ...unique];
+        artistAlbumsPage.value = nextPage;
+        const totalAlbums = activeArtistDetail.value?.albumCount || 0;
+        if (
+          unique.length === 0 ||
+          (totalAlbums > 0 && activeArtistAlbums.value.length >= totalAlbums)
+        ) {
+          artistAlbumsHasMore.value = false;
+        }
+      }
+    } catch {
+      artistAlbumsHasMore.value = false;
+    } finally {
+      isLoadingMoreArtistAlbums.value = false;
+    }
+  }
+
+  async function switchArtistAlbumSort(sort: "new" | "hot") {
+    if (artistAlbumsSort.value === sort && activeArtistAlbums.value.length > 0) return;
+    artistAlbumsSort.value = sort;
+    artistAlbumsPage.value = 1;
+    const aid = activeArtistDetail.value?.artistId || activeArtistDetail.value?.singerId;
+    if (aid && aid !== "0") {
+      isLoadingMoreArtistAlbums.value = true;
+      try {
+        const albums = await kugouClient.getArtistAlbums(String(aid), 1, sort);
+        activeArtistAlbums.value = albums;
+        const totalAlbums = activeArtistDetail.value?.albumCount || 0;
+        artistAlbumsHasMore.value =
+          albums.length >= 30 ||
+          (totalAlbums > 0 && albums.length > 0 && albums.length < totalAlbums);
+        notify(sort === "hot" ? "已切换为最热专辑排序" : "已切换为最新发行专辑排序");
+      } catch {
+      } finally {
+        isLoadingMoreArtistAlbums.value = false;
+      }
     }
   }
 
@@ -3655,6 +3827,10 @@ export const useAppStore = defineStore("breezeApp", () => {
     isLoadingSearchDiscovery.value = true;
     try {
       const data = await kugouClient.getSearchDiscovery(hotArtistCategory.value);
+      data.hotArtists = (data.hotArtists || []).map((a) => ({
+        ...a,
+        isFollowed: isArtistFollowed(a.artistId, a.name),
+      }));
       searchDiscovery.value = data;
       if (data.hotBoards.length > 0 && data.hotBoards[0].entries.length > 0) {
         hotSearchKeywords.value = data.hotBoards[0].entries
@@ -3680,7 +3856,10 @@ export const useAppStore = defineStore("breezeApp", () => {
       if (artists.length > 0) {
         searchDiscovery.value = {
           ...searchDiscovery.value,
-          hotArtists: artists,
+          hotArtists: artists.map((a) => ({
+            ...a,
+            isFollowed: isArtistFollowed(a.artistId, a.name),
+          })),
         };
       }
     } catch (e) {
@@ -3789,12 +3968,26 @@ export const useAppStore = defineStore("breezeApp", () => {
       );
       searchHasMore.albums = Boolean(albumsRes.hasMore);
 
-      searchResultsArtists.value = artistsRes.items;
+      searchResultsArtists.value = artistsRes.items.map((a) => ({
+        ...a,
+        isFollowed: isArtistFollowed(a.artistId, a.name),
+      }));
       searchTotals.artists = Math.max(
         artistsRes.total || 0,
         artistsRes.items.length
       );
       searchHasMore.artists = Boolean(artistsRes.hasMore);
+
+      // 当搜索词与最佳匹配歌手名一致时，用歌手真实作品数校准搜索单曲总数下限，消除单曲 480 < 歌手 559 的矛盾
+      const topMatched = searchResultsArtists.value[0];
+      if (
+        topMatched &&
+        topMatched.name.trim().toLowerCase() === target.toLowerCase()
+      ) {
+        if (topMatched.songCount > searchTotals.songs) {
+          searchTotals.songs = topMatched.songCount;
+        }
+      }
     } catch (e: any) {
       if (seq === activeSearchSeq) {
         notify(`搜索失败：${String(e)}`);
@@ -3863,11 +4056,16 @@ export const useAppStore = defineStore("breezeApp", () => {
         const res = await kugouClient.searchArtistsPaged(kw, nextPage, 30);
         if (seq !== activeSearchSeq) return;
         const seen = new Set(searchResultsArtists.value.map((a) => a.artistId));
-        const fresh = res.items.filter((a) => {
-          if (!a.artistId || seen.has(a.artistId)) return false;
-          seen.add(a.artistId);
-          return true;
-        });
+        const fresh = res.items
+          .filter((a) => {
+            if (!a.artistId || seen.has(a.artistId)) return false;
+            seen.add(a.artistId);
+            return true;
+          })
+          .map((a) => ({
+            ...a,
+            isFollowed: isArtistFollowed(a.artistId, a.name),
+          }));
         searchResultsArtists.value = [...searchResultsArtists.value, ...fresh];
         searchPages.artists = nextPage;
         searchTotals.artists = Math.max(
@@ -4656,16 +4854,22 @@ export const useAppStore = defineStore("breezeApp", () => {
 
   async function switchArtistSongSort(sort: "hot" | "new") {
     artistSongsSort.value = sort;
+    artistSongsPage.value = 1;
     const aid = activeArtistDetail.value?.artistId || activeArtistDetail.value?.singerId;
     if (aid && aid !== "0") {
       try {
-        activeArtistSongs.value = await kugouClient.getArtistSongs(String(aid), sort, 1);
+        const songs = await kugouClient.getArtistSongs(String(aid), sort, 1);
+        activeArtistSongs.value = songs;
+        const totalSongs = activeArtistDetail.value?.songCount || 0;
+        artistSongsHasMore.value =
+          songs.length >= 25 && (totalSongs === 0 || songs.length < totalSongs);
         notify(sort === "new" ? "已切换为最新发行单曲排序" : "已切换为最热代表作排序");
       } catch {}
     }
   }
 
   return {
+    isStageScrolledDown,
     desktopLyricColor,
     desktopLyricFontSize,
     desktopLyricWidth,
@@ -4699,6 +4903,12 @@ export const useAppStore = defineStore("breezeApp", () => {
     artistSongsHasMore,
     isLoadingMoreArtistSongs,
     loadMoreArtistSongs,
+    artistAlbumsPage,
+    artistAlbumsSort,
+    artistAlbumsHasMore,
+    isLoadingMoreArtistAlbums,
+    loadMoreArtistAlbums,
+    switchArtistAlbumSort,
     focusTodayCompletedCount,
     focusTodayTotalMinutes,
     ambientSyncWithMusic,

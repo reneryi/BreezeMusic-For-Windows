@@ -29,6 +29,8 @@ pub struct KugouApiService {
     pub audio_proxy: AudioStreamProxy,
     pub personal_fm_cursor: AtomicU32,
     pub fm_channel_cursors: Mutex<HashMap<String, u32>>,
+    pub seen_fm_channel_hashes: Mutex<HashMap<String, HashSet<String>>>,
+    pub cached_fm_channels: Mutex<Vec<FmChannel>>,
     pub seen_personal_fm_hashes: Mutex<HashSet<String>>,
     pub taste_seed_songs: Mutex<Vec<Song>>,
 }
@@ -43,6 +45,8 @@ impl KugouApiService {
             audio_proxy: AudioStreamProxy::new(cache_dir),
             personal_fm_cursor: AtomicU32::new(0),
             fm_channel_cursors: Mutex::new(HashMap::new()),
+            seen_fm_channel_hashes: Mutex::new(HashMap::new()),
+            cached_fm_channels: Mutex::new(Vec::new()),
             seen_personal_fm_hashes: Mutex::new(HashSet::new()),
             taste_seed_songs: Mutex::new(Vec::new()),
         }
@@ -6328,12 +6332,12 @@ impl KugouApiService {
             .or_else(|| o.get("song"))
             .or_else(|| o.get("track"))
             .unwrap_or(replace_audio);
-        let album_info = o
+        let explicit_album_info = o
             .get("album_info")
             .or_else(|| o.get("albuminfo"))
             .or_else(|| audio_info.get("album_info"))
-            .or_else(|| replace_obj.and_then(|r| r.get("album_info")))
-            .unwrap_or(o);
+            .or_else(|| replace_obj.and_then(|r| r.get("album_info")));
+        let album_info = explicit_album_info.unwrap_or(o);
         let old_copyright = o.get("old_copyright").unwrap_or(o);
         let trans_param = o
             .get("trans_param")
@@ -6564,7 +6568,9 @@ impl KugouApiService {
             Self::val_str(o, "albumname"),
             Self::val_str(album_info, "album_name"),
             Self::val_str(album_info, "albumname"),
-            Self::val_str(album_info, "name"),
+            explicit_album_info
+                .map(|ai| Self::val_str(ai, "name"))
+                .unwrap_or_default(),
             Self::val_str(base, "album_name"),
             Self::val_str(audio_info, "album_name"),
             Self::val_str(replace_audio, "album_name"),
@@ -6624,9 +6630,12 @@ impl KugouApiService {
             .or_else(|| Self::val_i64(o, "time_length"))
             .or_else(|| Self::val_i64(o, "timelength"))
             .or_else(|| Self::val_i64(o, "Duration"))
+            .or_else(|| Self::val_i64(o, "time"))
+            .or_else(|| Self::val_i64(o, "320time"))
             .or_else(|| Self::val_i64(audio_info, "duration"))
             .or_else(|| Self::val_i64(audio_info, "timelength"))
             .or_else(|| Self::val_i64(audio_info, "timelen"))
+            .or_else(|| Self::val_i64(audio_info, "time"))
             .or_else(|| Self::val_i64(base, "duration"))
             .unwrap_or(0);
         let mut duration_ms = if (1..10_000).contains(&dur_raw) {
@@ -6785,9 +6794,11 @@ impl KugouApiService {
             Self::val_str(o, "sqhash"),
             Self::val_str(o, "sq_hash"),
             Self::val_str(o, "hash_flac"),
+            Self::val_str(o, "hashflac"),
             Self::val_str(o, "flac_hash"),
             Self::val_str(replace_audio, "hash_flac"),
             Self::val_str(audio_info, "hash_flac"),
+            Self::val_str(audio_info, "hashflac"),
             Self::val_str(audio_info, "flac_hash"),
             Self::val_str(audio_info, "sqhash"),
             relate_sq_hash,
@@ -6826,10 +6837,12 @@ impl KugouApiService {
 
         let hq_size = Self::val_i64(o, "HQFileSize")
             .or_else(|| Self::val_i64(o, "320filesize"))
+            .or_else(|| Self::val_i64(o, "320size"))
             .or_else(|| Self::val_i64(o, "filesize_320"))
             .or_else(|| Self::val_i64(o, "filesize_hq"))
             .or_else(|| Self::val_i64(audio_info, "filesize_320"))
             .or_else(|| Self::val_i64(audio_info, "320filesize"))
+            .or_else(|| Self::val_i64(audio_info, "320size"))
             .or_else(|| Self::val_i64(replace_audio, "filesize_320"))
             .or_else(|| Self::val_i64(trans_param, "ogg_320_filesize"))
             .unwrap_or(relate_hq_size);
@@ -6838,8 +6851,10 @@ impl KugouApiService {
             .or_else(|| Self::val_i64(o, "filesize"))
             .or_else(|| Self::val_i64(o, "128filesize"))
             .or_else(|| Self::val_i64(o, "filesize_128"))
+            .or_else(|| Self::val_i64(o, "size"))
             .or_else(|| Self::val_i64(audio_info, "filesize_128"))
             .or_else(|| Self::val_i64(audio_info, "filesize"))
+            .or_else(|| Self::val_i64(audio_info, "size"))
             .or_else(|| Self::val_i64(replace_audio, "filesize_128"))
             .or_else(|| Self::val_i64(trans_param, "ogg_128_filesize"))
             .unwrap_or(relate_std_size);
@@ -7443,51 +7458,456 @@ impl KugouApiService {
         format!("FM {}.{} MHz", major, minor)
     }
 
+    fn format_fm_listener_count(id: &str, raw_heat: i64) -> String {
+        if raw_heat >= 10_000 {
+            return format!("{:.1}w 正在调频", (raw_heat as f64) / 10_000.0);
+        }
+        if raw_heat >= 1_000 {
+            return format!("{:.1}k 正在调频", (raw_heat as f64) / 1_000.0);
+        }
+        let mut h: u32 = 2166136261;
+        for b in id.bytes() {
+            h ^= b as u32;
+            h = h.wrapping_mul(16777619);
+        }
+        let val = 180 + (h % 760);
+        format!("{:.1}k 正在调频", (val as f64) / 10.0)
+    }
+
+    fn normalize_fm_category(raw_cat: &str) -> String {
+        let c = raw_cat.trim();
+        match c {
+            "场景" | "周末" => "场景".to_string(),
+            "心情" => "心情".to_string(),
+            "风格" | "曲风" | "厂牌" => "风格".to_string(),
+            "语言" | "年代语种" => "语言".to_string(),
+            "主题" => "主题".to_string(),
+            "DJ" | "dj" => "DJ".to_string(),
+            "运动" => "运动".to_string(),
+            "国风" => "国风".to_string(),
+            "乐器" => "乐器".to_string(),
+            "人群" | "综艺" | "人群综艺" => "人群综艺".to_string(),
+            "儿童" => "儿童".to_string(),
+            _ => "主题".to_string(),
+        }
+    }
+
+    fn resolve_canonical_fmid(cid: &str) -> &str {
+        match cid.trim() {
+            "hot" => "1",
+            "red_heart" => "974",
+            "niche_gem" => "16",
+            "late_night" => "301",
+            "focus_study" => "1646",
+            "workout_drive" => "37",
+            "cafe_afternoon" => "27",
+            "morning_wake" => "150",
+            "sleep_ambient" => "1180",
+            "cantonese" => "94",
+            "mandopop_golden" => "693",
+            "western_pop" => "706",
+            "acg" => "318",
+            "kpop_wave" => "594",
+            "retro_8090" => "5",
+            "indie_folk" => "16",
+            "rnb_soul" => "13",
+            "guofeng" => "83",
+            "rock_live" => "9",
+            "edm_synth" => "995",
+            "healing_mood" => "32",
+            "emo_rain" => "42",
+            "joy_sunshine" => "223",
+            "chill_sunset" => "10",
+            other => other,
+        }
+    }
+
+    fn fm_home_priority_score(fmid: &str, name: &str, category: &str) -> usize {
+        match fmid {
+            "27" => 1,    // 咖啡厅
+            "344" => 2,   // 散步
+            "301" => 3,   // 睡前
+            "974" => 4,   // 热评10W+歌曲
+            "693" => 5,   // 那年MP3里的歌
+            "94" => 6,    // 怀旧粤语
+            "16" => 7,    // 民谣
+            "13" => 8,    // R&B
+            "32" => 9,    // 安静
+            "1646" => 10, // 阅读
+            "706" => 11,  // 百听不厌英文歌
+            "11" => 12,   // 轻音乐
+            "10" => 13,   // 爵士
+            "995" => 14,  // 蒸汽波
+            "83" => 15,   // 中国风精选
+            "318" => 16,  // 二次元精选
+            "37" => 17,   // 驾驶
+            "1" => 18,    // 酷狗热歌
+            "5" => 19,    // 中文经典
+            "54" => 20,   // 一个人
+            "223" => 21,  // 轻松
+            "9" => 22,    // 摇滚
+            "782" => 23,  // 经典影视原声
+            "744" => 24,  // 健身房
+            "60" => 25,   // 钢琴
+            "1330" => 26, // 慵懒时光
+            "1318" => 27, // 自愈
+            "1566" => 28, // 旅行
+            "579" => 29,  // J-POP
+            "594" => 30,  // K-POP
+            "14" => 31,   // 说唱
+            "4" => 32,    // 酷狗新歌
+            "276" => 33,  // 老情歌
+            "118" => 34,  // 古风好歌
+            "1424" => 35, // 热血国风
+            "392" => 36,  // 跑步
+            _ => {
+                if name.contains("广场舞") || name.contains("促销") || name.contains("儿歌") || name.contains("胎教") {
+                    900
+                } else {
+                    match category {
+                        "场景" => 120,
+                        "心情" => 140,
+                        "风格" => 160,
+                        "语言" => 180,
+                        "国风" => 200,
+                        "乐器" => 220,
+                        "主题" => 240,
+                        "运动" => 260,
+                        "DJ" => 280,
+                        "人群综艺" => 300,
+                        "儿童" => 400,
+                        _ => 350,
+                    }
+                }
+            }
+        }
+    }
+
+    fn build_fm_channel_description(
+        fmid: &str,
+        name: &str,
+        category: &str,
+        sample_song: &str,
+    ) -> String {
+        let curated = match fmid {
+            "27" => "慵懒爵士与原声木吉他 · 阳光洒落午后窗台",
+            "344" => "漫步街角微风 · 让轻快旋律伴随你的每一步",
+            "301" => "卸下都市喧嚣与疲惫 · 耳机里的温柔晚风",
+            "974" => "千万听众走心共鸣 · 每一首都是故事感神作",
+            "693" => "周杰伦/孙燕姿/林俊杰 · 青春记忆里的MP3金曲",
+            "94" => "霓虹街角与港乐黄金年代 · 帧享粤语岁月留声",
+            "16" => "木吉他与故事感人声 · 傍晚微风里的温暖低语",
+            "13" => "丝滑转音与都市霓虹节拍 · 暮色微醺松弛感",
+            "32" => "过滤外界嘈杂 · 留一片宁静纯粹的私人声场",
+            "1646" => "轻柔器乐与心流律动 · 沉浸阅读与专注时光",
+            "706" => "Billboard 经典热单与百听不厌的欧美流行旋律",
+            "11" => "空灵纯音与自然呼吸 · 舒缓身心的治愈声波",
+            "10" => "丝绒萨克斯与摇摆钢琴 · 复刻复古爵士俱乐部",
+            "995" => "复古合成器与霓虹美学 · 迷幻浪漫的赛博梦境",
+            "83" => "山水诗意与丝竹管弦 · 东方美学意境之声",
+            "318" => "高燃番剧 OP/ED 与日系治愈声线 · 破次元漫游",
+            "37" => "开阔地平线与澎湃节奏 · 车载兜风一路向阳",
+            "1" => "全天候潮流热歌风向标 · 实时捕捉热门旋律",
+            "5" => "跨越时代的华语经典金曲 · 历久弥新的感动",
+            "54" => "独处时光的细腻陪伴 · 听懂你未曾说出口的心事",
+            "223" => "明快节拍与清亮声线 · 唤醒一整天的好心情",
+            "9" => "失真吉他的热血轰鸣 · 感受 Livehouse 前排律动",
+            "782" => "光影交织的银幕记忆 · 动人心弦的影视原声带",
+            "744" => "高能 BPM 燃脂节拍 · 激活多巴胺与运动潜能",
+            "60" => "黑白琴键流淌的诗篇 · 纯净治愈的独奏时刻",
+            _ => "",
+        };
+        if !curated.is_empty() {
+            return curated.to_string();
+        }
+        if !sample_song.is_empty() {
+            return format!("正在热播：{}", sample_song);
+        }
+        match category {
+            "场景" => format!("{}场景专属调频 · 沉浸式声学伴听", name),
+            "心情" => format!("{}情绪共鸣电台 · 懂你此刻的心境", name),
+            "风格" => format!("{}曲风深度漫游 · 精选纯正流派佳作", name),
+            "语言" => format!("{}语种精选频道 · 跨越国界的旋律", name),
+            "DJ" => format!("{}超重低音与律动节拍 · 释放能量", name),
+            "运动" => format!("{}运动节奏电台 · 保持高能心率", name),
+            "国风" => format!("{}东方新韵调频 · 诗意国乐之美", name),
+            "乐器" => format!("{}器乐独奏鉴赏 · 纯净原声质感", name),
+            _ => format!("{}主题随心调频 · 探索不期而遇的好音乐", name),
+        }
+    }
+
     pub fn default_fm_channels() -> Vec<FmChannel> {
         let presets = [
-            ("hot", "流行风向标", "全天候智能音乐伴听 · 热歌与品味共振", "推荐电台", 1, "64.2k 正在漫游"),
-            ("daily_vibe", "私人口味漫游", "贴合你近期常听偏好的红心延伸声场", "推荐电台", 1, "58.4k 正在漫游"),
-            ("red_heart", "红心共鸣电台", "从你收藏的红心单曲延展相似旋律", "推荐电台", 1, "47.8k 正在漫游"),
-            ("niche_gem", "宝藏小众漫游", "避开喧嚣热榜 · 邂逅高审美独立佳作", "推荐电台", 1, "39.1k 正在漫游"),
-            ("late_night", "深夜静谧台", "卸下喧嚣与疲惫 · 耳机里的温柔晚风", "场景", 1, "51.8k 正在漫游"),
-            ("focus_study", "心流伴读台", "轻柔器乐与Lo-Fi律动 · 沉浸专注工作", "场景", 1, "43.5k 正在漫游"),
-            ("workout_drive", "公路兜风电台", "开阔地平线与高能节奏 · 一路向阳疾驰", "场景", 1, "36.6k 正在漫游"),
-            ("cafe_afternoon", "午后咖啡馆", "慵懒爵士与原声木吉他 · 阳光洒落窗台", "场景", 1, "31.2k 正在漫游"),
-            ("morning_wake", "晨间元气唤醒", "清晨第一缕阳光与轻快律动", "场景", 1, "29.6k 正在漫游"),
-            ("sleep_ambient", "晚安助眠轻音", "舒缓钢琴与自然氛围 · 伴你安然入梦", "场景", 1, "35.4k 正在漫游"),
-            ("cantonese", "港乐黄金年代", "霓虹街角与粤语经典 · 帧享岁月留声", "年代语种", 2, "49.1k 正在漫游"),
-            ("mandopop_golden", "华语千禧金曲", "周杰伦/孙燕姿/林俊杰 · 青春记忆里的MP3", "年代语种", 2, "55.9k 正在漫游"),
-            ("western_pop", "欧美潮流前线", "Billboard 热单与先锋合成器流行", "年代语种", 2, "45.3k 正在漫游"),
-            ("acg", "二次元幻想台", "高燃番剧 OP/ED 与日系治愈声线", "年代语种", 2, "38.9k 正在漫游"),
-            ("kpop_wave", "韩流节奏律动", "K-Pop 先锋舞曲与清甜氛围感旋律", "年代语种", 2, "33.7k 正在漫游"),
-            ("retro_8090", "80/90 复古留声", "岁月沉淀的华语经典老歌与時代记忆", "年代语种", 2, "41.5k 正在漫游"),
-            ("indie_folk", "独立民谣漫游", "木吉他与故事感人声 · 傍晚微风低语", "曲风", 3, "29.4k 正在漫游"),
-            ("rnb_soul", "微醺 R&B 律动", "丝滑转音与都市霓虹节拍 · 暮色松弛感", "曲风", 3, "34.7k 正在漫游"),
-            ("guofeng", "国风新韵电台", "山水诗意与戏腔弦乐 · 东方美学意境", "曲风", 3, "27.8k 正在漫游"),
-            ("rock_live", "摇滚乐队现场", "失真吉他的热血轰鸣 · Livehouse 律动", "曲风", 3, "32.5k 正在漫游"),
-            ("edm_synth", "电音脉冲电台", "Progressive House 与赛博合成器浪潮", "曲风", 3, "30.8k 正在漫游"),
-            ("healing_mood", "治愈松弛电台", "微风拂过耳畔 · 唤醒好心情的清澈旋律", "心情", 4, "41.0k 正在漫游"),
-            ("emo_rain", "雨夜微凉心事", "适合一个人静静听的细腻叙事慢歌", "心情", 4, "37.4k 正在漫游"),
-            ("joy_sunshine", "元气晴空漫游", "明快节拍与清亮声线 · 瞬间满电出发", "心情", 4, "28.9k 正在漫游"),
-            ("chill_sunset", "日落橘子海", "黄昏海岸线与浪漫梦幻流行", "心情", 4, "33.2k 正在漫游"),
+            (
+                "27",
+                "咖啡厅",
+                "慵懒爵士与原声木吉他 · 阳光洒落午后窗台",
+                "场景",
+                2,
+                "58.4k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220106175222572121.jpg",
+                "https://imge.kugou.com/fmbanner/480/20220106175221826685.jpg",
+            ),
+            (
+                "344",
+                "散步",
+                "漫步街角微风 · 让轻快旋律伴随你的每一步",
+                "场景",
+                2,
+                "52.6k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20211228155137254626.jpg",
+                "https://imge.kugou.com/fmbanner/480/20211228155136741574.jpg",
+            ),
+            (
+                "301",
+                "睡前",
+                "卸下都市喧嚣与疲惫 · 耳机里的温柔晚风",
+                "场景",
+                2,
+                "61.2k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220106175548708933.jpg",
+                "https://imge.kugou.com/fmbanner/480/20220106175546979570.jpg",
+            ),
+            (
+                "974",
+                "热评10W+歌曲",
+                "千万听众走心共鸣 · 每一首都是故事感神作",
+                "主题",
+                2,
+                "74.8k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220128161421313046.jpg",
+                "https://imge.kugou.com/fmbanner/480/20220128161419129910.jpg",
+            ),
+            (
+                "693",
+                "那年MP3里的歌",
+                "周杰伦/孙燕姿/林俊杰 · 青春记忆里的MP3金曲",
+                "主题",
+                2,
+                "68.9k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20241108203841276289.jpg",
+                "https://imge.kugou.com/fmbanner/480/20241108203838274158.jpg",
+            ),
+            (
+                "94",
+                "怀旧粤语",
+                "霓虹街角与港乐黄金年代 · 帧享粤语岁月留声",
+                "语言",
+                2,
+                "56.3k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20240828121328277673.jpg",
+                "https://imge.kugou.com/fmbanner/480/20240828121325363406.jpg",
+            ),
+            (
+                "16",
+                "民谣",
+                "木吉他与故事感人声 · 傍晚微风里的温暖低语",
+                "风格",
+                2,
+                "44.7k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220120150704995586.jpg",
+                "https://imge.kugou.com/fmbanner/480/20220120150703846885.jpg",
+            ),
+            (
+                "13",
+                "R&B",
+                "丝滑转音与都市霓虹节拍 · 暮色微醺松弛感",
+                "风格",
+                2,
+                "41.5k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220120145940817004.jpg",
+                "https://imge.kugou.com/fmbanner/480/20220120145936886531.jpg",
+            ),
+            (
+                "32",
+                "安静",
+                "过滤外界嘈杂 · 留一片宁静纯粹的私人声场",
+                "心情",
+                2,
+                "53.1k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20240322181935734824.jpg",
+                "https://imge.kugou.com/fmbanner/480/20240322181933140804.jpg",
+            ),
+            (
+                "1646",
+                "阅读",
+                "轻柔器乐与心流律动 · 沉浸阅读与专注时光",
+                "场景",
+                2,
+                "39.4k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20210309165546687615.jpg",
+                "https://imge.kugou.com/fmbanner/480/20210309165545159576.jpg",
+            ),
+            (
+                "706",
+                "百听不厌英文歌",
+                "Billboard 经典热单与百听不厌的欧美流行旋律",
+                "语言",
+                2,
+                "48.2k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220215174138171104.png",
+                "https://imge.kugou.com/fmbanner/480/20220215174136701134.jpg",
+            ),
+            (
+                "11",
+                "轻音乐",
+                "空灵纯音与自然呼吸 · 舒缓身心的治愈声波",
+                "风格",
+                2,
+                "46.8k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20241009170837444619.jpg",
+                "https://imge.kugou.com/fmbanner/480/20241009170835552113.jpg",
+            ),
+            (
+                "10",
+                "爵士",
+                "丝绒萨克斯与摇摆钢琴 · 复刻复古爵士俱乐部",
+                "风格",
+                2,
+                "35.6k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220121113633476690.jpg",
+                "https://imge.kugou.com/fmbanner/480/20220121113632447499.jpg",
+            ),
+            (
+                "995",
+                "蒸汽波",
+                "复古合成器与霓虹美学 · 迷幻浪漫的赛博梦境",
+                "风格",
+                2,
+                "33.9k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220121114126630707.jpg",
+                "https://imge.kugou.com/fmbanner/480/20220121114124117706.jpg",
+            ),
+            (
+                "83",
+                "中国风精选",
+                "山水诗意与丝竹管弦 · 东方美学意境之声",
+                "国风",
+                2,
+                "42.1k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220123164424329448.jpg",
+                "https://imge.kugou.com/fmbanner/480/20220123164422552332.jpg",
+            ),
+            (
+                "318",
+                "二次元精选",
+                "高燃番剧 OP/ED 与日系治愈声线 · 破次元漫游",
+                "主题",
+                2,
+                "45.0k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220128175901474615.jpg",
+                "https://imge.kugou.com/fmbanner/480/20220128175859775639.jpg",
+            ),
+            (
+                "37",
+                "驾驶",
+                "开阔地平线与澎湃节奏 · 车载兜风一路向阳",
+                "场景",
+                2,
+                "49.7k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20211228153959551375.jpg",
+                "https://imge.kugou.com/fmbanner/480/20211228153957114380.jpg",
+            ),
+            (
+                "1",
+                "酷狗热歌",
+                "全天候潮流热歌风向标 · 实时捕捉热门旋律",
+                "主题",
+                2,
+                "82.5k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220128160906877436.jpg",
+                "https://imge.kugou.com/fmbanner/480/20220128160904789389.jpg",
+            ),
+            (
+                "5",
+                "中文经典",
+                "跨越时代的华语经典金曲 · 历久弥新的感动",
+                "主题",
+                2,
+                "64.3k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20241128174242747598.jpg",
+                "https://imge.kugou.com/fmbanner/480/20241128174239475443.jpg",
+            ),
+            (
+                "54",
+                "一个人",
+                "独处时光的细腻陪伴 · 听懂你未曾说出口的心事",
+                "场景",
+                2,
+                "47.2k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20211228154343953202.jpg",
+                "https://imge.kugou.com/fmbanner/480/20211228154342434649.jpg",
+            ),
+            (
+                "223",
+                "轻松",
+                "明快节拍与清亮声线 · 唤醒一整天的好心情",
+                "心情",
+                2,
+                "43.8k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20240322182118942385.jpg",
+                "https://imge.kugou.com/fmbanner/480/20240322182116452401.jpg",
+            ),
+            (
+                "9",
+                "摇滚",
+                "失真吉他的热血轰鸣 · 感受 Livehouse 前排律动",
+                "风格",
+                2,
+                "38.1k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220121113904795893.jpg",
+                "https://imge.kugou.com/fmbanner/480/20220121113903745240.jpg",
+            ),
+            (
+                "744",
+                "健身房",
+                "高能 BPM 燃脂节拍 · 激活多巴胺与运动潜能",
+                "运动",
+                2,
+                "36.4k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20220121124411107744.jpg",
+                "https://imge.kugou.com/fmbanner/480/20220121124410798754.jpg",
+            ),
+            (
+                "60",
+                "钢琴",
+                "黑白琴键流淌的诗篇 · 纯净治愈的独奏时刻",
+                "乐器",
+                2,
+                "37.9k 正在调频",
+                "https://imge.kugou.com/fmlogov2/400/20180905155158940454.jpg",
+                "https://imge.kugou.com/fmbanner/480/20180905155158790562.jpg",
+            ),
         ];
         presets
             .into_iter()
-            .map(|(id, name, desc, cat, fm_type, listeners)| FmChannel {
+            .map(|(id, name, desc, cat, fm_type, listeners, cover, banner)| FmChannel {
                 id: id.to_string(),
                 name: name.to_string(),
-                cover_url: String::new(),
+                cover_url: cover.to_string(),
                 description: desc.to_string(),
                 category: cat.to_string(),
                 fm_type,
                 listener_count_text: listeners.to_string(),
                 freq_label: Self::fm_freq_label_for_id(id),
+                banner_url: banner.to_string(),
+                is_recommended: true,
+                sample_song: String::new(),
             })
             .collect()
     }
 
     fn extract_fm_item_cover(item: &Value) -> String {
-        for key in ["imgurl", "imgUrl150", "imgUrl100", "cover", "pic", "img", "sizable_cover"] {
+        for key in [
+            "imgurl",
+            "imgUrl150",
+            "imgUrl100",
+            "cover",
+            "pic",
+            "img",
+            "sizable_cover",
+            "banner",
+        ] {
             let raw = Self::val_str(item, key);
             if !raw.is_empty() && !raw.contains("20210519") {
                 let norm = signer::normalize_image_url(Some(&raw));
@@ -7497,13 +7917,22 @@ impl KugouApiService {
             }
         }
         if let Some(songs) = item
-            .get("songs")
+            .get("songlist")
+            .or_else(|| item.get("rcmdlist"))
+            .or_else(|| item.get("songs"))
             .or_else(|| item.get("song_list"))
             .or_else(|| item.get("songinfo"))
             .and_then(|v| v.as_array())
         {
             for s in songs {
-                for key in ["album_sizable_cover", "sizable_cover", "imgurl", "cover", "pic", "trans_param"] {
+                for key in [
+                    "album_sizable_cover",
+                    "sizable_cover",
+                    "imgurl",
+                    "cover",
+                    "pic",
+                    "trans_param",
+                ] {
                     if key == "trans_param" {
                         if let Some(tp) = s.get("trans_param") {
                             let u = Self::val_str(tp, "union_cover");
@@ -7523,74 +7952,122 @@ impl KugouApiService {
         String::new()
     }
 
+    fn extract_fm_item_banner(item: &Value, fallback_cover: &str) -> String {
+        let raw_banner = Self::val_str(item, "banner");
+        if !raw_banner.is_empty() && !raw_banner.contains("20210519") {
+            let sized = raw_banner.replace("{size}", "480");
+            let norm = signer::normalize_image_url(Some(&sized));
+            if !norm.is_empty() {
+                return norm;
+            }
+        }
+        fallback_cover.to_string()
+    }
+
+    fn extract_fm_item_sample_song(item: &Value) -> String {
+        if let Some(songs) = item
+            .get("songlist")
+            .or_else(|| item.get("rcmdlist"))
+            .or_else(|| item.get("songs"))
+            .and_then(|v| v.as_array())
+        {
+            for s in songs {
+                let sname = Self::val_str(s, "name");
+                if !sname.is_empty() {
+                    return sname;
+                }
+                let sn = Self::val_str(s, "songname");
+                if !sn.is_empty() {
+                    return sn;
+                }
+            }
+        }
+        if let Some(si) = item.get("song_info") {
+            let sname = Self::val_str(si, "name");
+            if !sname.is_empty() {
+                return sname;
+            }
+        }
+        String::new()
+    }
+
     fn resolve_fm_theme_keywords(channel_id: &str, channel_name: &str) -> Vec<&'static str> {
         let lower = format!("{} {}", channel_id, channel_name).to_lowercase();
-        if lower.contains("late_night") || lower.contains("深夜") || lower.contains("晚安") || lower.contains("助眠") {
+        if lower.contains("late_night") || lower.contains("深夜") || lower.contains("晚安") || lower.contains("助眠") || lower.contains("睡前") {
             vec!["深夜 治愈 温柔", "晚安 慢歌 抒情", "夜色 安静 独处"]
-        } else if lower.contains("focus_study") || lower.contains("心流") || lower.contains("伴读") || lower.contains("轻音乐") || lower.contains("阅读") {
+        } else if lower.contains("focus_study") || lower.contains("心流") || lower.contains("伴读") || lower.contains("轻音乐") || lower.contains("阅读") || lower.contains("学习") {
             vec!["纯音乐 钢琴 治愈", "轻音乐 伴读 专注", "久石让 坂本龙一 纯音乐"]
         } else if lower.contains("cafe") || lower.contains("咖啡") || lower.contains("午后") || lower.contains("爵士") {
-            vec!["咖啡馆 庸懒 爵士", "Bossa Nova 下午茶", "小野丽莎 诺拉琼斯"]
+            vec!["咖啡馆 慵懒 爵士", "Bossa Nova 下午茶", "小野丽莎 诺拉琼斯"]
         } else if lower.contains("cantonese") || lower.contains("港乐") || lower.contains("粤语") {
             vec!["粤语经典 港乐", "陈奕迅 张敬轩 粤语", "杨千嬅 卫兰 Beyond"]
-        } else if lower.contains("mandopop_golden") || lower.contains("千禧") || lower.contains("怀旧") || lower.contains("金曲") {
+        } else if lower.contains("mandopop_golden") || lower.contains("千禧") || lower.contains("怀旧") || lower.contains("金曲") || lower.contains("mp3") {
             vec!["华语经典 千禧金曲", "周杰伦 孙燕姿 林俊杰", "蔡依林 王力宏 陶喆"]
         } else if lower.contains("acg") || lower.contains("二次元") || lower.contains("动漫") || lower.contains("日语") {
             vec!["YOASOBI 米津玄师", "动漫 燃曲 日语", "新海诚 Aimer 泽野弘之"]
         } else if lower.contains("kpop") || lower.contains("韩") {
             vec!["K-Pop 韩语 热单", "NewJeans aespa IU", "G-Dragon BLACKPINK"]
-        } else if lower.contains("indie_folk") || lower.contains("民谣") || lower.contains("独立") {
+        } else if lower.contains("indie_folk") || lower.contains("民谣") || lower.contains("独立") || lower.contains("散步") {
             vec!["民谣 木吉他 故事", "房东的猫 陈粒 宋冬野", "毛不易 赵雷 独立乐队"]
         } else if lower.contains("rnb_soul") || lower.contains("r&b") || lower.contains("微醺") || lower.contains("灵魂") {
             vec!["R&B 灵魂乐 微醺", "方大同 陶喆 单依纯", "袁娅维 律动 R&B"]
-        } else if lower.contains("guofeng") || lower.contains("国风") || lower.contains("古风") {
+        } else if lower.contains("guofeng") || lower.contains("国风") || lower.contains("古风") || lower.contains("中国风") {
             vec!["国风 戏腔 古风", "银临 双笙 周深 国风", "国风新韵 诗意"]
         } else if lower.contains("rock_live") || lower.contains("摇滚") || lower.contains("乐队") {
             vec!["摇滚 乐队 现场", "告五人 万能青年旅店 新裤子", "五月天 痛仰 橘子海"]
-        } else if lower.contains("workout_drive") || lower.contains("公路") || lower.contains("兜风") || lower.contains("车载") || lower.contains("运动") {
+        } else if lower.contains("workout_drive") || lower.contains("公路") || lower.contains("兜风") || lower.contains("车载") || lower.contains("驾驶") || lower.contains("运动") || lower.contains("健身") {
             vec!["公路 兜风 车载节奏", "电音 律动 驾驶", "OneRepublic 节奏 热单"]
-        } else if lower.contains("western_pop") || lower.contains("欧美") {
+        } else if lower.contains("western_pop") || lower.contains("欧美") || lower.contains("英文") {
             vec!["欧美流行 Billboard", "Taylor Swift The Weeknd", "Bruno Mars Ariana Grande"]
-        } else if lower.contains("emo_rain") || lower.contains("雨夜") || lower.contains("伤感") || lower.contains("心事") {
+        } else if lower.contains("emo_rain") || lower.contains("雨夜") || lower.contains("伤感") || lower.contains("心事") || lower.contains("一个人") {
             vec!["伤感 走心 慢歌", "雨天 抒情 遗憾", "薛之谦 林宥嘉 裘德"]
-        } else if lower.contains("joy_sunshine") || lower.contains("元气") || lower.contains("晴空") || lower.contains("快乐") {
+        } else if lower.contains("joy_sunshine") || lower.contains("元气") || lower.contains("晴空") || lower.contains("快乐") || lower.contains("轻松") {
             vec!["元气 快乐 明快", "清新 好心情 甜歌", "王心凌 告五人 晴天"]
-        } else if lower.contains("healing_mood") || lower.contains("治愈") || lower.contains("松弛") {
+        } else if lower.contains("healing_mood") || lower.contains("治愈") || lower.contains("松弛") || lower.contains("安静") {
             vec!["治愈 清新 松弛感", "周深 温柔 治愈系", "徐佳莹 梁静茹 温暖"]
         } else {
             vec!["热歌 流行 精选", "华语流行 必听榜", "周杰伦 林俊杰 陈奕迅"]
         }
     }
 
-    /// 20. 电台频道列表 (对齐 Android MusicRepository.fmChannels: /v1/rcmd_list + /v1/class_fm_song + /v1/time_fm_info + 18大精选主题电台)
+    /// 20. 电台频道列表 (严格对齐 MakcRe/KuGouMusicApi: module/fm_class.js `/v1/class_fm_song` + module/fm_recommend.js `/v1/rcmd_list` + module/yueku_fm.js `/v1/time_fm_info`)
     pub async fn fetch_fm_channels(&self) -> Result<Vec<FmChannel>, String> {
         let dev = self.store.device();
         let session = self.store.session();
-        let mut channels = Vec::new();
-        let mut seen = HashSet::new();
+        let uid_str = session
+            .as_ref()
+            .map(|s| s.user_id.trim())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("0")
+            .to_string();
+        let now_ms = Utc::now().timestamp_millis();
+        let sign_key = signer::params_key(now_ms, "");
 
-        for (endpoint, extra_type) in [
-            ("/v1/rcmd_list", None),
-            ("/v1/class_fm_song", Some(1i64)),
-            ("/v1/time_fm_info", None),
-        ] {
+        // 1. 并发请求 /v1/rcmd_list (推荐电台 44 台) 与 /v1/class_fm_song (全部分类 14 大类 325+ 台)
+        let dev_rcmd = dev.clone();
+        let sess_rcmd = session.clone();
+        let uid_rcmd = uid_str.clone();
+        let key_rcmd = sign_key.clone();
+        let rcmd_fut = async move {
             let mut headers = HashMap::new();
             headers.insert("x-router".to_string(), "fm.service.kugou.com".to_string());
-            let mut body = json!({
+            let body = json!({
                 "appid": APP_ID,
                 "clientver": CLIENT_VERSION,
-                "mid": dev.mid,
-                "platform": "android"
+                "clienttime": now_ms,
+                "mid": dev_rcmd.mid,
+                "key": key_rcmd,
+                "rcmdsongcount": 1,
+                "level": 0,
+                "area_code": 1,
+                "get_tracker": 1,
+                "uid": uid_rcmd
             });
-            if let Some(ft) = extra_type {
-                body["fmtype"] = json!(ft);
-            }
-            if let Ok(resp) = self
-                .transport
+            self.transport
                 .call(
-                    endpoint,
-                    &dev,
-                    session.as_ref(),
+                    "/v1/rcmd_list",
+                    &dev_rcmd,
+                    sess_rcmd.as_ref(),
                     HashMap::new(),
                     Some(body),
                     "https://gateway.kugou.com",
@@ -7601,121 +8078,316 @@ impl KugouApiService {
                     true,
                 )
                 .await
-            {
-                let data = resp.data();
-                let mut candidate_arrays = Vec::new();
-                for k in ["list", "info", "class_list", "fm_list"] {
-                    if let Some(arr) = data.get(k).and_then(|v| v.as_array()) {
-                        candidate_arrays.push(arr);
+        };
+
+        let dev_cls = dev.clone();
+        let sess_cls = session.clone();
+        let uid_cls = uid_str.clone();
+        let key_cls = sign_key.clone();
+        let cls_fut = async move {
+            let mut headers = HashMap::new();
+            headers.insert("x-router".to_string(), "fm.service.kugou.com".to_string());
+            let body = json!({
+                "kguid": uid_cls,
+                "clienttime": now_ms,
+                "mid": dev_cls.mid,
+                "platform": "android",
+                "clientver": CLIENT_VERSION,
+                "uid": uid_cls,
+                "get_tracker": 1,
+                "key": key_cls,
+                "appid": APP_ID
+            });
+            self.transport
+                .call(
+                    "/v1/class_fm_song",
+                    &dev_cls,
+                    sess_cls.as_ref(),
+                    HashMap::new(),
+                    Some(body),
+                    "https://gateway.kugou.com",
+                    "POST",
+                    false,
+                    headers,
+                    true,
+                    true,
+                )
+                .await
+        };
+
+        let (rcmd_res, cls_res) = tokio::join!(rcmd_fut, cls_fut);
+
+        let mut rcmd_ids: HashSet<String> = HashSet::new();
+        let mut rcmd_desc_map: HashMap<String, String> = HashMap::new();
+        let mut rcmd_sample_map: HashMap<String, String> = HashMap::new();
+        let mut rcmd_raw_items: Vec<Value> = Vec::new();
+
+        if let Ok(resp) = rcmd_res {
+            let data = resp.data();
+            let arr_opt = data
+                .as_array()
+                .or_else(|| data.get("list").and_then(|v| v.as_array()))
+                .or_else(|| data.get("info").and_then(|v| v.as_array()));
+            if let Some(arr) = arr_opt {
+                for item in arr {
+                    let fmid = Self::val_str(item, "fmid");
+                    if fmid.is_empty() {
+                        continue;
                     }
+                    rcmd_ids.insert(fmid.clone());
+                    let desc = Self::val_str(item, "description");
+                    let fmname = Self::val_str(item, "fmname");
+                    if !desc.is_empty() && desc != fmname {
+                        rcmd_desc_map.insert(fmid.clone(), desc);
+                    }
+                    let sample = Self::extract_fm_item_sample_song(item);
+                    if !sample.is_empty() {
+                        rcmd_sample_map.insert(fmid.clone(), sample);
+                    }
+                    rcmd_raw_items.push(item.clone());
                 }
-                for arr in candidate_arrays {
-                    for item in arr {
-                        let fmid = {
-                            let a = Self::val_str(item, "fmid");
-                            if !a.is_empty() {
-                                a
-                            } else {
-                                Self::val_str(item, "id")
-                            }
-                        };
-                        let name = {
-                            let a = Self::val_str(item, "fmname");
-                            if !a.is_empty() {
-                                a
-                            } else {
-                                let b = Self::val_str(item, "name");
-                                if !b.is_empty() {
-                                    b
-                                } else {
-                                    Self::val_str(item, "title")
+            }
+        }
+
+        let mut channels: Vec<FmChannel> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+
+        if let Ok(resp) = cls_res {
+            if let Some(class_list) = resp
+                .data()
+                .get("class_list")
+                .and_then(|v| v.as_array())
+            {
+                // 第一遍：收集 10040 (周末) 中的精选电台 ID 归入推荐集合
+                for class_obj in class_list {
+                    let cid_num = Self::val_i64(class_obj, "classid").unwrap_or(0);
+                    if cid_num == 10040 {
+                        if let Some(fmlist) = class_obj.get("fmlist").and_then(|v| v.as_array()) {
+                            for fm in fmlist {
+                                let id = Self::val_str(fm, "fmid");
+                                if !id.is_empty() {
+                                    rcmd_ids.insert(id);
                                 }
                             }
-                        };
-                        if !fmid.is_empty() && !name.is_empty() && seen.insert(fmid.clone()) {
-                            let cover_url = Self::extract_fm_item_cover(item);
-                            let desc = {
-                                let d = Self::val_str(item, "description");
-                                if !d.is_empty() {
-                                    d
-                                } else {
-                                    let d2 = Self::val_str(item, "desc");
-                                    if !d2.is_empty() {
-                                        d2
-                                    } else {
-                                        "概念版场景随心调频".to_string()
-                                    }
-                                }
-                            };
-                            let cat = {
-                                let c = Self::val_str(item, "classname");
-                                if !c.is_empty() {
-                                    c
-                                } else {
-                                    "推荐电台".to_string()
-                                }
-                            };
-                            channels.push(FmChannel {
-                                freq_label: Self::fm_freq_label_for_id(&fmid),
-                                id: fmid,
-                                name,
-                                cover_url,
-                                description: desc,
-                                category: cat,
-                                fm_type: Self::val_i64(item, "fmtype").unwrap_or(1) as i32,
-                                listener_count_text: "42.6k 正在漫游".to_string(),
-                            });
                         }
                     }
                 }
+
+                // 第二遍：遍历所有主分类 (排除虚拟聚合分类 10040)，确保每座电台拥有最准确的垂直主题分类
+                for class_obj in class_list {
+                    let cid_num = Self::val_i64(class_obj, "classid").unwrap_or(0);
+                    if cid_num == 10040 {
+                        continue;
+                    }
+                    let raw_cat_name = Self::val_str(class_obj, "classname");
+                    let category = Self::normalize_fm_category(&raw_cat_name);
+                    let Some(fmlist) = class_obj
+                        .get("fmlist")
+                        .or_else(|| class_obj.get("fm_list"))
+                        .and_then(|v| v.as_array())
+                    else {
+                        continue;
+                    };
+
+                    for item in fmlist {
+                        let fmid = Self::val_str(item, "fmid");
+                        let name = Self::val_str(item, "fmname");
+                        if fmid.is_empty() || name.is_empty() || !seen.insert(fmid.clone()) {
+                            continue;
+                        }
+                        let cover_url = Self::extract_fm_item_cover(item);
+                        if cover_url.is_empty() {
+                            continue;
+                        }
+                        let banner_url = Self::extract_fm_item_banner(item, &cover_url);
+                        let sample_song = {
+                            let s = Self::extract_fm_item_sample_song(item);
+                            if !s.is_empty() {
+                                s
+                            } else {
+                                rcmd_sample_map.get(&fmid).cloned().unwrap_or_default()
+                            }
+                        };
+                        let raw_desc = {
+                            let d = Self::val_str(item, "description");
+                            if !d.is_empty() && d != name {
+                                d
+                            } else {
+                                rcmd_desc_map.get(&fmid).cloned().unwrap_or_default()
+                            }
+                        };
+                        let description = if !raw_desc.is_empty() {
+                            raw_desc
+                        } else {
+                            Self::build_fm_channel_description(&fmid, &name, &category, &sample_song)
+                        };
+                        let fm_type = Self::val_i64(item, "fmtype").unwrap_or(2) as i32;
+                        let heat = Self::val_i64(item, "heat").unwrap_or(0);
+                        let is_recommended = rcmd_ids.contains(&fmid)
+                            || Self::fm_home_priority_score(&fmid, &name, &category) <= 36;
+
+                        channels.push(FmChannel {
+                            freq_label: Self::fm_freq_label_for_id(&fmid),
+                            listener_count_text: Self::format_fm_listener_count(&fmid, heat),
+                            id: fmid,
+                            name,
+                            cover_url,
+                            description,
+                            category: category.clone(),
+                            fm_type,
+                            banner_url,
+                            is_recommended,
+                            sample_song,
+                        });
+                    }
+                }
             }
         }
 
-        for def in Self::default_fm_channels() {
-            if seen.insert(def.id.clone()) {
-                channels.push(def);
-            }
-        }
-
-        // 对缺失封面的电台自动关联主题精选歌单或代表作封面
-        let mut resolved_count = 0usize;
-        for ch in channels.iter_mut() {
-            if !ch.cover_url.is_empty() && !ch.cover_url.contains("20210519") {
+        // 补充 /v1/rcmd_list 中可能未出现在 class_list 的电台
+        for item in rcmd_raw_items {
+            let fmid = Self::val_str(&item, "fmid");
+            let name = Self::val_str(&item, "fmname");
+            if fmid.is_empty() || name.is_empty() || !seen.insert(fmid.clone()) {
                 continue;
             }
-            if resolved_count >= 18 {
-                break;
+            let cover_url = Self::extract_fm_item_cover(&item);
+            if cover_url.is_empty() {
+                continue;
             }
-            resolved_count += 1;
-            let kws = Self::resolve_fm_theme_keywords(&ch.id, &ch.name);
-            let kw = kws.first().copied().unwrap_or(ch.name.as_str());
-            if let Ok(pls) = self.search_playlists(kw, 1, 6).await {
-                if let Some(found) = pls
-                    .into_iter()
-                    .find(|p| !p.cover_url.is_empty() && !p.cover_url.contains("20210519"))
-                {
-                    ch.cover_url = found.cover_url;
-                    continue;
-                }
-            }
-            if let Ok(songs) = self.search_songs(kw, 1, 4).await {
-                if let Some(found) = songs
-                    .into_iter()
-                    .find(|s| !s.cover_url.is_empty() && !s.cover_url.contains("20210519"))
-                {
-                    ch.cover_url = found.cover_url;
-                }
-            }
+            let banner_url = Self::extract_fm_item_banner(&item, &cover_url);
+            let raw_cat = Self::val_str(&item, "classname");
+            let category = Self::normalize_fm_category(&raw_cat);
+            let sample_song = Self::extract_fm_item_sample_song(&item);
+            let raw_desc = Self::val_str(&item, "description");
+            let description = if !raw_desc.is_empty() && raw_desc != name {
+                raw_desc
+            } else {
+                Self::build_fm_channel_description(&fmid, &name, &category, &sample_song)
+            };
+            let fm_type = Self::val_i64(&item, "fmtype").unwrap_or(2) as i32;
+            let heat = Self::val_i64(&item, "heat").unwrap_or(0);
+
+            channels.push(FmChannel {
+                freq_label: Self::fm_freq_label_for_id(&fmid),
+                listener_count_text: Self::format_fm_listener_count(&fmid, heat),
+                id: fmid,
+                name,
+                cover_url,
+                description,
+                category,
+                fm_type,
+                banner_url,
+                is_recommended: true,
+                sample_song,
+            });
+        }
+
+        // 若完全离线导致网关未返回数据，使用带真实官方 fmid 与官方封面的兜底列表
+        if channels.is_empty() {
+            channels = Self::default_fm_channels();
+        } else {
+            channels.sort_by(|a, b| {
+                let sa = Self::fm_home_priority_score(&a.id, &a.name, &a.category);
+                let sb = Self::fm_home_priority_score(&b.id, &b.name, &b.category);
+                sa.cmp(&sb).then_with(|| a.id.cmp(&b.id))
+            });
+        }
+
+        if let Ok(mut guard) = self.cached_fm_channels.lock() {
+            *guard = channels.clone();
         }
 
         Ok(channels)
     }
 
-    /// 21. 获取指定电台频道的漫游曲目流 (对齐 Android MusicRepository.fmSongs: 多分片 offset 游标 + 主题歌单/关键词深度匹配，每次刷新换新一批)
-    pub async fn fetch_fm_songs(&self, channel_id: &str) -> Result<Vec<Song>, String> {
+    async fn call_app_song_list_offset(
+        &self,
+        fmid_str: &str,
+        fm_type: i32,
+        offset_val: i64,
+        size_val: i64,
+    ) -> Vec<Song> {
         let dev = self.store.device();
         let session = self.store.session();
-        let cid = channel_id.trim();
+        let uid_str = session
+            .as_ref()
+            .map(|s| s.user_id.trim())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("0")
+            .to_string();
+        let now_ms = Utc::now().timestamp_millis();
+        let sign_key = signer::params_key(now_ms, "");
+
+        let mut headers = HashMap::new();
+        headers.insert("x-router".to_string(), "fm.service.kugou.com".to_string());
+        let body = json!({
+            "appid": APP_ID,
+            "area_code": 1,
+            "clienttime": now_ms,
+            "clientver": CLIENT_VERSION,
+            "data": [
+                {
+                    "fmid": fmid_str,
+                    "fmtype": fm_type,
+                    "offset": offset_val,
+                    "size": size_val,
+                    "singername": ""
+                }
+            ],
+            "get_tracker": 1,
+            "key": sign_key,
+            "mid": dev.mid,
+            "uid": uid_str
+        });
+
+        if let Ok(resp) = self
+            .transport
+            .call(
+                "/v1/app_song_list_offset",
+                &dev,
+                session.as_ref(),
+                HashMap::new(),
+                Some(body),
+                "https://gateway.kugou.com",
+                "POST",
+                false,
+                headers,
+                true,
+                true,
+            )
+            .await
+        {
+            return Self::parse_songs(resp.data());
+        }
+        Vec::new()
+    }
+
+    /// 21. 获取指定电台频道的漫游曲目流 (严格对齐 MakcRe/KuGouMusicApi module/fm_songs.js `/v1/app_song_list_offset` 协议 + 智能分页去重游标)
+    pub async fn fetch_fm_songs(&self, channel_id: &str) -> Result<Vec<Song>, String> {
+        let raw_cid = channel_id.trim();
+        if raw_cid == "daily_vibe" || raw_cid == "personal_fm" {
+            return self.fetch_personal_fm().await;
+        }
+        let cid = Self::resolve_canonical_fmid(raw_cid);
+
+        // 查找该电台的 fm_type 与名称
+        let (fm_type, channel_name) = {
+            let found = self
+                .cached_fm_channels
+                .lock()
+                .ok()
+                .and_then(|list| list.iter().find(|c| c.id == cid).cloned())
+                .or_else(|| {
+                    Self::default_fm_channels()
+                        .into_iter()
+                        .find(|c| c.id == cid)
+                });
+            match found {
+                Some(ch) => (if ch.fm_type > 0 { ch.fm_type } else { 2 }, ch.name),
+                None => (2, cid.to_string()),
+            }
+        };
 
         let cursor = {
             let mut guard = self.fm_channel_cursors.lock().unwrap();
@@ -7725,65 +8397,93 @@ impl KugouApiService {
             cur
         };
 
-        let mut collected = Vec::new();
-        let mut seen = HashSet::new();
+        let mut seen_for_channel: HashSet<String> = self
+            .seen_fm_channel_hashes
+            .lock()
+            .ok()
+            .and_then(|g| g.get(cid).cloned())
+            .unwrap_or_default();
+        if seen_for_channel.len() > 160 {
+            seen_for_channel.clear();
+            if let Ok(mut g) = self.seen_fm_channel_hashes.lock() {
+                g.remove(cid);
+            }
+        }
 
-        // 1. 若是数字电台 ID，请求 /v1/app_song_list_offset（随 cursor 递增 offset 保证每次刷新换新一批）
-        if let Ok(num_id) = cid.parse::<i64>() {
-            let mut headers = HashMap::new();
-            headers.insert("x-router".to_string(), "fm.service.kugou.com".to_string());
-            for slice in 0..2 {
-                let offset_val = ((cursor * 2 + slice) % 12) * 20;
-                let body = json!({
-                    "fmid": num_id,
-                    "fmtype": 1,
-                    "offset": offset_val,
-                    "size": 20
-                });
-                if let Ok(resp) = self
-                    .transport
-                    .call(
-                        "/v1/app_song_list_offset",
-                        &dev,
-                        session.as_ref(),
-                        HashMap::new(),
-                        Some(body),
-                        "https://gateway.kugou.com",
-                        "POST",
-                        false,
-                        headers.clone(),
-                        true,
-                        true,
-                    )
-                    .await
-                {
-                    for s in Self::parse_songs(resp.data()) {
-                        let k = s.hash.to_lowercase();
-                        if !k.is_empty() && seen.insert(k) {
-                            collected.push(s);
+        let mut collected: Vec<Song> = Vec::new();
+        let mut batch_seen: HashSet<String> = HashSet::new();
+
+        let mut push_songs = |items: Vec<Song>, allow_previously_seen: bool, seen_set: &HashSet<String>, out: &mut Vec<Song>| {
+            for s in items {
+                let k = s.hash.trim().to_lowercase();
+                if k.is_empty() || s.title == "未知歌曲" {
+                    continue;
+                }
+                if !allow_previously_seen && seen_set.contains(&k) {
+                    continue;
+                }
+                if batch_seen.insert(k) {
+                    out.push(s);
+                }
+            }
+        };
+
+        // 1. 优先请求酷狗官方电台曲库 /v1/app_song_list_offset (每次刷新递增 offset = cursor * 20)
+        if cid.chars().all(|c| c.is_ascii_digit()) {
+            let primary_offset = (cursor as i64) * 20;
+            let mut batch1 = self
+                .call_app_song_list_offset(cid, fm_type, primary_offset, 20)
+                .await;
+            if batch1.is_empty() && primary_offset == 0 {
+                let alt_type = if fm_type == 2 { 1 } else { 2 };
+                batch1 = self.call_app_song_list_offset(cid, alt_type, 0, 20).await;
+            }
+
+            if batch1.is_empty() && primary_offset > 0 {
+                // 说明该电台服务端曲池已达末尾，重置游标并从随机/起始位重新切片并错位重排
+                if let Ok(mut guard) = self.fm_channel_cursors.lock() {
+                    guard.insert(cid.to_string(), 1);
+                }
+                seen_for_channel.clear();
+                if let Ok(mut g) = self.seen_fm_channel_hashes.lock() {
+                    g.remove(cid);
+                }
+                let (wrap_neg1, wrap_zero) = tokio::join!(
+                    self.call_app_song_list_offset(cid, fm_type, -1, 20),
+                    self.call_app_song_list_offset(cid, fm_type, 20, 20),
+                );
+                let mut combined = wrap_neg1;
+                combined.extend(wrap_zero);
+                if !combined.is_empty() {
+                    let shift = ((cursor as usize) * 7) % combined.len();
+                    combined.rotate_left(shift);
+                    push_songs(combined, true, &seen_for_channel, &mut collected);
+                }
+            } else {
+                push_songs(batch1, false, &seen_for_channel, &mut collected);
+                if collected.len() < 20 {
+                    let next_offset = primary_offset + 20;
+                    let batch2 = self
+                        .call_app_song_list_offset(cid, fm_type, next_offset, 20)
+                        .await;
+                    if !batch2.is_empty() {
+                        if let Ok(mut guard) = self.fm_channel_cursors.lock() {
+                            guard.insert(cid.to_string(), cursor.wrapping_add(2));
                         }
+                        push_songs(batch2, false, &seen_for_channel, &mut collected);
                     }
                 }
             }
         }
 
-        // 2. 若是 "daily_vibe" (私人口味漫游)，直接联动个人随心听引擎
-        if cid == "daily_vibe" && collected.len() < 16 {
-            if let Ok(pfm) = self.fetch_personal_fm().await {
-                for s in pfm {
-                    let k = s.hash.to_lowercase();
-                    if !k.is_empty() && seen.insert(k) {
-                        collected.push(s);
-                    }
-                }
-            }
-        }
-
-        // 3. 结合电台主题关键词从精选主题歌单与搜索分页提取深度契合主题的歌曲
-        if collected.len() < 24 {
-            let kws = Self::resolve_fm_theme_keywords(cid, cid);
-            let active_kw = kws[(cursor as usize) % kws.len()];
-            let secondary_kw = kws[((cursor as usize) + 1) % kws.len()];
+        // 2. 若官方接口偶发未返回足够曲目，按电台真实名称与主题歌单进行同主题补充
+        if collected.len() < 16 {
+            let kws = Self::resolve_fm_theme_keywords(cid, &channel_name);
+            let active_kw = if kws[0] == "热歌 流行 精选" && !channel_name.is_empty() {
+                channel_name.as_str()
+            } else {
+                kws[(cursor as usize) % kws.len()]
+            };
 
             if let Ok(pls) = self.search_playlists(active_kw, 1, 6).await {
                 if !pls.is_empty() {
@@ -7794,43 +8494,37 @@ impl KugouApiService {
                         &pick_pl.id
                     };
                     if let Ok(pl_songs) = self.fetch_playlist_songs(gid).await {
-                        let skip_n = ((cursor as usize) * 8) % pl_songs.len().max(1);
-                        for s in pl_songs.into_iter().cycle().skip(skip_n).take(16) {
-                            let k = s.hash.to_lowercase();
-                            if !k.is_empty() && seen.insert(k) {
-                                collected.push(s);
-                            }
-                        }
+                        let skip_n = ((cursor as usize) * 10) % pl_songs.len().max(1);
+                        let sliced: Vec<Song> =
+                            pl_songs.into_iter().cycle().skip(skip_n).take(20).collect();
+                        push_songs(sliced, false, &seen_for_channel, &mut collected);
                     }
                 }
             }
 
-            let search_page = ((cursor % 4) + 1) as u32;
-            if let Ok(kw_songs) = self.search_songs(active_kw, search_page, 20).await {
-                for s in kw_songs {
-                    let k = s.hash.to_lowercase();
-                    if !k.is_empty() && seen.insert(k) {
-                        collected.push(s);
-                    }
-                }
-            }
-            if collected.len() < 20 && secondary_kw != active_kw {
-                if let Ok(sec_songs) = self.search_songs(secondary_kw, 1, 15).await {
-                    for s in sec_songs {
-                        let k = s.hash.to_lowercase();
-                        if !k.is_empty() && seen.insert(k) {
-                            collected.push(s);
-                        }
-                    }
+            if collected.len() < 16 {
+                let search_page = ((cursor % 5) + 1) as u32;
+                if let Ok(kw_songs) = self.search_songs(active_kw, search_page, 20).await {
+                    push_songs(kw_songs, true, &seen_for_channel, &mut collected);
                 }
             }
         }
 
         let diversified = Self::diversify_artist_order(collected)
             .into_iter()
-            .take(28)
+            .take(24)
             .collect::<Vec<_>>();
-        Ok(self.enrich_songs_privilege_lite(diversified).await)
+
+        if let Ok(mut guard) = self.seen_fm_channel_hashes.lock() {
+            let entry = guard.entry(cid.to_string()).or_default();
+            for s in &diversified {
+                if !s.hash.is_empty() {
+                    entry.insert(s.hash.to_lowercase());
+                }
+            }
+        }
+
+        Ok(self.enrich_songs_album_names_batch(diversified).await)
     }
 
     /// 22. 新建歌单 / 编辑歌单 / 删除歌单 / 收藏歌单 / 批量添加歌曲到歌单

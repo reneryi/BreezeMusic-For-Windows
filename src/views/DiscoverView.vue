@@ -709,14 +709,44 @@
             <div class="block-title-with-tabs">
               <h3 class="block-title">精选场景电台</h3>
               <span class="block-sub-date">/ 概念版全天候声学漫游频率</span>
+
+              <div class="app-sliding-tabs rank-sliding-tabs">
+                <button
+                  v-for="cat in homeFmCategoryTabs"
+                  :key="cat.id"
+                  type="button"
+                  class="app-sliding-tab-btn"
+                  :class="{ active: homeFmCategory === cat.id }"
+                  @click="switchHomeFmCategory(cat.id)"
+                >
+                  <span class="tab-label">{{ cat.label }}</span>
+                  <span
+                    class="tab-bottom-indicator"
+                    :style="{
+                      backgroundColor: cat.color,
+                      opacity: homeFmCategory === cat.id ? 1 : 0,
+                      transform: homeFmCategory === cat.id ? 'scaleX(1)' : 'scaleX(0.2)',
+                    }"
+                  ></span>
+                </button>
+              </div>
             </div>
             <div class="block-right-frameless-actions">
               <button
+                type="button"
+                class="frameless-icon-square-btn discover-refresh-icon-btn"
+                title="换一批场景电台"
+                @click="rotateHomeFmPage"
+              >
+                <PlumpIcon name="refresh" :size="20" />
+              </button>
+              <button
+                type="button"
                 class="frameless-hover-btn"
                 @click="openRadioPlaza"
               >
                 <PlumpIcon name="radio" :size="16" />
-                <span>电台广场</span>
+                <span>电台广场 ({{ store.fmChannels.length || 325 }})</span>
                 <PlumpIcon name="chevron-right" :size="15" />
               </button>
             </div>
@@ -727,7 +757,10 @@
               v-for="(ch, idx) in singleRowFmChannels"
               :key="ch.id"
               class="radio-cover-card"
-              :class="{ active: store.activeFmChannel?.id === ch.id }"
+              :class="{
+                active: store.activeFmChannel?.id === ch.id,
+                playing: isChannelActivelyPlaying(ch.id),
+              }"
               @click="playFmChannelFromHome(ch)"
             >
               <div class="rc-cover-stage">
@@ -736,28 +769,34 @@
                   :src="getStationCover(ch, idx)"
                   class="rc-cover-img"
                   loading="lazy"
+                  draggable="false"
                   alt=""
                 />
                 <div v-else class="rc-cover-fallback">
                   <PlumpIcon name="radio" :size="28" color="#fff" />
                 </div>
                 <div class="rc-cover-shade"></div>
-                <span class="rc-freq-tag">{{ ch.freqLabel }}</span>
+                <div class="rc-top-badges">
+                  <span class="rc-freq-tag">{{ ch.freqLabel }}</span>
+                  <span class="rc-cat-tag">{{ ch.category || "精选" }}</span>
+                </div>
+                <span class="rc-listeners-tag">{{ ch.listenerCountText }}</span>
                 <button
+                  type="button"
                   class="rc-play-btn"
                   title="立即调频播放"
-                  @click.stop="playFmChannelFromHome(ch)"
+                  @click.stop="toggleOrPlayFmChannel(ch)"
                 >
                   <PlumpIcon
-                    :name="store.activeFmChannel?.id === ch.id && store.isPlaying ? 'pause' : 'play'"
+                    :name="isChannelActivelyPlaying(ch.id) ? 'pause' : 'play'"
                     :size="15"
                     color="#fff"
                   />
                 </button>
               </div>
               <div class="rc-meta">
-                <div class="rc-name">{{ ch.name }}</div>
-                <div class="rc-desc">{{ ch.description }}</div>
+                <div class="rc-name" :title="ch.name">{{ ch.name }}</div>
+                <div class="rc-desc" :title="ch.description">{{ ch.description }}</div>
               </div>
             </div>
           </div>
@@ -1268,41 +1307,61 @@
       </div>
     </div>
 
-    <!-- ==================== 二级页面 C：电台广场 ==================== -->
-    <div v-else-if="store.discoverSubView === 'radio'" class="discover-subpage radio-plaza-page">
-      <div class="subpage-frameless-header">
+    <!-- ==================== 二级页面 C：电台广场（现代声学调频工作台 + 12维全量分类矩阵 + 实时漫游曲库） ==================== -->
+    <div v-else-if="store.discoverSubView === 'radio'" class="discover-subpage frameless-subpage radio-plaza-page">
+      <!-- 1. 顶部无框导航与全局搜索工具栏 -->
+      <div class="subpage-frameless-header rp-modern-topbar">
         <div class="sfh-left">
-          <button class="frameless-hover-btn" @click="store.discoverSubView = 'home'">
+          <button
+            type="button"
+            class="frameless-hover-btn"
+            @click="store.discoverSubView = 'home'"
+          >
             <PlumpIcon name="back" :size="17" />
             <span>返回发现</span>
           </button>
-          <h2 class="sfh-title">电台广场</h2>
 
-          <div class="app-sliding-tabs">
-            <button
-              v-for="cat in radioPlazaCategories"
-              :key="cat.id"
-              class="app-sliding-tab-btn"
-              :class="{ active: store.selectedFmCategory === cat.id }"
-              @click="store.selectedFmCategory = cat.id"
-            >
-              <span class="tab-label">{{ cat.label }}</span>
-              <span
-                class="tab-bottom-indicator"
-                :style="{
-                  backgroundColor: cat.color,
-                  opacity: store.selectedFmCategory === cat.id ? 1 : 0,
-                  transform: store.selectedFmCategory === cat.id ? 'scaleX(1)' : 'scaleX(0.2)',
-                }"
-              ></span>
-            </button>
+          <div class="rp-topbar-title-group">
+            <h2 class="sfh-title">电台广场</h2>
+            <span class="rp-total-count-pill">
+              共 {{ store.fmChannels.length }} 个官方调频
+            </span>
           </div>
         </div>
 
         <div class="sfh-right">
+          <div class="rp-station-search-box">
+            <PlumpIcon name="search" :size="15" />
+            <input
+              v-model="radioPlazaSearchKeyword"
+              type="text"
+              placeholder="搜索电台名称 / 场景 / 心情 / 曲风..."
+            />
+            <button
+              v-if="radioPlazaSearchKeyword"
+              type="button"
+              class="clear-inline-btn"
+              @click="radioPlazaSearchKeyword = ''"
+            >
+              ×
+            </button>
+          </div>
+
           <button
+            type="button"
+            class="frameless-hover-btn"
+            title="随机探索一个主题电台并立即播放"
+            @click="pickRandomFmChannel"
+          >
+            <PlumpIcon name="shuffle" :size="15" />
+            <span>随机漫游</span>
+          </button>
+
+          <button
+            type="button"
             class="frameless-hover-btn"
             :disabled="store.isLoadingFmStation"
+            title="为当前电台换一批全新主题歌曲"
             @click="refreshCurrentRadioStation"
           >
             <PlumpIcon
@@ -1310,11 +1369,14 @@
               :size="16"
               :class="{ 'is-spinning': store.isLoadingFmStation }"
             />
-            <span>换一批频率曲目</span>
+            <span>换一批曲目</span>
           </button>
+
           <button
+            type="button"
             class="frameless-hover-btn primary-tint"
             :disabled="store.isLoadingFmStation"
+            title="为当前电台追加 20 首同主题新歌"
             @click="appendCurrentRadioStation"
           >
             <PlumpIcon name="plus" :size="16" />
@@ -1323,95 +1385,351 @@
         </div>
       </div>
 
-      <div class="radio-plaza-hero-split">
-        <div class="rp-now-tuning-deck">
-          <div class="rp-deck-vinyl-wrap">
-            <div class="rp-deck-vinyl" :class="{ spinning: store.isPlaying }"></div>
+      <!-- 2. 现代横向「正在调频」主控横幅舞台（摒弃旧版左侧冗长紫框，采用高密度声学横幅） -->
+      <div class="rp-tuner-console-banner">
+        <div
+          v-if="activePlazaBanner"
+          class="rp-console-bg-art"
+          :style="{ backgroundImage: `url(${activePlazaBanner})` }"
+        ></div>
+
+        <div class="rp-console-left">
+          <div class="rp-console-cover-wrap" @click="toggleOrPlayActiveStation">
+            <div
+              class="rp-console-vinyl-disc"
+              :class="{ spinning: isChannelActivelyPlaying(store.activeFmChannel?.id || '') }"
+            ></div>
             <img
               v-if="activePlazaCover"
               :src="activePlazaCover"
-              class="rp-deck-cover"
+              class="rp-console-cover-img"
+              draggable="false"
               alt=""
             />
-          </div>
-          <div class="rp-deck-info">
-            <div class="rp-freq-pill">
-              <span class="live-dot"></span>
-              <span>{{ store.activeFmChannel?.freqLabel || "FM 98.6 MHz" }} · 正在调频广播</span>
+            <div v-else class="rp-console-cover-fallback">
+              <PlumpIcon name="radio" :size="36" color="#fff" />
             </div>
-            <h3 class="rp-station-title">{{ store.activeFmChannel?.name || "流行风向标" }}</h3>
-            <p class="rp-station-desc">
-              {{ store.activeFmChannel?.description || "全天候智能音乐伴听 · 热歌与品味共振" }}
+            <div class="rp-console-cover-play">
+              <PlumpIcon
+                :name="isChannelActivelyPlaying(store.activeFmChannel?.id || '') ? 'pause' : 'play'"
+                :size="20"
+                color="#fff"
+              />
+            </div>
+          </div>
+
+          <div class="rp-console-meta">
+            <div class="rp-console-badges">
+              <span class="rp-console-pill live">
+                <span class="live-dot"></span>
+                <span>{{ store.activeFmChannel?.freqLabel || "FM 98.6 MHz" }}</span>
+              </span>
+              <span class="rp-console-pill">
+                {{ store.activeFmChannel?.category || "精选电台" }}
+              </span>
+              <span class="rp-console-pill">
+                {{ store.activeFmChannel?.listenerCountText || "52.4k 正在调频" }}
+              </span>
+              <span v-if="store.isLoadingFmStation" class="rp-console-pill syncing">
+                <PlumpIcon name="refresh" :size="12" class="is-spinning" />
+                <span>正在调频换曲...</span>
+              </span>
+            </div>
+
+            <h1 class="rp-console-title">
+              {{ store.activeFmChannel?.name || "咖啡厅" }}
+            </h1>
+            <p class="rp-console-desc">
+              {{ store.activeFmChannel?.description || "概念版全天候声学漫游频率" }}
             </p>
-            <div class="rp-deck-actions">
-              <button class="frameless-hover-btn primary-tint" @click="playActiveStationAll">
-                <PlumpIcon name="play" :size="16" />
-                <span>立即播放本台 ({{ store.fmStationSongs.length }})</span>
+
+            <div class="rp-console-actions">
+              <button
+                type="button"
+                class="rp-btn-primary"
+                :disabled="store.fmStationSongs.length === 0 && store.isLoadingFmStation"
+                @click="toggleOrPlayActiveStation"
+              >
+                <PlumpIcon
+                  :name="isChannelActivelyPlaying(store.activeFmChannel?.id || '') ? 'pause' : 'play'"
+                  :size="16"
+                  color="#fff"
+                />
+                <span>
+                  {{
+                    isChannelActivelyPlaying(store.activeFmChannel?.id || "")
+                      ? "暂停本台播放"
+                      : `立即播放本台 (${store.fmStationSongs.length})`
+                  }}
+                </span>
               </button>
-              <button class="frameless-hover-btn" @click="pickRandomFmChannel">
-                <PlumpIcon name="shuffle" :size="16" />
-                <span>随机探索电台</span>
+
+              <button
+                type="button"
+                class="rp-btn-secondary"
+                :disabled="store.isLoadingFmStation"
+                @click="refreshCurrentRadioStation"
+              >
+                <PlumpIcon
+                  name="refresh"
+                  :size="15"
+                  :class="{ 'is-spinning': store.isLoadingFmStation }"
+                />
+                <span>换一批曲目</span>
+              </button>
+
+              <button
+                type="button"
+                class="rp-btn-secondary"
+                :disabled="store.isLoadingFmStation"
+                @click="appendCurrentRadioStation"
+              >
+                <PlumpIcon name="plus" :size="15" />
+                <span>+20首续杯</span>
+              </button>
+
+              <button
+                type="button"
+                class="rp-btn-secondary"
+                @click="scrollToRadioStreamSection"
+              >
+                <PlumpIcon name="music" :size="15" />
+                <span>查看电台曲目 ({{ store.fmStationSongs.length }})</span>
               </button>
             </div>
           </div>
         </div>
 
-        <div class="rp-stations-wall">
-          <div
-            v-for="(ch, idx) in filteredPlazaChannels"
-            :key="ch.id"
-            class="rp-station-tile"
-            :class="{ active: store.activeFmChannel?.id === ch.id }"
-            @click="selectAndPlayPlazaChannel(ch)"
-          >
-            <div class="rp-tile-cover-wrap">
-              <img
-                v-if="getStationCover(ch, idx)"
-                :src="getStationCover(ch, idx)"
-                class="rp-tile-cover"
-                loading="lazy"
-                alt=""
-              />
-              <span class="rp-tile-freq">{{ ch.freqLabel }}</span>
-              <button
-                class="rp-tile-play"
-                @click.stop="selectAndPlayPlazaChannel(ch, true)"
-              >
-                <PlumpIcon
-                  :name="store.activeFmChannel?.id === ch.id && store.isPlaying ? 'pause' : 'play'"
-                  :size="15"
-                  color="#fff"
-                />
-              </button>
+        <!-- 控制台右侧：当前电台实时热播曲目快览 -->
+        <div class="rp-console-right">
+          <div class="rp-preview-head">
+            <span class="rp-preview-label">当前频率实时曲单预览</span>
+            <button
+              type="button"
+              class="rp-preview-more-btn"
+              @click="scrollToRadioStreamSection"
+            >
+              <span>全部 {{ store.fmStationSongs.length }} 首</span>
+              <PlumpIcon name="chevron-right" :size="13" />
+            </button>
+          </div>
+
+          <div v-if="store.fmStationSongs.length > 0" class="rp-preview-list">
+            <div
+              v-for="(song, pIdx) in store.fmStationSongs.slice(0, 3)"
+              :key="song.hash + '_prev_' + pIdx"
+              class="rp-preview-track"
+              :class="{ active: store.currentSong?.hash === song.hash }"
+              @click="store.playSongFromList(song, store.fmStationSongs, `FM · ${store.activeFmChannel?.name || '电台'}`)"
+            >
+              <img :src="song.coverUrl" class="rp-preview-cover" loading="lazy" alt="" />
+              <div class="rp-preview-info">
+                <div class="rp-preview-song-title">{{ song.title }}</div>
+                <div class="rp-preview-song-artist">
+                  {{ song.artist }}
+                  <template v-if="song.album"> · {{ song.album }}</template>
+                </div>
+              </div>
+              <span class="rp-preview-dur">{{ formatDuration(song) }}</span>
             </div>
-            <div class="rp-tile-meta">
-              <div class="rp-tile-name">{{ ch.name }}</div>
-              <div class="rp-tile-listeners">{{ ch.listenerCountText }}</div>
-            </div>
+          </div>
+          <div v-else class="rp-preview-empty">
+            <PlumpIcon name="refresh" :size="16" class="is-spinning" />
+            <span>正在调谐当前频率曲目...</span>
           </div>
         </div>
       </div>
 
-      <div class="rp-stream-section">
+      <!-- 3. 全量电台 13 维分类胶囊导航栏（含每类精确数量） -->
+      <div class="rp-category-pills-bar">
+        <button
+          v-for="cat in radioPlazaCategoriesWithCount"
+          :key="cat.id"
+          type="button"
+          class="rp-category-pill"
+          :class="{ active: store.selectedFmCategory === cat.id }"
+          @click="selectRadioPlazaCategory(cat.id)"
+        >
+          <span class="rp-cat-name">{{ cat.label }}</span>
+          <span class="rp-cat-count">{{ cat.count }}</span>
+        </button>
+      </div>
+
+      <!-- 4. 现代电台卡片矩阵（1:1 真实官方方形封面，不裁切人像与标题，清晰大气） -->
+      <div v-if="displayedPlazaChannels.length === 0" class="ns-empty-hint">
+        <span>未找到匹配的电台，请尝试清空搜索词或切换分类</span>
+      </div>
+      <div v-else class="rp-stations-section">
+        <div class="rp-modern-stations-grid">
+          <div
+            v-for="(ch, idx) in displayedPlazaChannels"
+            :key="ch.id"
+            class="rp-modern-station-card"
+            :class="{
+              active: store.activeFmChannel?.id === ch.id,
+              playing: isChannelActivelyPlaying(ch.id),
+            }"
+            @click="selectAndPlayPlazaChannel(ch, true)"
+          >
+            <div class="rp-msc-cover-box">
+              <img
+                v-if="getStationCover(ch, idx)"
+                :src="getStationCover(ch, idx)"
+                class="rp-msc-cover-img"
+                loading="lazy"
+                draggable="false"
+                alt=""
+              />
+              <div v-else class="rp-msc-cover-fallback">
+                <PlumpIcon name="radio" :size="24" color="#fff" />
+              </div>
+              <button
+                type="button"
+                class="rp-msc-play-overlay"
+                title="点击播放该电台"
+                @click.stop="toggleOrPlayFmChannel(ch)"
+              >
+                <PlumpIcon
+                  :name="isChannelActivelyPlaying(ch.id) ? 'pause' : 'play'"
+                  :size="16"
+                  color="#fff"
+                />
+              </button>
+            </div>
+
+            <div class="rp-msc-body">
+              <div class="rp-msc-top-row">
+                <h4 class="rp-msc-title" :title="ch.name">{{ ch.name }}</h4>
+                <span v-if="isChannelActivelyPlaying(ch.id)" class="mini-eq-bars">
+                  <i></i><i></i><i></i>
+                </span>
+              </div>
+
+              <p class="rp-msc-desc" :title="ch.description">
+                {{ ch.description }}
+              </p>
+
+              <div class="rp-msc-foot-row">
+                <span class="rp-msc-cat-badge">{{ ch.category || "精选" }}</span>
+                <span class="rp-msc-freq">{{ ch.freqLabel }}</span>
+                <span class="rp-msc-listeners">{{ ch.listenerCountText }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="filteredPlazaChannels.length > plazaVisibleLimit" class="rp-expand-more-bar">
+          <button
+            type="button"
+            class="frameless-hover-btn primary-tint"
+            @click="isPlazaExpandedAll = !isPlazaExpandedAll"
+          >
+            <span>
+              {{
+                isPlazaExpandedAll
+                  ? "收起部分电台"
+                  : `展开全部 ${filteredPlazaChannels.length} 个电台（还有 ${filteredPlazaChannels.length - displayedPlazaChannels.length} 个）`
+              }}
+            </span>
+            <PlumpIcon
+              :name="isPlazaExpandedAll ? 'chevron-up' : 'chevron-down'"
+              :size="15"
+            />
+          </button>
+        </div>
+      </div>
+
+      <!-- 5. 当前电台实时漫游曲库列表 -->
+      <div id="rp-live-stream-anchor" class="rp-stream-section">
         <div class="frameless-sublist-toolbar">
           <div class="frameless-sublist-info">
             <span class="sublist-badge">LIVE STREAM</span>
             <span class="sublist-desc">
-              「{{ store.activeFmChannel?.name || "精选电台" }}」实时漫游曲库 ({{ store.fmStationSongs.length }} 首)
+              「{{ store.activeFmChannel?.name || "精选电台" }}」实时漫游曲库 ({{ filteredRadioStationSongs.length }} 首)
             </span>
+          </div>
+
+          <div class="rp-stream-right-tools">
+            <div class="frameless-sublist-search">
+              <PlumpIcon name="search" :size="14" />
+              <input
+                v-model="radioSongSearchKeyword"
+                type="text"
+                placeholder="筛选本台歌曲 / 歌手 / 专辑..."
+              />
+              <button
+                v-if="radioSongSearchKeyword"
+                type="button"
+                class="clear-inline-btn"
+                @click="radioSongSearchKeyword = ''"
+              >
+                ×
+              </button>
+            </div>
+
+            <button
+              v-if="isCurrentSongInList(store.fmStationSongs)"
+              type="button"
+              class="frameless-hover-btn"
+              @click="scrollToCurrentPlayingRadioSong"
+            >
+              <PlumpIcon name="locate" :size="15" />
+              <span>定位在播</span>
+            </button>
+
+            <button
+              type="button"
+              class="frameless-hover-btn"
+              :disabled="store.isLoadingFmStation"
+              @click="refreshCurrentRadioStation"
+            >
+              <PlumpIcon
+                name="refresh"
+                :size="15"
+                :class="{ 'is-spinning': store.isLoadingFmStation }"
+              />
+              <span>换一批</span>
+            </button>
+
+            <button
+              type="button"
+              class="frameless-hover-btn primary-tint"
+              :disabled="filteredRadioStationSongs.length === 0"
+              @click="playActiveStationAll"
+            >
+              <PlumpIcon name="play" :size="15" />
+              <span>播放全部</span>
+            </button>
           </div>
         </div>
 
-        <div class="frameless-songs-grid-2col">
+        <div v-if="store.isLoadingFmStation && store.fmStationSongs.length === 0" class="ns-empty-hint">
+          <PlumpIcon name="refresh" :size="20" class="is-spinning" />
+          <span>正在从「{{ store.activeFmChannel?.name || "电台" }}」调频获取主题曲目...</span>
+        </div>
+
+        <div v-else-if="filteredRadioStationSongs.length === 0" class="ns-empty-hint">
+          <span>暂无匹配曲目，可清空筛选词或点击「换一批」获取新曲</span>
+        </div>
+
+        <div v-else class="frameless-songs-grid-2col">
           <div
-            v-for="(song, idx) in store.fmStationSongs"
+            v-for="(song, idx) in filteredRadioStationSongs"
             :key="song.hash + '_' + idx"
+            :data-radio-song-hash="song.hash"
             class="frameless-song-row"
             :class="{ active: store.currentSong?.hash === song.hash }"
-            @click="store.playSongFromList(song, store.fmStationSongs)"
+            @click="store.playSongFromList(song, store.fmStationSongs, `FM · ${store.activeFmChannel?.name || '电台'}`)"
             @contextmenu.prevent="store.openSongContextMenu($event, song, store.fmStationSongs)"
           >
-            <span class="fs-index">{{ String(idx + 1).padStart(2, "0") }}</span>
+            <span class="fs-index">
+              <template v-if="store.currentSong?.hash === song.hash && store.isPlaying">
+                <span class="mini-eq-bars"><i></i><i></i><i></i></span>
+              </template>
+              <template v-else>
+                {{ String(idx + 1).padStart(2, "0") }}
+              </template>
+            </span>
             <div class="fs-cover-wrap">
               <img :src="song.coverUrl" class="fs-cover" loading="lazy" alt="" />
               <div class="fs-cover-play">
@@ -1427,16 +1745,34 @@
                 <span class="fs-title">{{ song.title }}</span>
                 <span v-if="song.hasHiRes || song.isHiRes" class="fs-badge hires">Hi-Res</span>
                 <span v-else-if="song.hasSq || song.isLossless" class="fs-badge sq">SQ</span>
+                <span v-if="song.isVip" class="fs-badge vip">VIP</span>
               </div>
               <div class="fs-sub-line">
-                <span>{{ song.artist }}</span>
-                <span v-if="song.album" class="fs-album">· {{ song.album }}</span>
+                <button
+                  type="button"
+                  class="inline-meta-btn"
+                  title="点击进入歌手独立主页"
+                  @click.stop="store.navigateToSongArtist(song)"
+                >
+                  {{ song.artist }}
+                </button>
+                <button
+                  v-if="song.album"
+                  type="button"
+                  class="inline-meta-btn fs-album"
+                  title="点击进入专辑独立页面"
+                  @click.stop="store.navigateToSongAlbum(song)"
+                >
+                  · {{ song.album }}
+                </button>
               </div>
             </div>
             <div class="fs-actions" @click.stop>
               <button
+                type="button"
                 class="fs-icon-btn"
                 :class="{ liked: store.isSongLiked(song.hash) }"
+                title="喜欢"
                 @click="store.toggleFavoriteSong(song)"
               >
                 <PlumpIcon
@@ -1444,7 +1780,20 @@
                   :size="16"
                 />
               </button>
-              <button class="fs-icon-btn" @click="store.addToPlaylistModalSong = song">
+              <button
+                type="button"
+                class="fs-icon-btn"
+                title="查看评论"
+                @click="store.openCommentsModal(song)"
+              >
+                <PlumpIcon name="comment" :size="15" />
+              </button>
+              <button
+                type="button"
+                class="fs-icon-btn"
+                title="添加到歌单"
+                @click="store.addToPlaylistModalSong = song"
+              >
                 <PlumpIcon name="plus" :size="16" />
               </button>
             </div>
@@ -2181,24 +2530,68 @@ function shufflePlayActiveRank() {
 }
 
 // ==================== 精选场景电台 & 电台广场 ====================
-const singleRowFmChannels = computed(() => store.fmChannels.slice(0, 6));
+const homeFmCategory = ref<string>("推荐");
+const homeFmPage = ref<number>(0);
+
+const homeFmCategoryTabs = [
+  { id: "推荐", label: "推荐", color: "#ff6b6b" },
+  { id: "场景", label: "场景", color: "#15c493" },
+  { id: "心情", label: "心情", color: "#f5a623" },
+  { id: "风格", label: "风格", color: "#8e75ff" },
+  { id: "语言", label: "语言", color: "#2b8cff" },
+  { id: "国风", label: "国风", color: "#00c4a7" },
+];
+
+const homeCategoryFilteredFmChannels = computed(() => {
+  const cat = homeFmCategory.value;
+  if (!cat || cat === "全部") return store.fmChannels;
+  if (cat === "推荐") {
+    const rec = store.fmChannels.filter((c) => c.isRecommended || c.category === "推荐");
+    return rec.length >= 6 ? rec : store.fmChannels;
+  }
+  const matched = store.fmChannels.filter((c) => c.category === cat || c.category.includes(cat));
+  return matched.length > 0 ? matched : store.fmChannels;
+});
+
+const singleRowFmChannels = computed(() => {
+  const pool = homeCategoryFilteredFmChannels.value;
+  if (pool.length <= 6) return pool;
+  const pageSize = 6;
+  const totalPages = Math.max(1, Math.ceil(pool.length / pageSize));
+  const page = homeFmPage.value % totalPages;
+  const start = page * pageSize;
+  const slice = pool.slice(start, start + pageSize);
+  if (slice.length < pageSize) {
+    return [...slice, ...pool.slice(0, pageSize - slice.length)];
+  }
+  return slice;
+});
+
+function switchHomeFmCategory(catId: string) {
+  homeFmCategory.value = catId;
+  homeFmPage.value = 0;
+}
+
+function rotateHomeFmPage() {
+  homeFmPage.value += 1;
+}
 
 const radioCoverFallbackPool = computed(() => {
   const pool: string[] = [];
+  for (const ch of store.fmChannels) {
+    if (ch.coverUrl && !pool.includes(ch.coverUrl)) pool.push(ch.coverUrl);
+  }
   for (const s of store.newSongs) {
     if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
   }
   for (const s of store.recommendSongs) {
     if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
   }
-  for (const s of store.personalFmSongs) {
-    if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
-  }
   return pool;
 });
 
 function getStationCover(ch: FmChannel, idx: number): string {
-  if (ch.coverUrl && !ch.coverUrl.includes("20210519")) {
+  if (ch.coverUrl && ch.coverUrl.trim().length > 0) {
     return ch.coverUrl;
   }
   const pool = radioCoverFallbackPool.value;
@@ -2208,9 +2601,44 @@ function getStationCover(ch: FmChannel, idx: number): string {
   return store.currentSong?.coverUrl || "";
 }
 
-function playFmChannelFromHome(ch: FmChannel) {
+function isChannelActivelyPlaying(channelId: string): boolean {
+  if (!store.isPlaying || !store.currentSong || !channelId) return false;
+  if (store.activeFmChannel?.id !== channelId) return false;
+  return store.fmStationSongs.some((s) => s.hash === store.currentSong?.hash);
+}
+
+function toggleOrPlayFmChannel(ch: FmChannel) {
+  if (store.activeFmChannel?.id === ch.id && store.fmStationSongs.length > 0) {
+    const isPlayingThisStation = store.fmStationSongs.some(
+      (s) => s.hash === store.currentSong?.hash
+    );
+    if (isPlayingThisStation) {
+      store.togglePlayPause();
+      return;
+    }
+    store.playSongFromList(
+      store.fmStationSongs[0],
+      store.fmStationSongs,
+      `FM · ${ch.name}`
+    );
+    return;
+  }
   store.activeFmChannel = ch;
   store.loadFmStationSongs(ch.id, false, true);
+}
+
+function playFmChannelFromHome(ch: FmChannel) {
+  toggleOrPlayFmChannel(ch);
+}
+
+function toggleOrPlayActiveStation() {
+  if (!store.activeFmChannel) {
+    if (store.fmChannels.length > 0) {
+      toggleOrPlayFmChannel(store.fmChannels[0]);
+    }
+    return;
+  }
+  toggleOrPlayFmChannel(store.activeFmChannel);
 }
 
 function openRadioPlaza() {
@@ -2220,23 +2648,96 @@ function openRadioPlaza() {
   if (!store.activeFmChannel && store.fmChannels.length > 0) {
     store.activeFmChannel = store.fmChannels[0];
     store.loadFmStationSongs(store.fmChannels[0].id, false, false);
+  } else if (store.activeFmChannel && store.fmStationSongs.length === 0 && !store.isLoadingFmStation) {
+    store.loadFmStationSongs(store.activeFmChannel.id, false, false);
   }
 }
 
-const radioPlazaCategories = [
-  { id: "全部", label: "全部频率", color: "#2b8cff" },
-  { id: "推荐电台", label: "推荐", color: "#ff6b6b" },
-  { id: "场景", label: "场景", color: "#15c493" },
-  { id: "心情", label: "心情", color: "#f5a623" },
-  { id: "曲风", label: "曲风", color: "#8e75ff" },
-  { id: "年代语种", label: "年代语种", color: "#00c4a7" },
+const radioPlazaSearchKeyword = ref("");
+const radioSongSearchKeyword = ref("");
+const isPlazaExpandedAll = ref(false);
+const plazaVisibleLimit = 24;
+
+const baseRadioPlazaCategories = [
+  { id: "全部", label: "全部频率" },
+  { id: "推荐", label: "推荐" },
+  { id: "场景", label: "场景" },
+  { id: "心情", label: "心情" },
+  { id: "风格", label: "风格" },
+  { id: "语言", label: "语言" },
+  { id: "主题", label: "主题" },
+  { id: "DJ", label: "DJ" },
+  { id: "运动", label: "运动" },
+  { id: "国风", label: "国风" },
+  { id: "乐器", label: "乐器" },
+  { id: "人群综艺", label: "人群综艺" },
+  { id: "儿童", label: "儿童" },
 ];
 
+function matchChannelToCategory(ch: FmChannel, catId: string): boolean {
+  if (!catId || catId === "全部") return true;
+  if (catId === "推荐" || catId === "推荐电台") {
+    return Boolean(ch.isRecommended) || ch.category === "推荐";
+  }
+  return ch.category === catId || ch.category.includes(catId) || catId.includes(ch.category);
+}
+
+const radioPlazaCategoriesWithCount = computed(() => {
+  const all = store.fmChannels;
+  return baseRadioPlazaCategories
+    .map((cat) => {
+      const count =
+        cat.id === "全部"
+          ? all.length
+          : all.filter((c) => matchChannelToCategory(c, cat.id)).length;
+      return {
+        ...cat,
+        count,
+      };
+    })
+    .filter((cat) => cat.id === "全部" || cat.count > 0);
+});
+
+function selectRadioPlazaCategory(catId: string) {
+  store.selectedFmCategory = catId;
+  isPlazaExpandedAll.value = false;
+}
+
 const filteredPlazaChannels = computed(() => {
-  const cat = store.selectedFmCategory;
-  if (!cat || cat === "全部") return store.fmChannels;
-  const list = store.fmChannels.filter((c) => c.category.includes(cat) || cat.includes(c.category));
-  return list.length > 0 ? list : store.fmChannels;
+  const cat = store.selectedFmCategory || "全部";
+  const kw = radioPlazaSearchKeyword.value.trim().toLowerCase();
+  let list = store.fmChannels;
+
+  if (cat && cat !== "全部") {
+    const byCat = list.filter((c) => matchChannelToCategory(c, cat));
+    if (byCat.length > 0) {
+      list = byCat;
+    }
+  }
+
+  if (kw) {
+    list = list.filter(
+      (c) =>
+        c.name.toLowerCase().includes(kw) ||
+        c.category.toLowerCase().includes(kw) ||
+        c.description.toLowerCase().includes(kw) ||
+        c.freqLabel.toLowerCase().includes(kw)
+    );
+  }
+
+  return list;
+});
+
+const displayedPlazaChannels = computed(() => {
+  const list = filteredPlazaChannels.value;
+  if (isPlazaExpandedAll.value || radioPlazaSearchKeyword.value.trim().length > 0) {
+    return list;
+  }
+  const cat = store.selectedFmCategory || "全部";
+  if (cat !== "全部" && list.length <= 36) {
+    return list;
+  }
+  return list.slice(0, plazaVisibleLimit);
 });
 
 const activePlazaCover = computed(() => {
@@ -2247,34 +2748,75 @@ const activePlazaCover = computed(() => {
   return store.fmStationSongs[0]?.coverUrl || store.currentSong?.coverUrl || "";
 });
 
+const activePlazaBanner = computed(() => {
+  if (store.activeFmChannel?.bannerUrl) {
+    return store.activeFmChannel.bannerUrl;
+  }
+  return activePlazaCover.value;
+});
+
+const filteredRadioStationSongs = computed<Song[]>(() => {
+  const kw = radioSongSearchKeyword.value.trim().toLowerCase();
+  if (!kw) return store.fmStationSongs;
+  return store.fmStationSongs.filter(
+    (song) =>
+      song.title.toLowerCase().includes(kw) ||
+      song.artist.toLowerCase().includes(kw) ||
+      (song.album && song.album.toLowerCase().includes(kw))
+  );
+});
+
 function selectAndPlayPlazaChannel(ch: FmChannel, autoPlay = true) {
   store.activeFmChannel = ch;
+  radioSongSearchKeyword.value = "";
   store.loadFmStationSongs(ch.id, false, autoPlay);
 }
 
 function refreshCurrentRadioStation() {
-  const cid = store.activeFmChannel?.id || store.fmChannels[0]?.id || "hot";
+  const cid = store.activeFmChannel?.id || store.fmChannels[0]?.id || "9";
   store.loadFmStationSongs(cid, false, false);
 }
 
 function appendCurrentRadioStation() {
-  const cid = store.activeFmChannel?.id || store.fmChannels[0]?.id || "hot";
+  const cid = store.activeFmChannel?.id || store.fmChannels[0]?.id || "9";
   store.loadFmStationSongs(cid, true, false);
 }
 
 function playActiveStationAll() {
   if (store.fmStationSongs.length > 0) {
-    store.playSongFromList(store.fmStationSongs[0], store.fmStationSongs);
+    store.playSongFromList(
+      store.fmStationSongs[0],
+      store.fmStationSongs,
+      `FM · ${store.activeFmChannel?.name || "电台"}`
+    );
   } else if (store.activeFmChannel) {
     store.loadFmStationSongs(store.activeFmChannel.id, false, true);
   }
 }
 
 function pickRandomFmChannel() {
-  if (store.fmChannels.length === 0) return;
-  const idx = Math.floor(Math.random() * store.fmChannels.length);
-  const picked = store.fmChannels[idx];
-  selectAndPlayPlazaChannel(picked, true);
+  const pool = filteredPlazaChannels.value.length > 1 ? filteredPlazaChannels.value : store.fmChannels;
+  if (pool.length === 0) return;
+  const currentId = store.activeFmChannel?.id;
+  const candidates = pool.filter((c) => c.id !== currentId);
+  const targetPool = candidates.length > 0 ? candidates : pool;
+  const idx = Math.floor(Math.random() * targetPool.length);
+  selectAndPlayPlazaChannel(targetPool[idx], true);
+}
+
+function scrollToRadioStreamSection() {
+  const el = document.getElementById("rp-live-stream-anchor");
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+function scrollToCurrentPlayingRadioSong() {
+  if (!store.currentSong) return;
+  const el = document.querySelector(`[data-radio-song-hash="${store.currentSong.hash}"]`);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
 }
 </script>
 

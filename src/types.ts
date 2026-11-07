@@ -371,6 +371,9 @@ export interface FmChannel {
   fmType: number;
   listenerCountText: string;
   freqLabel: string;
+  bannerUrl?: string;
+  isRecommended?: boolean;
+  sampleSong?: string;
 }
 
 export interface FollowedArtist {

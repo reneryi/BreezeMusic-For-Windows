@@ -7810,7 +7810,7 @@ body {
 .radio-single-row-corridor {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 16px;
+  gap: 18px;
 }
 
 @media (max-width: 1280px) {
@@ -7822,7 +7822,7 @@ body {
 .radio-cover-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
   min-width: 0;
   transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
@@ -7835,17 +7835,43 @@ body {
 .rc-cover-stage {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 1 / 1;
   border-radius: 16px;
   overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: var(--shadow-soft);
+  transition: border-color 0.22s ease, box-shadow 0.22s ease;
+}
+
+.scheme-watercolor_light .rc-cover-stage,
+.scheme-light .rc-cover-stage {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.08);
+}
+
+.radio-cover-card.active .rc-cover-stage,
+.radio-cover-card.is-active-station .rc-cover-stage {
+  border-color: var(--primary);
+  box-shadow: 0 10px 26px rgba(43, 140, 255, 0.24);
 }
 
 .rc-cover-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.36s ease;
+  transition: transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.rc-cover-fallback,
+.rp-console-cover-fallback,
+.rp-msc-cover-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1b3b7a, #3b267a);
 }
 
 .radio-cover-card:hover .rc-cover-img {
@@ -7855,44 +7881,102 @@ body {
 .rc-cover-shade {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.36) 0%, transparent 45%, rgba(0, 0, 0, 0.52) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(8, 12, 22, 0.42) 0%,
+    rgba(8, 12, 22, 0.02) 38%,
+    rgba(8, 12, 22, 0.06) 62%,
+    rgba(8, 12, 22, 0.68) 100%
+  );
+  pointer-events: none;
+}
+
+.rc-top-badges {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  pointer-events: none;
 }
 
 .rc-freq-tag {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  padding: 2.5px 8px;
-  border-radius: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
   background: rgba(10, 16, 28, 0.72);
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
   color: #ffffff;
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 800;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.rc-cat-tag {
+  padding: 2.5px 8px;
+  border-radius: 999px;
+  background: rgba(43, 140, 255, 0.82);
+  backdrop-filter: blur(8px);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.rc-bottom-overlay {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rc-listeners-tag {
+  position: absolute;
+  left: 10px;
+  bottom: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.65);
+  pointer-events: none;
 }
 
 .rc-play-btn {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
-  width: 34px;
-  height: 34px;
+  right: 10px;
+  bottom: 10px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.28);
-  background: rgba(12, 18, 30, 0.78);
+  background: rgba(12, 18, 30, 0.82);
   backdrop-filter: blur(8px);
   color: #ffffff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-  transition: transform 0.18s ease, background 0.18s ease;
+  flex-shrink: 0;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.38);
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
 }
 
-.rc-play-btn:hover {
-  transform: scale(1.1);
+.rc-play-btn:hover,
+.radio-cover-card.playing .rc-play-btn,
+.radio-cover-card.is-playing-station .rc-play-btn {
+  transform: scale(1.08);
   background: var(--primary);
+  border-color: transparent;
 }
 
 .rc-meta {
@@ -7903,16 +7987,23 @@ body {
 }
 
 .rc-name {
-  font-size: 16.5px;
+  font-size: 15.5px;
   font-weight: 800;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: color 0.18s ease;
+}
+
+.radio-cover-card:hover .rc-name,
+.radio-cover-card.active .rc-name,
+.radio-cover-card.is-active-station .rc-name {
+  color: var(--primary);
 }
 
 .rc-desc {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
   white-space: nowrap;
@@ -7920,176 +8011,944 @@ body {
   text-overflow: ellipsis;
 }
 
-.radio-plaza-hero-split {
-  display: grid;
-  grid-template-columns: 380px 1fr;
-  gap: 22px;
-  margin-bottom: 26px;
+/* ==================== 电台广场顶栏与搜索框 ==================== */
+.rp-modern-topbar {
+  padding-bottom: 14px;
 }
 
-@media (max-width: 1180px) {
-  .radio-plaza-hero-split {
+.rp-topbar-title-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rp-total-count-pill {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(43, 140, 255, 0.14);
+  color: var(--primary);
+  font-size: 12.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.rp-station-search-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  width: 240px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+  transition: border-color 0.2s ease, background 0.2s ease, width 0.22s ease;
+}
+
+.scheme-watercolor_light .rp-station-search-box,
+.scheme-light .rp-station-search-box {
+  background: rgba(15, 23, 42, 0.05);
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+.rp-station-search-box:focus-within {
+  border-color: var(--primary);
+  background: rgba(255, 255, 255, 0.1);
+  width: 270px;
+}
+
+.scheme-watercolor_light .rp-station-search-box:focus-within,
+.scheme-light .rp-station-search-box:focus-within {
+  background: #ffffff;
+}
+
+.rp-station-search-box input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 600;
+  outline: none;
+}
+
+.rp-station-search-box input::placeholder {
+  color: var(--text-muted);
+}
+
+.rp-search-clear,
+.clear-inline-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.rp-search-clear:hover,
+.clear-inline-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* ==================== 电台广场：沉浸式调频主控台横幅 ==================== */
+.rp-tuner-console-banner {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.95fr);
+  gap: 24px;
+  padding: 24px 28px;
+  border-radius: 24px;
+  overflow: hidden;
+  margin-bottom: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(135deg, rgba(16, 28, 56, 0.94), rgba(28, 22, 64, 0.9));
+  box-shadow: var(--card-stereo-shadow);
+  color: #ffffff;
+}
+
+@media (max-width: 1120px) {
+  .rp-tuner-console-banner {
     grid-template-columns: 1fr;
   }
 }
 
-.rp-now-tuning-deck {
-  padding: 24px;
-  border-radius: 24px;
-  background: linear-gradient(135deg, rgba(22, 68, 160, 0.92), rgba(88, 44, 168, 0.88));
-  color: #ffffff;
-  box-shadow: var(--card-stereo-shadow);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 16px;
+.rp-tuner-bg-backdrop,
+.rp-console-bg-art {
+  position: absolute;
+  inset: -24px;
+  background-size: cover;
+  background-position: center;
+  filter: blur(36px) saturate(1.35);
+  opacity: 0.28;
+  transform: scale(1.08);
+  pointer-events: none;
 }
 
-.rp-deck-vinyl-wrap {
+.rp-tuner-bg-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    rgba(10, 16, 32, 0.84) 0%,
+    rgba(15, 23, 44, 0.72) 52%,
+    rgba(12, 18, 36, 0.88) 100%
+  );
+  pointer-events: none;
+}
+
+.rp-tuner-main-left,
+.rp-console-left {
   position: relative;
-  width: 132px;
-  height: 114px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-width: 0;
 }
 
-.rp-deck-vinyl {
+@media (max-width: 680px) {
+  .rp-tuner-main-left,
+  .rp-console-left {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.rp-tuner-vinyl-stage,
+.rp-console-cover-wrap {
+  position: relative;
+  width: 152px;
+  height: 132px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.rp-tuner-vinyl-disc,
+.rp-console-vinyl-disc {
   position: absolute;
   right: 0;
-  top: 4px;
-  width: 106px;
-  height: 106px;
+  top: 6px;
+  width: 120px;
+  height: 120px;
   border-radius: 50%;
-  background: radial-gradient(circle, #00e5a3 0%, #00e5a3 18%, #141824 19%, #0a0d14 100%);
+  background:
+    radial-gradient(circle, #00e5a3 0%, #00e5a3 15%, #121723 16%, #1e2638 38%, #0d111a 68%, #1a2232 100%);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  transition: transform 0.35s ease;
 }
 
-.rp-deck-cover {
+.rp-tuner-vinyl-stage:hover .rp-tuner-vinyl-disc,
+.rp-console-cover-wrap:hover .rp-console-vinyl-disc {
+  transform: translateX(6px);
+}
+
+.rp-tuner-vinyl-stage.is-spinning .rp-tuner-vinyl-disc,
+.rp-console-vinyl-disc.spinning {
+  animation: rpVinylSpin 12s linear infinite;
+}
+
+@keyframes rpVinylSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.rp-tuner-cover-img,
+.rp-console-cover-img {
   position: relative;
-  width: 112px;
-  height: 112px;
+  z-index: 2;
+  width: 132px;
+  height: 132px;
   border-radius: 18px;
   object-fit: cover;
-  z-index: 2;
-  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48);
 }
 
-.rp-freq-pill {
+.rp-tuner-play-trigger,
+.rp-console-cover-play {
+  position: absolute;
+  z-index: 3;
+  left: 66px;
+  top: 66px;
+  transform: translate(-50%, -50%);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  background: rgba(10, 16, 28, 0.76);
+  backdrop-filter: blur(8px);
+  color: #ffffff;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  font-size: 14px;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.92;
+  transition: transform 0.2s ease, background 0.2s ease, opacity 0.2s ease;
+}
+
+.rp-tuner-vinyl-stage:hover .rp-tuner-play-trigger,
+.rp-console-cover-wrap:hover .rp-console-cover-play {
+  transform: translate(-50%, -50%) scale(1.08);
+  background: var(--primary);
+  opacity: 1;
+}
+
+.rp-tuner-info-col,
+.rp-console-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.rp-tuner-eyebrow,
+.rp-console-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rp-freq-pill,
+.rp-console-pill.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(0, 229, 163, 0.16);
+  border: 1px solid rgba(0, 229, 163, 0.35);
+  font-size: 12.5px;
   font-weight: 800;
-  color: #a8ffef !important;
+  color: #6effd2 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.rp-console-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.rp-console-pill.syncing {
+  background: rgba(43, 140, 255, 0.25);
+  color: #8fd0ff;
 }
 
 .live-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: #00e5a3;
-  box-shadow: 0 0 10px #00e5a3;
+  box-shadow: 0 0 8px #00e5a3;
 }
 
-.rp-station-title {
-  margin: 5px 0 4px;
-  font-size: 25px;
+.live-dot.pulsing {
+  animation: rpLivePulse 1.6s ease-in-out infinite;
+}
+
+@keyframes rpLivePulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(1.3);
+  }
+}
+
+.rp-cat-pill {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(43, 140, 255, 0.25);
+  border: 1px solid rgba(43, 140, 255, 0.42);
+  color: #9ed0ff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.rp-listeners-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.rp-station-title,
+.rp-console-title {
+  margin: 2px 0 0;
+  font-size: 26px;
   font-weight: 900;
   color: #ffffff !important;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
 }
 
-.rp-station-desc {
-  margin: 0 0 12px;
+.rp-station-desc,
+.rp-console-desc {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.84) !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rp-deck-actions,
+.rp-console-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.rp-primary-play-btn,
+.rp-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: none;
+  background: linear-gradient(135deg, #2b8cff, #15b8ff);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(43, 140, 255, 0.36);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.rp-primary-play-btn:hover,
+.rp-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(43, 140, 255, 0.48);
+}
+
+.rp-secondary-action-btn,
+.rp-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  color: #ffffff;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.rp-secondary-action-btn:hover:not(:disabled),
+.rp-btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.34);
+  transform: translateY(-1px);
+}
+
+.rp-secondary-action-btn:disabled,
+.rp-btn-secondary:disabled,
+.rp-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ==================== 电台主控台右侧：实时曲目速览 ==================== */
+.rp-tuner-preview-right,
+.rp-console-right {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(8, 13, 26, 0.48);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(12px);
+  min-width: 0;
+}
+
+.rp-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 2px;
+}
+
+.rp-preview-badge,
+.rp-preview-label {
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.rp-preview-more-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  background: transparent;
+  color: #7cc4ff;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.rp-preview-more-btn:hover {
+  text-decoration: underline;
+}
+
+.rp-preview-song-list,
+.rp-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rp-preview-song-item,
+.rp-preview-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.16s ease;
+}
+
+.rp-preview-song-item:hover,
+.rp-preview-song-item.active,
+.rp-preview-track:hover,
+.rp-preview-track.active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.rp-preview-song-cover,
+.rp-preview-cover {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.rp-preview-song-meta,
+.rp-preview-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.rp-preview-song-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rp-preview-song-item.active .rp-preview-song-title,
+.rp-preview-track.active .rp-preview-song-title {
+  color: #6effd2;
+}
+
+.rp-preview-song-artist {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.68);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rp-preview-song-dur,
+.rp-preview-dur {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.62);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.rp-preview-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px 10px;
+  text-align: center;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+/* ==================== 电台广场：12大分类导航条 ==================== */
+.rp-category-pills-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.rp-category-pills-scroll {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.rp-category-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.scheme-watercolor_light .rp-category-pill,
+.scheme-light .rp-category-pill {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.08);
+}
+
+.rp-category-pill:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.scheme-watercolor_light .rp-category-pill:hover,
+.scheme-light .rp-category-pill:hover {
+  background: rgba(15, 23, 42, 0.08);
+  border-color: rgba(15, 23, 42, 0.15);
+}
+
+.rp-category-pill.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(43, 140, 255, 0.32);
+}
+
+.rp-cat-count {
+  font-size: 11.5px;
+  font-weight: 800;
+  opacity: 0.72;
+  font-variant-numeric: tabular-nums;
+}
+
+.rp-category-pill.active .rp-cat-count {
+  opacity: 0.92;
+}
+
+.rp-category-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.rp-reset-filter-btn {
+  border: none;
+  background: rgba(43, 140, 255, 0.15);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.rp-reset-filter-btn:hover {
+  background: rgba(43, 140, 255, 0.25);
+}
+
+/* ==================== 电台广场：现代横向 1:1 封面电台矩阵 ==================== */
+.rp-modern-stations-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(265px, 100%), 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.rp-modern-station-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+  min-width: 0;
+  transition:
+    transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.scheme-watercolor_light .rp-modern-station-card,
+.scheme-light .rp-modern-station-card {
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(15, 23, 42, 0.08);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+}
+
+.rp-modern-station-card:hover {
+  transform: translateY(-2px);
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+.scheme-watercolor_light .rp-modern-station-card:hover,
+.scheme-light .rp-modern-station-card:hover {
+  background: #ffffff;
+  border-color: rgba(43, 140, 255, 0.28);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.rp-modern-station-card.active {
+  background: linear-gradient(135deg, rgba(43, 140, 255, 0.16), rgba(21, 196, 147, 0.1));
+  border-color: var(--primary);
+  box-shadow: 0 8px 22px rgba(43, 140, 255, 0.18);
+}
+
+.rp-msc-cover-box {
+  position: relative;
+  width: 78px;
+  height: 78px;
+  aspect-ratio: 1 / 1;
+  border-radius: 14px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25);
+}
+
+.rp-msc-cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.32s ease;
+}
+
+.rp-modern-station-card:hover .rp-msc-cover-img {
+  transform: scale(1.07);
+}
+
+.rp-msc-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 13, 24, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.rp-modern-station-card:hover .rp-msc-overlay,
+.rp-modern-station-card.active .rp-msc-overlay {
+  opacity: 1;
+}
+
+.rp-msc-play-icon,
+.rp-msc-play-overlay {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(12, 18, 32, 0.82);
+  backdrop-filter: blur(6px);
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+
+.rp-modern-station-card:hover .rp-msc-play-overlay,
+.rp-modern-station-card.active .rp-msc-play-overlay,
+.rp-modern-station-card.playing .rp-msc-play-overlay {
+  opacity: 1;
+}
+
+.rp-msc-play-icon:hover,
+.rp-msc-play-overlay:hover,
+.rp-modern-station-card.playing .rp-msc-play-icon,
+.rp-modern-station-card.playing .rp-msc-play-overlay {
+  background: var(--primary);
+  border-color: transparent;
+  transform: scale(1.08);
+}
+
+.rp-msc-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+
+.rp-msc-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rp-msc-name,
+.rp-msc-title {
+  margin: 0;
   font-size: 15.5px;
-  color: rgba(255, 255, 255, 0.9) !important;
+  font-weight: 800;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.rp-deck-actions {
+.rp-modern-station-card.active .rp-msc-name,
+.rp-modern-station-card.active .rp-msc-title {
+  color: var(--primary);
+}
+
+.rp-msc-cat-badge {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.scheme-watercolor_light .rp-msc-cat-badge,
+.scheme-light .rp-msc-cat-badge {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.rp-modern-station-card.active .rp-msc-cat-badge {
+  background: rgba(43, 140, 255, 0.2);
+  color: var(--primary);
+}
+
+.rp-msc-desc {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rp-msc-foot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 1px;
+}
+
+.rp-msc-freq {
+  font-size: 11.5px;
+  font-weight: 800;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
+.rp-msc-listeners {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==================== 展开更多电台 & 歌曲区工具栏 ==================== */
+.rp-expand-more-bar {
+  display: flex;
+  justify-content: center;
+  margin: 4px 0 26px;
+}
+
+.rp-expand-more-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.scheme-watercolor_light .rp-expand-more-btn,
+.scheme-light .rp-expand-more-btn {
+  background: rgba(15, 23, 42, 0.05);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+.rp-expand-more-btn:hover {
+  background: rgba(43, 140, 255, 0.15);
+  border-color: var(--primary);
+  color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.rp-empty-stations {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 36px 20px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+
+.rp-stream-right-tools {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
 
-.rp-now-tuning-deck .frameless-hover-btn {
-  color: #ffffff !important;
-  background: rgba(255, 255, 255, 0.18);
+.rp-song-search-box {
+  width: 210px;
+  height: 34px;
 }
 
-.rp-stations-wall {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 14px;
+.rp-song-search-box:focus-within {
+  width: 240px;
 }
 
-.rp-station-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  border-radius: 16px;
-  cursor: pointer;
-  transition: background 0.18s ease, transform 0.18s ease;
-}
-
-.rp-station-tile:hover,
-.rp-station-tile.active {
-  background: var(--bg-row-hover);
-  transform: translateY(-3px);
-}
-
-.rp-tile-cover-wrap {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 10;
-  border-radius: 12px;
-  overflow: hidden;
-}
-
-.rp-tile-cover {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.rp-tile-freq {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  padding: 2.5px 7px;
-  border-radius: 5px;
-  background: rgba(0, 0, 0, 0.65);
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.rp-tile-play {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: none;
-  background: rgba(12, 18, 30, 0.78);
-  color: #ffffff;
+.rp-stream-loading-hint {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  cursor: pointer;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
 }
 
-.rp-tile-name {
-  font-size: 16px;
-  font-weight: 800;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.rp-tile-listeners {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--text-secondary);
+.rp-spin-icon {
+  animation: rpVinylSpin 1s linear infinite;
 }
 
 /* ============================================================================

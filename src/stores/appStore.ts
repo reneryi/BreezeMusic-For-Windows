@@ -2414,17 +2414,9 @@ export const useAppStore = defineStore("breezeApp", () => {
   }
 
   function resolveFmChannelCovers() {
+    // 官方电台均已由后端返回真实独立的 fmlogov2 高清方形封面，仅在极端空值时兜底
     const pool: string[] = [];
     for (const s of recommendSongs.value) {
-      if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
-    }
-    for (const s of newSongs.value) {
-      if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
-    }
-    for (const r of rankList.value) {
-      if (r.coverUrl && !pool.includes(r.coverUrl)) pool.push(r.coverUrl);
-    }
-    for (const s of personalFmSongs.value) {
       if (s.coverUrl && !pool.includes(s.coverUrl)) pool.push(s.coverUrl);
     }
     if (pool.length === 0) return;
@@ -2542,7 +2534,15 @@ export const useAppStore = defineStore("breezeApp", () => {
       } else {
         fmStationSongs.value = batch;
         if (autoPlay && batch.length > 0) {
-          playSongFromList(batch[0], batch);
+          playSongFromList(
+            batch[0],
+            batch,
+            `FM · ${activeFmChannel.value?.name || "场景电台"}`
+          );
+        } else if (batch.length > 0) {
+          notify(
+            `已焕新「${activeFmChannel.value?.name || "电台"}」曲目（共 ${batch.length} 首）`
+          );
         }
       }
     } catch (e: any) {

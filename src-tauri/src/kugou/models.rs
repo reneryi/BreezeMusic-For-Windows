@@ -375,8 +375,8 @@ pub struct LyricData {
     pub has_phonetic: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct FmChannel {
     pub id: String,
     pub name: String,
@@ -386,6 +386,9 @@ pub struct FmChannel {
     pub fm_type: i32,
     pub listener_count_text: String,
     pub freq_label: String,
+    pub banner_url: String,
+    pub is_recommended: bool,
+    pub sample_song: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

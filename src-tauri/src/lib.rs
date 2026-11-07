@@ -730,6 +730,14 @@ async fn get_song_lyric(state: State<'_, AppState>, song: Song) -> Result<LyricD
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 强制将 WebView2 用户数据与浏览器缓存目录重定向至软件安装目录下的 webview_data，避免占用 C 盘 AppData\Local
+    let webview_data_dir = kugou::store::resolve_webview_data_dir();
+    if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_none() {
+        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &webview_data_dir);
+    }
+    let _ = kugou::store::resolve_cache_dir();
+    let _ = kugou::store::resolve_default_download_dir();
+
     let store = Arc::new(AppStore::new());
     let api = Arc::new(KugouApiService::new(store.clone()));
     let close_to_tray = Arc::new(AtomicBool::new(true));

@@ -10,8 +10,13 @@ dist-ssr/
 src-tauri/target/
 src-tauri/gen/
 
-# Session & User state
+# Session & User state / Runtime directories
 session_state.json
+play_history_*.json
+/cache/
+/config/
+/webview_data/
+/downloads/
 
 # IDE & OS
 .vscode/

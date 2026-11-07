@@ -11808,12 +11808,13 @@ impl KugouApiService {
         skip_existing: bool,
     ) -> Result<DownloadTaskResult, String> {
         let pb = self.resolve_song_url(song, preferred_quality).await?;
-        let target_music_dir = if music_dir.trim().is_empty() {
-            directories::UserDirs::new()
-                .and_then(|u| u.audio_dir().map(|p| p.join("BreezeMusic")))
-                .unwrap_or_else(|| std::path::PathBuf::from("BreezeMusic_Downloads"))
+        let trimmed_music = music_dir.trim();
+        let target_music_dir = if trimmed_music.is_empty()
+            || trimmed_music.eq_ignore_ascii_case("C:\\Users\\Public\\Music\\BreezeMusic")
+        {
+            crate::kugou::store::resolve_default_download_dir()
         } else {
-            std::path::PathBuf::from(music_dir.trim())
+            std::path::PathBuf::from(trimmed_music)
         };
         std::fs::create_dir_all(&target_music_dir).map_err(|e| e.to_string())?;
 
@@ -11877,10 +11878,15 @@ impl KugouApiService {
 
         let mut saved_lrc_path = String::new();
         if export_lrc && !formatted_lrc_text.is_empty() {
-            let target_lrc_dir = if lrc_dir.trim().is_empty() {
+            let trimmed_lrc = lrc_dir.trim();
+            let target_lrc_dir = if trimmed_lrc.is_empty() {
                 target_music_dir.clone()
+            } else if trimmed_lrc
+                .eq_ignore_ascii_case("C:\\Users\\Public\\Music\\BreezeMusic\\Lyrics")
+            {
+                target_music_dir.join("Lyrics")
             } else {
-                std::path::PathBuf::from(lrc_dir.trim())
+                std::path::PathBuf::from(trimmed_lrc)
             };
             let _ = std::fs::create_dir_all(&target_lrc_dir);
             let lrc_file = target_lrc_dir.join(format!("{}.lrc", safe_name));
@@ -13411,21 +13417,12 @@ impl KugouApiService {
     }
 
     fn resolve_cache_dir() -> std::path::PathBuf {
-        let base_dir = directories::ProjectDirs::from("com", "concept", "BreezeMusic")
-            .map(|p| p.config_dir().to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let cache_dir = directories::ProjectDirs::from("com", "concept", "BreezeMusic")
-            .map(|p| p.cache_dir().to_path_buf())
-            .unwrap_or_else(|| base_dir.join("cache"));
-        let _ = std::fs::create_dir_all(&cache_dir);
-        cache_dir
+        crate::kugou::store::resolve_cache_dir()
     }
 
     /// 40. 真实磁盘缓存统计与分项清理
     pub fn get_cache_stats(&self) -> Result<CacheDiskStats, String> {
-        let base_dir = directories::ProjectDirs::from("com", "concept", "BreezeMusic")
-            .map(|p| p.config_dir().to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let base_dir = crate::kugou::store::resolve_config_dir();
         let cache_dir = Self::resolve_cache_dir();
 
         let mut audio_bytes: u64 = 0;
@@ -13435,6 +13432,7 @@ impl KugouApiService {
 
         let audio_streams_dir = cache_dir.join("audio_streams");
         for dir in [&base_dir, &cache_dir, &audio_streams_dir] {
+            let is_audio_streams_dir = *dir == audio_streams_dir;
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
@@ -13446,10 +13444,14 @@ impl KugouApiService {
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("")
                                 .to_lowercase();
-                            if name.ends_with(".flac")
+                            if is_audio_streams_dir
+                                || name.ends_with(".flac")
                                 || name.ends_with(".mp3")
                                 || name.ends_with(".ogg")
                                 || name.ends_with(".wav")
+                                || name.ends_with(".m4a")
+                                || name.ends_with(".aac")
+                                || name.contains(".part.")
                             {
                                 audio_bytes += len;
                             } else if name.ends_with(".jpg")
@@ -13496,9 +13498,7 @@ impl KugouApiService {
 
     pub fn clear_cache_category(&self, category: &str) -> Result<CacheDiskStats, String> {
         let cat = category.trim().to_lowercase();
-        let base_dir = directories::ProjectDirs::from("com", "concept", "BreezeMusic")
-            .map(|p| p.config_dir().to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let base_dir = crate::kugou::store::resolve_config_dir();
         let cache_dir = Self::resolve_cache_dir();
 
         if cat == "all" || cat == "snapshot" || cat == "playlists" {
@@ -13517,6 +13517,7 @@ impl KugouApiService {
         }
         let audio_streams_dir = cache_dir.join("audio_streams");
         for dir in [&base_dir, &cache_dir, &audio_streams_dir] {
+            let is_audio_streams_dir = *dir == audio_streams_dir;
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
@@ -13525,16 +13526,20 @@ impl KugouApiService {
                         .and_then(|n| n.to_str())
                         .unwrap_or("")
                         .to_lowercase();
-                    if name == "session_state.json" {
+                    if name == "session_state.json" || name.starts_with("play_history_") {
                         continue;
                     }
                     let should_del = match cat.as_str() {
                         "all" => true,
                         "audio" => {
-                            name.ends_with(".flac")
+                            is_audio_streams_dir
+                                || name.ends_with(".flac")
                                 || name.ends_with(".mp3")
                                 || name.ends_with(".ogg")
                                 || name.ends_with(".wav")
+                                || name.ends_with(".m4a")
+                                || name.ends_with(".aac")
+                                || name.contains(".part.")
                         }
                         "image" | "images" | "artwork" => {
                             name.ends_with(".jpg")

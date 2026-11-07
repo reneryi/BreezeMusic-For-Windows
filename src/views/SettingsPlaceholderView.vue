@@ -594,7 +594,7 @@ async function copyEnvDiagnostic() {
               <div>
                 <h3>四维存储缓存明细与独立清理</h3>
                 <p class="panel-desc" style="margin-bottom: 0">
-                  对齐 Android 端 AudioCacheManager 四维真实磁盘统计，精准清理不伤账号配置
+                  所有运行缓存与配置均直接建立在软件安装目录下（当前缓存路径：<code>{{ store.cacheStats.cacheDirPath }}</code>），彻底释放 C 盘空间
                 </p>
               </div>
               <div style="display: flex; gap: 8px">

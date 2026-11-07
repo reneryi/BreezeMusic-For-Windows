@@ -3,12 +3,139 @@ use crate::kugou::models::{
 };
 use crate::kugou::signer;
 use directories::ProjectDirs;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use uuid::Uuid;
+
+/// 统一将软件运行产生的目录（cache、config、webview_data、downloads）建立在软件安装目录下，避免占用 C 盘 AppData 空间
+static INSTALL_ROOT_DIR: Lazy<PathBuf> = Lazy::new(|| {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            let raw = parent.to_string_lossy().to_string();
+            let clean = raw.strip_prefix(r"\\?\").unwrap_or(&raw);
+            let candidate = PathBuf::from(clean);
+            let test_cache = candidate.join("cache");
+            if fs::create_dir_all(&test_cache).is_ok() {
+                return candidate;
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        let test_cache = cwd.join("cache");
+        if fs::create_dir_all(&test_cache).is_ok() {
+            return cwd;
+        }
+    }
+    PathBuf::from(".")
+});
+
+/// 获取软件安装根目录（即可执行文件所在目录）
+pub fn resolve_install_root_dir() -> PathBuf {
+    INSTALL_ROOT_DIR.clone()
+}
+
+/// 获取软件安装目录下的核心缓存目录 (`<安装目录>/cache`)
+pub fn resolve_cache_dir() -> PathBuf {
+    let dir = resolve_install_root_dir().join("cache");
+    let _ = fs::create_dir_all(dir.join("audio_streams"));
+    dir
+}
+
+/// 获取软件安装目录下的配置与会话存储目录 (`<安装目录>/config`)
+pub fn resolve_config_dir() -> PathBuf {
+    let dir = resolve_install_root_dir().join("config");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+/// 获取软件安装目录下的 WebView2 独立用户数据与浏览器缓存目录 (`<安装目录>/webview_data`)
+pub fn resolve_webview_data_dir() -> PathBuf {
+    let dir = resolve_install_root_dir().join("webview_data");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+/// 获取软件安装目录下的默认音乐下载目录 (`<安装目录>/downloads`)
+pub fn resolve_default_download_dir() -> PathBuf {
+    let dir = resolve_install_root_dir().join("downloads");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+/// 自动将旧版 C 盘 `AppData\Roaming\concept\BreezeMusic\config` 下的登录态与播放历史平滑迁移至安装目录，并清理旧版 C 盘 AppData 缓存目录
+pub fn migrate_legacy_appdata_if_needed() {
+    let new_config_dir = resolve_config_dir();
+    let new_session_file = new_config_dir.join("session_state.json");
+
+    if let Some(legacy_proj) = ProjectDirs::from("com", "concept", "BreezeMusic") {
+        let legacy_config_dir = legacy_proj.config_dir();
+        if legacy_config_dir != new_config_dir.as_path() && legacy_config_dir.exists() {
+            if !new_session_file.exists() {
+                if let Ok(entries) = fs::read_dir(legacy_config_dir) {
+                    for entry in entries.flatten() {
+                        let src_path = entry.path();
+                        if src_path.is_file() {
+                            if let Some(fname) = src_path.file_name() {
+                                let dst_path = new_config_dir.join(fname);
+                                if !dst_path.exists() {
+                                    let _ = fs::copy(&src_path, &dst_path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // 迁移完成后清理旧版 AppData\Roaming\concept 目录
+            if new_session_file.exists() {
+                if let Some(breeze_dir) = legacy_config_dir.parent() {
+                    if let Some(concept_dir) = breeze_dir.parent() {
+                        if concept_dir
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|s| s.eq_ignore_ascii_case("concept"))
+                            .unwrap_or(false)
+                        {
+                            let _ = fs::remove_dir_all(concept_dir);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 自动清理旧版遗留在 C:\Users\<User>\AppData\Local\concept 的缓存目录，释放 C 盘空间
+        let legacy_cache_dir = legacy_proj.cache_dir();
+        if legacy_cache_dir != resolve_cache_dir().as_path() && legacy_cache_dir.exists() {
+            if let Some(breeze_dir) = legacy_cache_dir.parent() {
+                if let Some(concept_dir) = breeze_dir.parent() {
+                    if concept_dir
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.eq_ignore_ascii_case("concept"))
+                        .unwrap_or(false)
+                    {
+                        let _ = fs::remove_dir_all(concept_dir);
+                    } else {
+                        let _ = fs::remove_dir_all(legacy_cache_dir);
+                    }
+                }
+            }
+        }
+    }
+
+    // 自动清理旧版 WebView2 遗留在 C:\Users\<User>\AppData\Local\com.concept.breezemusic.desktop 的缓存目录
+    if let Some(base_dirs) = directories::BaseDirs::new() {
+        let legacy_webview = base_dirs
+            .data_local_dir()
+            .join("com.concept.breezemusic.desktop");
+        if legacy_webview != resolve_webview_data_dir() && legacy_webview.exists() {
+            let _ = fs::remove_dir_all(&legacy_webview);
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -170,6 +297,7 @@ pub struct AppStore {
 
 impl AppStore {
     pub fn new() -> Self {
+        migrate_legacy_appdata_if_needed();
         let file_path = Self::resolve_store_path();
         let initial_state = if file_path.exists() {
             fs::read_to_string(&file_path)
@@ -194,11 +322,7 @@ impl AppStore {
     }
 
     fn resolve_store_path() -> PathBuf {
-        if let Some(proj_dirs) = ProjectDirs::from("com", "concept", "BreezeMusic") {
-            proj_dirs.config_dir().join("session_state.json")
-        } else {
-            PathBuf::from("breezemusic_session_state.json")
-        }
+        resolve_config_dir().join("session_state.json")
     }
 
     fn resolve_play_history_path(&self, user_id: &str) -> PathBuf {

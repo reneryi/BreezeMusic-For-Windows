@@ -524,12 +524,10 @@ export const useAppStore = defineStore("breezeApp", () => {
     (localStorage.getItem("bm_dl_quality") as AudioQualityValue) || "high"
   );
   const downloadMusicDir = ref<string>(
-    localStorage.getItem("bm_dl_music_dir") ||
-      "C:\\Users\\Public\\Music\\BreezeMusic"
+    localStorage.getItem("bm_dl_music_dir") || "./downloads"
   );
   const downloadLrcDir = ref<string>(
-    localStorage.getItem("bm_dl_lrc_dir") ||
-      "C:\\Users\\Public\\Music\\BreezeMusic\\Lyrics"
+    localStorage.getItem("bm_dl_lrc_dir") || "./downloads/Lyrics"
   );
   const embedCoverAndTags = ref<boolean>(
     localStorage.getItem("bm_dl_embed_cover") !== "false"
@@ -558,6 +556,7 @@ export const useAppStore = defineStore("breezeApp", () => {
     playlistSnapshotMb: 0,
     lyricAndUrlMb: 0,
     maxQuotaGb: 4,
+    cacheDirPath: "./cache",
   });
 
   async function refreshCacheStats() {
@@ -567,6 +566,26 @@ export const useAppStore = defineStore("breezeApp", () => {
       cacheStats.artworkImageMb = Number((real.artworkImageMb || 0).toFixed(2));
       cacheStats.playlistSnapshotMb = Number((real.playlistSnapshotMb || 0).toFixed(2));
       cacheStats.lyricAndUrlMb = Number((real.lyricAndUrlMb || 0).toFixed(2));
+      if (real.cacheDirPath) {
+        cacheStats.cacheDirPath = real.cacheDirPath;
+        const installRoot = real.cacheDirPath.replace(/[\\/]+cache$/i, "");
+        if (
+          installRoot &&
+          (!downloadMusicDir.value ||
+            downloadMusicDir.value === "./downloads" ||
+            downloadMusicDir.value.toLowerCase() === "c:\\users\\public\\music\\breezemusic")
+        ) {
+          downloadMusicDir.value = `${installRoot}\\downloads`;
+        }
+        if (
+          installRoot &&
+          (!downloadLrcDir.value ||
+            downloadLrcDir.value === "./downloads/Lyrics" ||
+            downloadLrcDir.value.toLowerCase() === "c:\\users\\public\\music\\breezemusic\\lyrics")
+        ) {
+          downloadLrcDir.value = `${installRoot}\\downloads\\Lyrics`;
+        }
+      }
     } catch {
       // ignore in browser preview
     }
